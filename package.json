@@ -1,0 +1,33 @@
+{
+  "name": "pacibooba",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "import": "tsx src/scripts/import.ts",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@prisma/adapter-better-sqlite3": "^7.7.0",
+    "@prisma/client": "^7.7.0",
+    "better-sqlite3": "^12.8.0",
+    "bs58": "^6.0.0",
+    "prisma": "^7.7.0",
+    "tweetnacl": "^1.0.3",
+    "uuid": "^13.0.0",
+    "ws": "^8.20.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.5.2",
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2"
+  }
+}

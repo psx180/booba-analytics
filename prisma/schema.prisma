@@ -1,0 +1,197 @@
+
+
+// Booba — Pacifica Hackathon
+// Schema for trading journal, unified margin suite, and Booba AI agent
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ─── Strategies ────────────────────────────────────────────────────────────────
+
+model Strategy {
+  id                String   @id @default(cuid())
+  name              String   @unique
+  directionBias     String?  // long_only | short_only | both
+  preferredRegime   String?  // trending_low_vol | trending_high_vol | ranging_low_vol | ranging_high_vol
+  typicalTimeframe  String?  // scalp | intraday | swing | carry
+  description       String?
+  entrySignalTags   String?  // JSON array of tag strings
+  typicalRrTarget   Float?
+  checklist         String?  // JSON array of { name, category }
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  trades            Trade[]
+  tradeGroups       TradeGroup[]
+  boobaObservations BoobaObservation[]
+}
+
+// ─── Trade Groups (scaling in/out) ─────────────────────────────────────────────
+
+model TradeGroup {
+  id                  String    @id @default(cuid())
+  asset               String
+  direction           String    // long | short
+  thesis              String?
+  strategyId          String?
+  strategy            Strategy? @relation(fields: [strategyId], references: [id])
+  sourceTag           String?
+  tradeType           String?   // directional | carry | delta_neutral | market_making | liquidation_acquisition
+  aggregatePnl        Float?
+  aggregateFees       Float?
+  aggregateFunding    Float?
+  averageEntryPrice   Float?
+  averageExitPrice    Float?
+  totalSize           Float?
+  status              String    @default("open") // open | closed
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  trades              Trade[]
+}
+
+// ─── Trades ────────────────────────────────────────────────────────────────────
+
+model Trade {
+  id                String     @id @default(cuid())
+  asset             String
+  direction         String     // long | short
+  size              Float
+  entryPrice        Float
+  exitPrice         Float?
+  entryTime         DateTime
+  exitTime          DateTime?
+
+  pnlRealized       Float?
+  fees              Float?
+  fundingEarned     Float?
+  fundingPaid       Float?
+  holdTimeSeconds   Int?
+
+  mfePrice          Float?
+  mfePnl            Float?
+  maePrice          Float?
+  maePnl            Float?
+
+  regimeAtEntry     String?    // trending_low_vol | trending_high_vol | ranging_low_vol | ranging_high_vol
+  sentimentAtEntry  String?
+  sentimentScore    Float?
+
+  strategyId        String?
+  strategy          Strategy?  @relation(fields: [strategyId], references: [id])
+  groupId           String?
+  tradeGroup        TradeGroup? @relation(fields: [groupId], references: [id])
+
+  sourceTag         String?
+  tradeType         String?    // directional | carry | delta_neutral | market_making | liquidation_acquisition
+  subaccount        String?
+  builderCode       String?
+  captureMode       String     @default("retroactive") // retroactive | live
+
+  // Phase 2 popup fields
+  thesis            String?
+  invalidationPrice Float?
+  targetPrice       String?    // JSON array for multiple targets
+  stopType          String?    // candle_close | trailing | partial_tp | fixed
+  conviction        Int?       // 1-3
+
+  customData        String?    // JSON escape hatch
+  rawData           String?    // full raw API response JSON
+
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  fundingHistory    FundingHistory[]
+  alerts            Alert[]
+}
+
+// ─── Custom Stat Definitions ───────────────────────────────────────────────────
+
+model CustomStatDefinition {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  type      String   // number | text | select
+  options   String?  // JSON array of allowed values (for select type)
+  createdAt DateTime @default(now())
+}
+
+// ─── Booba Observations ────────────────────────────────────────────────────────
+
+model BoobaObservation {
+  id                String    @id @default(cuid())
+  observationText   String
+  confidence        String?   // high | medium | low
+  sourceModule      String?   // exit_optimizer | disposition_detector | tilt_detector | novel_pattern | weekly_synthesis
+  relatedStrategyId String?
+  relatedStrategy   Strategy? @relation(fields: [relatedStrategyId], references: [id])
+  isActive          Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  compressedAt      DateTime?
+}
+
+// ─── Analysis Snapshots ────────────────────────────────────────────────────────
+
+model AnalysisSnapshot {
+  id                 String   @id @default(cuid())
+  periodType         String   // daily | weekly
+  periodStart        DateTime
+  periodEnd          DateTime
+  totalTrades        Int?
+  winRate            Float?
+  expectancy         Float?
+  profitFactor       Float?
+  sharpeRatio        Float?
+  regimeBreakdown    String?  // JSON: { regime: { win_rate, expectancy, ... } }
+  behavioralScores   String?  // JSON: { disposition_score, tilt_score, adherence_score }
+  summaryText        String?  // ~500 token summary for Booba Layer 2
+  createdAt          DateTime @default(now())
+}
+
+// ─── Funding History ───────────────────────────────────────────────────────────
+
+model FundingHistory {
+  id        String   @id @default(cuid())
+  asset     String
+  amount    Float
+  rate      Float
+  timestamp DateTime
+  tradeId   String?
+  trade     Trade?   @relation(fields: [tradeId], references: [id])
+  rawData   String?  // JSON
+  createdAt DateTime @default(now())
+}
+
+// ─── Regime Snapshots ──────────────────────────────────────────────────────────
+
+model RegimeSnapshot {
+  id                   String   @id @default(cuid())
+  asset                String
+  timestamp            DateTime
+  timeframe            String   // daily | hourly | etc.
+  adxValue             Float?
+  atrValue             Float?
+  atrSmaValue          Float?
+  regimeClassification String?  // trending_low_vol | trending_high_vol | ranging_low_vol | ranging_high_vol
+  createdAt            DateTime @default(now())
+
+  @@index([asset, timestamp])
+}
+
+// ─── Alerts ────────────────────────────────────────────────────────────────────
+
+model Alert {
+  id             String   @id @default(cuid())
+  alertType      String   // utilization_spike | margin_warning | tilt_warning | sentiment_shift | funding_flip
+  message        String
+  severity       String   // info | warning | critical
+  relatedTradeId String?
+  relatedTrade   Trade?   @relation(fields: [relatedTradeId], references: [id])
+  acknowledged   Boolean  @default(false)
+  createdAt      DateTime @default(now())
+}
