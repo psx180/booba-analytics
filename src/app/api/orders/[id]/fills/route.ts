@@ -8,7 +8,7 @@ export async function GET(
   const { id } = await params;
 
   const fills = await prisma.trade.findMany({
-    where: { groupId: id },
+    where: { orderGroupId: id },
     orderBy: { entryTime: 'asc' },
   });
 

@@ -60,8 +60,7 @@ async function main() {
     console.log('\nTrade ingestion:');
     console.log(`  Fills processed : ${tradeResult.fillsProcessed}`);
     console.log(`  Trades upserted : ${tradeResult.tradesUpserted}`);
-    console.log(`  Groups upserted : ${tradeResult.groupsUpserted}`);
-    console.log(`  Open positions  : ${tradeResult.openPositions}`);
+    console.log(`  Skipped         : ${tradeResult.skipped}`);
     if (tradeResult.errors.length > 0) {
       console.log(`  Errors (${tradeResult.errors.length}):`);
       tradeResult.errors.forEach((e) => console.log(`    ${e}`));

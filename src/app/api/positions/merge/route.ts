@@ -3,14 +3,14 @@ import { GroupingService } from '@/services/grouping';
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const groupIds: string[] = body.groupIds;
+  const positionIds: string[] = body.positionIds;
 
-  if (!groupIds || groupIds.length < 2) {
-    return NextResponse.json({ error: 'Need at least 2 groupIds' }, { status: 400 });
+  if (!positionIds || positionIds.length < 2) {
+    return NextResponse.json({ error: 'Need at least 2 positionIds' }, { status: 400 });
   }
 
   const service = new GroupingService();
-  const merged = await service.mergeGroups(groupIds);
+  const merged = await service.mergePositions(positionIds);
 
   return NextResponse.json(merged);
 }

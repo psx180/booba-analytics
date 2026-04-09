@@ -4,26 +4,48 @@ import { useState, useEffect, useCallback, Fragment } from 'react';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-interface TradeGroup {
+interface TradeUnit {
   id: string;
+  kind: 'position' | 'linked_strategy';
   asset: string;
   direction: string;
   tradeType: string | null;
   status: string;
+  pnl: number | null;
+  fees: number | null;
+  funding: number | null;
+  totalSize: number | null;
+  averageEntryPrice: number | null;
+  averageExitPrice: number | null;
+  holdTimeSeconds: number | null;
+  confidence: number | null;
+  firstEntryTime: string | null;
+  lastExitTime: string | null;
+  regimeAtEntry: string | null;
+  childCount: number;
+  strategyType?: string;
+  netDelta?: number | null;
+  spreadPnl?: number | null;
+  legs?: { id: string; asset: string; direction: string; pnl: number | null; status: string }[];
+}
+
+interface OrderGroup {
+  id: string;
+  asset: string;
+  direction: string;
+  tradeType: string | null;
   totalSize: number | null;
   averageEntryPrice: number | null;
   averageExitPrice: number | null;
   aggregatePnl: number | null;
   aggregateFees: number | null;
-  aggregateFunding: number | null;
   firstEntryTime: string | null;
   lastExitTime: string | null;
-  holdTimeSeconds: number | null;
   confidence: number | null;
-  ruleSource: string | null;
-  linkedGroupId: string | null;
-  strategy: { name: string } | null;
   _count: { trades: number };
+  role: string;
+  executionType: string | null;
+  isEntry: boolean;
 }
 
 interface Fill {
@@ -37,12 +59,7 @@ interface Fill {
   exitTime: string | null;
   pnlRealized: number | null;
   fees: number | null;
-  fundingEarned: number | null;
-  fundingPaid: number | null;
-  holdTimeSeconds: number | null;
   regimeAtEntry: string | null;
-  tradeType: string | null;
-  rawData: string | null;
 }
 
 interface Pagination {
@@ -62,9 +79,8 @@ interface Summary {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const TRADE_TYPES = [
-  'scalp', 'directional', 'scaled_directional', 'market_making',
-  'delta_neutral', 'pairs_trade', 'carry_trade',
+const POSITION_TYPES = [
+  'scalp', 'directional', 'scaled_directional', 'carry_trade', 'market_making',
 ];
 
 const REGIME_BADGE: Record<string, { label: string; bg: string; text: string }> = {
@@ -74,15 +90,6 @@ const REGIME_BADGE: Record<string, { label: string; bg: string; text: string }> 
   ranging_high_vol:  { label: 'Ranging HV',  bg: 'bg-amber-900/30',  text: 'text-amber-300' },
   transitional:      { label: 'Trans.',      bg: 'bg-slate-700/40',  text: 'text-slate-400' },
 };
-
-const SORT_FIELDS = [
-  { key: 'firstEntryTime', label: 'Date' },
-  { key: 'asset',          label: 'Asset' },
-  { key: 'aggregatePnl',   label: 'P&L' },
-  { key: 'aggregateFees',  label: 'Fees' },
-  { key: 'holdTimeSeconds', label: 'Hold Time' },
-  { key: 'confidence',     label: 'Confidence' },
-];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -123,29 +130,29 @@ function confidenceBadge(c: number | null) {
   return { bg: 'bg-red-900/30', text: 'text-red-400', label: `${Math.round(c * 100)}%` };
 }
 
-function tradeTypeBadge(type: string | null) {
-  if (!type) return null;
+const ROLE_BADGE: Record<string, { bg: string; text: string; label: string }> = {
+  entry:        { bg: 'bg-blue-900/30',  text: 'text-blue-400',  label: 'Entry' },
+  'take profit': { bg: 'bg-green-900/30', text: 'text-green-400', label: 'TP' },
+  'stop loss':  { bg: 'bg-red-900/30',   text: 'text-red-400',   label: 'SL' },
+  'manual close': { bg: 'bg-slate-700/40', text: 'text-slate-400', label: 'Close' },
+};
+
+function typeBadgeClass(type: string | null) {
+  if (!type) return 'text-[#6e7681] bg-[#21262d]';
   const colors: Record<string, string> = {
     scalp: 'text-cyan-400 bg-cyan-900/30',
     directional: 'text-blue-400 bg-blue-900/30',
     scaled_directional: 'text-indigo-400 bg-indigo-900/30',
     market_making: 'text-purple-400 bg-purple-900/30',
+    carry_trade: 'text-orange-400 bg-orange-900/30',
     delta_neutral: 'text-teal-400 bg-teal-900/30',
     pairs_trade: 'text-pink-400 bg-pink-900/30',
-    carry_trade: 'text-orange-400 bg-orange-900/30',
+    basis_trade: 'text-emerald-400 bg-emerald-900/30',
   };
   return colors[type] ?? 'text-[#6e7681] bg-[#21262d]';
 }
 
-// ── Filter Bar ────────────────────────────────────────────────────────────────
-
-interface Filters {
-  tradeType: string;
-  asset: string;
-  status: string;
-}
-
-const EMPTY_FILTERS: Filters = { tradeType: '', asset: '', status: '' };
+// ── Filter Select ─────────────────────────────────────────────────────────────
 
 function FilterSelect({
   label, value, onChange, options,
@@ -169,7 +176,7 @@ function FilterSelect({
   );
 }
 
-// ── Sort Header Cell ──────────────────────────────────────────────────────────
+// ── Sort Header ───────────────────────────────────────────────────────────────
 
 function SortTh({
   label, field, sortBy, sortDir, onSort,
@@ -188,73 +195,147 @@ function SortTh({
   );
 }
 
-// ── Expanded Fills Table ──────────────────────────────────────────────────────
+// ── Fills panel (innermost drill-down) ────────────────────────────────────────
 
-function GroupFills({ groupId }: { groupId: string }) {
+function FillsPanel({ orderGroupId }: { orderGroupId: string }) {
   const [fills, setFills] = useState<Fill[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`/api/groups/${groupId}/fills`)
+    fetch(`/api/orders/${orderGroupId}/fills`)
       .then((r) => r.json())
-      .then((data) => setFills(data.fills ?? []))
+      .then((d) => setFills(d.fills ?? []))
       .finally(() => setLoading(false));
-  }, [groupId]);
+  }, [orderGroupId]);
 
-  if (loading) {
-    return (
-      <div className="px-8 py-3 text-xs text-[#6e7681]">Loading fills...</div>
-    );
-  }
+  if (loading) return <div className="px-12 py-2 text-xs text-[#6e7681]">Loading fills...</div>;
 
   return (
-    <div className="px-4 py-2 bg-[#0d1117]">
-      <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-2 px-4">
-        {fills.length} fills in this group
-      </div>
+    <div className="pl-16 pr-4 py-1">
       <table className="w-full text-xs">
         <thead>
-          <tr className="text-[10px] uppercase tracking-widest text-[#6e7681] border-b border-[#21262d]">
+          <tr className="text-[10px] uppercase tracking-widest text-[#6e7681]">
             <th className="pb-1 pr-3 text-left">Side</th>
             <th className="pb-1 pr-3 text-left">Size</th>
             <th className="pb-1 pr-3 text-left">Entry</th>
             <th className="pb-1 pr-3 text-left">Exit</th>
             <th className="pb-1 pr-3 text-left">P&L</th>
             <th className="pb-1 pr-3 text-left">Fees</th>
-            <th className="pb-1 pr-3 text-left">Regime</th>
             <th className="pb-1 text-left">Time</th>
           </tr>
         </thead>
         <tbody>
-          {fills.map((fill) => {
-            const regime = fill.regimeAtEntry ? REGIME_BADGE[fill.regimeAtEntry] : null;
+          {fills.map((f) => (
+            <tr key={f.id} className="border-t border-[#161b22]">
+              <td className="py-1 pr-3">
+                <span className={f.direction === 'long' ? 'text-green-400' : 'text-red-400'}>
+                  {f.direction.toUpperCase()}
+                </span>
+              </td>
+              <td className="py-1 pr-3 text-[#8b949e]">{f.size}</td>
+              <td className="py-1 pr-3 text-[#8b949e]">{fmtPrice(f.entryPrice)}</td>
+              <td className="py-1 pr-3 text-[#8b949e]">{fmtPrice(f.exitPrice)}</td>
+              <td className={`py-1 pr-3 ${f.exitPrice == null ? 'text-[#6e7681]' : pnlColor(f.pnlRealized)}`}>
+                {f.exitPrice == null ? '—' : fmt$(f.pnlRealized)}
+              </td>
+              <td className="py-1 pr-3 text-[#6e7681]">
+                {f.fees != null ? `-$${Math.abs(f.fees).toFixed(2)}` : '—'}
+              </td>
+              <td className="py-1 text-[#6e7681]">{fmtDate(f.exitTime ?? f.entryTime)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Orders panel (middle drill-down) ──────────────────────────────────────────
+
+function OrdersPanel({ positionId }: { positionId: string }) {
+  const [orders, setOrders] = useState<OrderGroup[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(`/api/positions/${positionId}/orders`)
+      .then((r) => r.json())
+      .then((d) => setOrders(d.orders ?? []))
+      .finally(() => setLoading(false));
+  }, [positionId]);
+
+  if (loading) return <div className="px-8 py-3 text-xs text-[#6e7681]">Loading orders...</div>;
+
+  return (
+    <div className="px-4 py-2 bg-[#0d1117]">
+      <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-2 px-4">
+        {orders.length} orders in this position
+      </div>
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-[10px] uppercase tracking-widest text-[#6e7681] border-b border-[#21262d]">
+            <th className="pb-1 pr-3 text-left w-6" />
+            <th className="pb-1 pr-3 text-left">Role</th>
+            <th className="pb-1 pr-3 text-left">Dir</th>
+            <th className="pb-1 pr-3 text-left">Fills</th>
+            <th className="pb-1 pr-3 text-left">Size</th>
+            <th className="pb-1 pr-3 text-left">Entry</th>
+            <th className="pb-1 pr-3 text-left">Exit</th>
+            <th className="pb-1 pr-3 text-left">P&L</th>
+            <th className="pb-1 pr-3 text-left">Exec</th>
+            <th className="pb-1 text-left">Time</th>
+          </tr>
+        </thead>
+        <tbody>
+          {orders.map((order) => {
+            const isSingleFill = order._count.trades === 1;
+            const isExpanded = expandedOrder === order.id;
+            const canExpand = !isSingleFill;
+            const roleBadge = ROLE_BADGE[order.role];
+
             return (
-              <tr key={fill.id} className="border-t border-[#161b22]">
-                <td className="py-1 pr-3">
-                  <span className={fill.direction === 'long' ? 'text-green-400' : 'text-red-400'}>
-                    {fill.direction.toUpperCase()}
-                  </span>
-                </td>
-                <td className="py-1 pr-3 text-[#8b949e]">{fill.size}</td>
-                <td className="py-1 pr-3 text-[#8b949e]">{fmtPrice(fill.entryPrice)}</td>
-                <td className="py-1 pr-3 text-[#8b949e]">{fmtPrice(fill.exitPrice)}</td>
-                <td className={`py-1 pr-3 ${pnlColor(fill.pnlRealized)}`}>{fmt$(fill.pnlRealized)}</td>
-                <td className="py-1 pr-3 text-[#6e7681]">
-                  {fill.fees != null ? `-$${Math.abs(fill.fees).toFixed(2)}` : '—'}
-                </td>
-                <td className="py-1 pr-3">
-                  {regime ? (
-                    <span className={`inline-block px-1 py-0.5 rounded text-xs ${regime.bg} ${regime.text}`}>
-                      {regime.label}
+              <Fragment key={order.id}>
+                <tr
+                  onClick={() => canExpand && setExpandedOrder(isExpanded ? null : order.id)}
+                  className={`border-t border-[#161b22] ${canExpand ? 'cursor-pointer' : ''} ${isExpanded ? 'bg-[#161b22]' : canExpand ? 'hover:bg-[#161b22]' : ''}`}
+                >
+                  <td className="py-1 pr-3 text-[#6e7681]">
+                    {canExpand ? (isExpanded ? '▾' : '▸') : ''}
+                  </td>
+                  <td className="py-1 pr-3">
+                    {roleBadge ? (
+                      <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium ${roleBadge.bg} ${roleBadge.text}`}>
+                        {roleBadge.label}
+                      </span>
+                    ) : (
+                      <span className="text-[#6e7681]">{order.role}</span>
+                    )}
+                  </td>
+                  <td className="py-1 pr-3">
+                    <span className={order.direction === 'long' ? 'text-green-400' : 'text-red-400'}>
+                      {order.direction.toUpperCase()}
                     </span>
-                  ) : (
-                    <span className="text-[#6e7681]">—</span>
-                  )}
-                </td>
-                <td className="py-1 text-[#6e7681]">
-                  {fmtDate(fill.exitTime ?? fill.entryTime)}
-                </td>
-              </tr>
+                  </td>
+                  <td className="py-1 pr-3 text-[#8b949e]">{order._count.trades}</td>
+                  <td className="py-1 pr-3 text-[#8b949e]">{order.totalSize?.toFixed(4) ?? '—'}</td>
+                  <td className="py-1 pr-3 text-[#8b949e]">{fmtPrice(order.averageEntryPrice)}</td>
+                  <td className="py-1 pr-3 text-[#8b949e]">{fmtPrice(order.averageExitPrice)}</td>
+                  <td className={`py-1 pr-3 ${order.isEntry ? 'text-[#6e7681]' : pnlColor(order.aggregatePnl)}`}>
+                    {order.isEntry ? '—' : fmt$(order.aggregatePnl)}
+                  </td>
+                  <td className="py-1 pr-3 text-[#6e7681]">
+                    {order.executionType ?? '—'}
+                  </td>
+                  <td className="py-1 text-[#6e7681]">{fmtDate(order.lastExitTime ?? order.firstEntryTime)}</td>
+                </tr>
+                {isExpanded && canExpand && (
+                  <tr>
+                    <td colSpan={10} className="p-0">
+                      <FillsPanel orderGroupId={order.id} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             );
           })}
         </tbody>
@@ -265,8 +346,16 @@ function GroupFills({ groupId }: { groupId: string }) {
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
+interface Filters {
+  tradeType: string;
+  asset: string;
+  status: string;
+}
+
+const EMPTY_FILTERS: Filters = { tradeType: '', asset: '', status: '' };
+
 export default function TradesClient({ walletAddress }: { walletAddress: string }) {
-  const [groups, setGroups] = useState<TradeGroup[]>([]);
+  const [tradeUnits, setTradeUnits] = useState<TradeUnit[]>([]);
   const [pagination, setPagination] = useState<Pagination | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
@@ -279,7 +368,7 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
   const [groupingRunning, setGroupingRunning] = useState(false);
   const [groupingSummary, setGroupingSummary] = useState<any>(null);
 
-  const fetchGroups = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const p = new URLSearchParams({ walletAddress, sortBy, sortDir, page: String(page) });
@@ -287,21 +376,25 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
       if (filters.asset) p.set('asset', filters.asset);
       if (filters.status) p.set('status', filters.status);
 
-      const [groupsRes, summaryRes] = await Promise.all([
-        fetch(`/api/groups?${p}`),
+      const [unitsRes, summaryRes] = await Promise.all([
+        fetch(`/api/trade-units?${p}`),
         fetch(`/api/analytics/summary?walletAddress=${walletAddress}`),
       ]);
-      const [groupsData, summaryData] = await Promise.all([
-        groupsRes.json(),
+      const [unitsData, summaryData] = await Promise.all([
+        unitsRes.json(),
         summaryRes.json(),
       ]);
 
-      setGroups(groupsData.groups ?? []);
-      setPagination(groupsData.pagination ?? null);
+      setTradeUnits(unitsData.tradeUnits ?? []);
+      setPagination(unitsData.pagination ?? null);
       setSummary(summaryData);
 
       if (!filters.tradeType && !filters.asset && !filters.status) {
-        const assets = [...new Set<string>((groupsData.groups ?? []).map((g: TradeGroup) => g.asset))];
+        const assets = [...new Set<string>(
+          (unitsData.tradeUnits ?? [])
+            .map((u: TradeUnit) => u.asset)
+            .flatMap((a: string) => a.split(' / ')),
+        )];
         setAssetOptions(assets.sort());
       }
     } finally {
@@ -309,25 +402,12 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
     }
   }, [walletAddress, sortBy, sortDir, page, filters]);
 
-  useEffect(() => {
-    fetchGroups();
-  }, [fetchGroups]);
-
-  useEffect(() => {
-    setPage(1);
-  }, [filters, sortBy, sortDir]);
+  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { setPage(1); }, [filters, sortBy, sortDir]);
 
   const handleSort = (field: string) => {
-    if (sortBy === field) {
-      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
-    } else {
-      setSortBy(field);
-      setSortDir('desc');
-    }
-  };
-
-  const handleFilterChange = (key: keyof Filters, value: string) => {
-    setFilters((f) => ({ ...f, [key]: value }));
+    if (sortBy === field) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortBy(field); setSortDir('desc'); }
   };
 
   const runGrouping = async () => {
@@ -341,7 +421,7 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
       });
       const data = await res.json();
       setGroupingSummary(data);
-      await fetchGroups();
+      await fetchData();
     } finally {
       setGroupingRunning(false);
     }
@@ -349,26 +429,18 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
 
   return (
     <div className="space-y-4">
-      {/* ── Stats Bar ──────────────────────────────────────────────────── */}
+      {/* ── Stats Bar ──────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         {[
-          { label: 'Groups', value: summary?.tradeCount ?? '—' },
+          { label: 'Positions', value: summary?.tradeCount ?? '—' },
           {
             label: 'Total P&L',
-            value: (
-              <span className={pnlColor(summary?.totalPnl ?? null)}>
-                {summary ? fmt$(summary.totalPnl) : '—'}
-              </span>
-            ),
+            value: <span className={pnlColor(summary?.totalPnl ?? null)}>{summary ? fmt$(summary.totalPnl) : '—'}</span>,
           },
           { label: 'Win Rate', value: summary ? `${summary.winRate.toFixed(1)}%` : '—' },
           {
             label: 'Expectancy',
-            value: (
-              <span className={pnlColor(summary?.expectancy ?? null)}>
-                {summary ? fmt$(summary.expectancy) : '—'}
-              </span>
-            ),
+            value: <span className={pnlColor(summary?.expectancy ?? null)}>{summary ? fmt$(summary.expectancy) : '—'}</span>,
           },
           { label: 'Profit Factor', value: summary ? summary.profitFactor.toFixed(2) : '—' },
         ].map(({ label, value }) => (
@@ -379,13 +451,13 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
         ))}
       </div>
 
-      {/* ── Run Grouping + Summary ──────────────────────────────────── */}
+      {/* ── Run Grouping ───────────────────────────────────────────── */}
       <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-sm font-semibold text-white">Trade Grouping</h2>
             <p className="text-xs text-[#6e7681] mt-0.5">
-              Group individual fills into logical trades using the rule pipeline
+              Fills → Orders → Positions. Link positions into strategies manually.
             </p>
           </div>
           <button
@@ -400,16 +472,19 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
         {groupingSummary && (
           <div className="mt-3 pt-3 border-t border-[#21262d] text-xs text-[#8b949e] space-y-1">
             <div>
-              Grouped <span className="text-white font-medium">{groupingSummary.totalFills}</span> fills into{' '}
-              <span className="text-white font-medium">{groupingSummary.totalGroups}</span> trades.{' '}
-              <span className="text-green-400">{groupingSummary.autoGroupedHighConfidence}</span> high confidence.{' '}
+              <span className="text-white font-medium">{groupingSummary.totalFills}</span> fills →{' '}
+              <span className="text-white font-medium">{groupingSummary.totalOrders}</span> orders →{' '}
+              <span className="text-white font-medium">{groupingSummary.totalPositions}</span> positions.{' '}
+              {groupingSummary.totalLinkedStrategies > 0 && (
+                <span><span className="text-white font-medium">{groupingSummary.totalLinkedStrategies}</span> linked strategies. </span>
+              )}
               <span className="text-amber-400">{groupingSummary.needsReview}</span> need review.
             </div>
-            {groupingSummary.byRule && (
+            {groupingSummary.positionsByType && Object.keys(groupingSummary.positionsByType).length > 0 && (
               <div className="flex flex-wrap gap-3">
-                {Object.entries(groupingSummary.byRule).map(([rule, count]) => (
-                  <span key={rule} className="text-[#6e7681]">
-                    {rule}: <span className="text-[#8b949e]">{count as number}</span>
+                {Object.entries(groupingSummary.positionsByType).map(([type, count]) => (
+                  <span key={type} className="text-[#6e7681]">
+                    {type.replace(/_/g, ' ')}: <span className="text-[#8b949e]">{count as number}</span>
                   </span>
                 ))}
               </div>
@@ -418,25 +493,25 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
         )}
       </div>
 
-      {/* ── Filter Bar ──────────────────────────────────────────────── */}
+      {/* ── Filter Bar ─────────────────────────────────────────────── */}
       <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
         <div className="flex flex-wrap gap-4 items-end">
           <FilterSelect
             label="Trade Type"
             value={filters.tradeType}
-            onChange={(v) => handleFilterChange('tradeType', v)}
-            options={TRADE_TYPES}
+            onChange={(v) => setFilters((f) => ({ ...f, tradeType: v }))}
+            options={[...POSITION_TYPES, 'delta_neutral', 'pairs_trade', 'basis_trade']}
           />
           <FilterSelect
             label="Asset"
             value={filters.asset}
-            onChange={(v) => handleFilterChange('asset', v)}
+            onChange={(v) => setFilters((f) => ({ ...f, asset: v }))}
             options={assetOptions}
           />
           <FilterSelect
             label="Status"
             value={filters.status}
-            onChange={(v) => handleFilterChange('status', v)}
+            onChange={(v) => setFilters((f) => ({ ...f, status: v }))}
             options={['open', 'closed']}
           />
           {Object.values(filters).some(Boolean) && (
@@ -450,15 +525,13 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
         </div>
       </div>
 
-      {/* ── Groups Table ────────────────────────────────────────────── */}
+      {/* ── Trade Units Table ──────────────────────────────────────── */}
       <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
         {loading ? (
-          <div className="h-48 flex items-center justify-center text-[#6e7681] text-sm">
-            Loading...
-          </div>
-        ) : groups.length === 0 ? (
+          <div className="h-48 flex items-center justify-center text-[#6e7681] text-sm">Loading...</div>
+        ) : tradeUnits.length === 0 ? (
           <div className="h-48 flex flex-col items-center justify-center text-[#6e7681] text-sm gap-2">
-            <span>No trade groups found. Run the grouping pipeline first.</span>
+            <span>No trade units found. Run the grouping pipeline first.</span>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -468,27 +541,29 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
                   <th className="px-4 py-3 text-left w-8" />
                   <SortTh label="Asset" field="asset" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
                   <th className="pb-2 pr-4 text-left">Dir</th>
-                  <th className="pb-2 pr-4 text-left">Fills</th>
+                  <th className="pb-2 pr-4 text-left">Children</th>
                   <th className="pb-2 pr-4 text-left">Entry</th>
                   <th className="pb-2 pr-4 text-left">Exit</th>
-                  <SortTh label="P&L" field="aggregatePnl" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
-                  <SortTh label="Fees" field="aggregateFees" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                  <SortTh label="P&L" field="pnl" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                  <SortTh label="Fees" field="fees" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
                   <SortTh label="Hold" field="holdTimeSeconds" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
                   <th className="pb-2 pr-4 text-left">Type</th>
                   <SortTh label="Conf." field="confidence" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
-                  <th className="pb-2 pr-4 text-left">Rule</th>
+                  <th className="pb-2 pr-4 text-left">Regime</th>
                   <SortTh label="Date" field="firstEntryTime" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
                 </tr>
               </thead>
               <tbody>
-                {groups.map((group) => {
-                  const isExpanded = expandedId === group.id;
-                  const conf = confidenceBadge(group.confidence);
-                  const typeClass = tradeTypeBadge(group.tradeType);
+                {tradeUnits.map((unit) => {
+                  const isExpanded = expandedId === unit.id;
+                  const conf = confidenceBadge(unit.confidence);
+                  const regime = unit.regimeAtEntry ? REGIME_BADGE[unit.regimeAtEntry] : null;
+                  const isLinked = unit.kind === 'linked_strategy';
+
                   return (
-                    <Fragment key={group.id}>
+                    <Fragment key={unit.id}>
                       <tr
-                        onClick={() => setExpandedId(isExpanded ? null : group.id)}
+                        onClick={() => setExpandedId(isExpanded ? null : unit.id)}
                         className={`border-t border-[#21262d] cursor-pointer transition-colors ${
                           isExpanded ? 'bg-[#1c2128]' : 'hover:bg-[#1c2128]'
                         }`}
@@ -496,30 +571,41 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
                         <td className="px-4 py-2.5 text-[#6e7681] text-xs">
                           {isExpanded ? '▾' : '▸'}
                         </td>
-                        <td className="py-2.5 pr-4 font-medium text-white">{group.asset}</td>
+                        <td className="py-2.5 pr-4 font-medium text-white">
+                          {unit.asset}
+                          {isLinked && (
+                            <span className="ml-1.5 text-[10px] text-teal-400 bg-teal-900/30 px-1 py-0.5 rounded">
+                              linked
+                            </span>
+                          )}
+                        </td>
                         <td className="py-2.5 pr-4">
-                          <span className={`text-xs font-medium ${group.direction === 'long' ? 'text-green-400' : 'text-red-400'}`}>
-                            {group.direction.toUpperCase()}
-                          </span>
+                          {isLinked ? (
+                            <span className="text-xs text-[#6e7681]">
+                              {unit.legs?.map((l) => l.direction[0].toUpperCase()).join('/') ?? '—'}
+                            </span>
+                          ) : (
+                            <span className={`text-xs font-medium ${unit.direction === 'long' ? 'text-green-400' : 'text-red-400'}`}>
+                              {unit.direction.toUpperCase()}
+                            </span>
+                          )}
                         </td>
                         <td className="py-2.5 pr-4 text-[#8b949e] text-xs">
-                          {group._count.trades}
+                          {isLinked ? `${unit.childCount} legs` : `${unit.childCount} orders`}
                         </td>
-                        <td className="py-2.5 pr-4 text-[#8b949e]">{fmtPrice(group.averageEntryPrice)}</td>
-                        <td className="py-2.5 pr-4 text-[#8b949e]">{fmtPrice(group.averageExitPrice)}</td>
-                        <td className={`py-2.5 pr-4 font-medium ${pnlColor(group.aggregatePnl)}`}>
-                          {fmt$(group.aggregatePnl)}
+                        <td className="py-2.5 pr-4 text-[#8b949e]">{fmtPrice(unit.averageEntryPrice)}</td>
+                        <td className="py-2.5 pr-4 text-[#8b949e]">{fmtPrice(unit.averageExitPrice)}</td>
+                        <td className={`py-2.5 pr-4 font-medium ${pnlColor(unit.pnl)}`}>{fmt$(unit.pnl)}</td>
+                        <td className="py-2.5 pr-4 text-[#6e7681] text-xs">
+                          {unit.fees != null ? `-$${Math.abs(unit.fees).toFixed(2)}` : '—'}
                         </td>
                         <td className="py-2.5 pr-4 text-[#6e7681] text-xs">
-                          {group.aggregateFees != null ? `-$${Math.abs(group.aggregateFees).toFixed(2)}` : '—'}
-                        </td>
-                        <td className="py-2.5 pr-4 text-[#6e7681] text-xs">
-                          {fmtHoldTime(group.holdTimeSeconds)}
+                          {fmtHoldTime(unit.holdTimeSeconds)}
                         </td>
                         <td className="py-2.5 pr-4">
-                          {group.tradeType ? (
-                            <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${typeClass}`}>
-                              {group.tradeType.replace(/_/g, ' ')}
+                          {unit.tradeType ? (
+                            <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${typeBadgeClass(unit.tradeType)}`}>
+                              {unit.tradeType.replace(/_/g, ' ')}
                             </span>
                           ) : (
                             <span className="text-[#6e7681]">—</span>
@@ -534,17 +620,47 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
                             <span className="text-[#6e7681]">—</span>
                           )}
                         </td>
-                        <td className="py-2.5 pr-4 text-xs text-[#6e7681]">
-                          {group.ruleSource ?? '—'}
+                        <td className="py-2.5 pr-4">
+                          {regime ? (
+                            <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${regime.bg} ${regime.text}`}>
+                              {regime.label}
+                            </span>
+                          ) : (
+                            <span className="text-[#6e7681]">—</span>
+                          )}
                         </td>
                         <td className="py-2.5 text-xs text-[#6e7681]">
-                          {fmtDate(group.lastExitTime ?? group.firstEntryTime)}
+                          {fmtDate(unit.lastExitTime ?? unit.firstEntryTime)}
                         </td>
                       </tr>
                       {isExpanded && (
                         <tr className="bg-[#0d1117]">
                           <td colSpan={13} className="p-0">
-                            <GroupFills groupId={group.id} />
+                            {isLinked && unit.legs ? (
+                              <div className="px-4 py-2 space-y-2">
+                                <div className="text-[10px] uppercase tracking-widest text-[#6e7681] px-4">
+                                  {unit.legs.length} position legs
+                                  {unit.netDelta != null && (
+                                    <span className="ml-3">Net delta: <span className="text-[#8b949e]">${Math.abs(unit.netDelta).toFixed(2)}</span></span>
+                                  )}
+                                </div>
+                                {unit.legs.map((leg) => (
+                                  <div key={leg.id} className="bg-[#161b22] rounded p-3">
+                                    <div className="flex items-center gap-3 text-xs mb-2">
+                                      <span className="font-medium text-white">{leg.asset}</span>
+                                      <span className={leg.direction === 'long' ? 'text-green-400' : 'text-red-400'}>
+                                        {leg.direction.toUpperCase()}
+                                      </span>
+                                      <span className={pnlColor(leg.pnl)}>{fmt$(leg.pnl)}</span>
+                                      <span className="text-[#6e7681]">{leg.status}</span>
+                                    </div>
+                                    <OrdersPanel positionId={leg.id} />
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <OrdersPanel positionId={unit.id} />
+                            )}
                           </td>
                         </tr>
                       )}
@@ -556,11 +672,11 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
           </div>
         )}
 
-        {/* ── Pagination ────────────────────────────────────────────── */}
+        {/* ── Pagination ─────────────────────────────────────────── */}
         {pagination && pagination.totalPages > 1 && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-[#21262d] text-xs text-[#6e7681]">
             <span>
-              {pagination.total} groups · page {pagination.page} of {pagination.totalPages}
+              {pagination.total} trade units · page {pagination.page} of {pagination.totalPages}
             </span>
             <div className="flex gap-2">
               <button

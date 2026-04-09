@@ -1,35 +1,27 @@
 /**
  * grouping/types.ts
  *
- * Core interfaces for the trade grouping pipeline.
+ * Core interfaces for the hierarchical grouping pipeline.
  *
- * The pipeline is a Chain of Responsibility: an ordered list of GroupingRules,
- * each processing ungrouped fills and passing remainders to the next rule.
- * After grouping, an ordered list of GroupClassifiers determines the trade type.
+ * Trading has a natural hierarchy:
+ *   Level 1: Fills → OrderGroups   ("How was this executed?")
+ *   Level 2: OrderGroups → Positions  ("What was the directional bet?")
+ *   Level 3: Positions → LinkedStrategies  ("What combined trade?")
  *
- * Extensibility: add a new rule by implementing GroupingRule in a new file
- * under rules/ and registering it in rules/index.ts. Same for classifiers.
+ * Each level implements GroupingLevel<TInput, TOutput>.
  */
 
 import type { Trade } from '../../../generated/prisma/client';
 
-// ─── Trade types ─────────────────────────────────────────────────────────────
+// ─── Grouping level interface ───────────────────────────────────────────────
 
-export const TRADE_TYPES = [
-  'scalp',
-  'directional',
-  'scaled_directional',
-  'market_making',
-  'delta_neutral',
-  'pairs_trade',
-  'carry_trade',
-] as const;
+export interface GroupingLevel<TInput, TOutput> {
+  readonly name: string;
+  group(items: TInput[]): TOutput[];
+}
 
-export type TradeType = (typeof TRADE_TYPES)[number];
+// ─── Fill — a database Trade record used as input ───────────────────────────
 
-// ─── Fill — a database Trade record used as input ────────────────────────────
-
-/** The subset of a Trade record that grouping rules need. */
 export type Fill = Pick<
   Trade,
   | 'id'
@@ -50,12 +42,14 @@ export type Fill = Pick<
   | 'builderCode'
   | 'subaccount'
   | 'tradeType'
+  | 'regimeAtEntry'
+  | 'sentimentAtEntry'
 >;
 
-/** Parsed raw_data fields useful for grouping. */
 export interface ParsedRawData {
   order_id?: number;
   client_order_id?: string | null;
+  stop_parent_order_id?: number | null;
   side?: string;
   cause?: string;
   [key: string]: unknown;
@@ -70,57 +64,96 @@ export function parseRawData(fill: Fill): ParsedRawData {
   }
 }
 
-// ─── Grouping rule interface ─────────────────────────────────────────────────
+// ─── TradeUnit — shared interface for anything in the primary view ──────────
 
-export interface GroupingResult {
-  /** Groups this rule created from the input fills. */
-  newGroups: ProposedGroup[];
-  /** Fills this rule couldn't group — passed to the next rule. */
-  remainingFills: Fill[];
-}
-
-export interface GroupingRule {
-  /** Human-readable name (e.g. 'explicit-link'). */
-  readonly name: string;
-  /** Lower number = runs first. */
-  readonly priority: number;
-  /** Process ungrouped fills, return groups + leftovers. */
-  apply(fills: Fill[], existingGroups: ProposedGroup[]): GroupingResult;
-}
-
-// ─── Proposed group ──────────────────────────────────────────────────────────
-
-export interface ProposedGroup {
-  fills: Fill[];
+export interface TradeUnit {
+  id: string;
+  pnl: number;
+  fees: number;
+  funding: number;
+  status: 'open' | 'closed';
+  firstEntryTime: Date | null;
+  lastExitTime: Date | null;
+  tradeType: string | null;
   confidence: number;
-  ruleSource: string;
-  suggestedType?: TradeType;
-  /** Computed after classification. */
-  classifiedType?: TradeType;
-  classifiedConfidence?: number;
+  regimeAtEntry: string | null;
+  sentimentAtEntry: string | null;
 }
 
-// ─── Classifier interface ────────────────────────────────────────────────────
+// ─── Order Group (Level 1 output) ──────────────────────────────────────────
+
+export interface OrderGroupData extends TradeUnit {
+  asset: string;
+  direction: 'long' | 'short';
+  fills: Fill[];
+  averageEntryPrice: number;
+  averageExitPrice: number | null;
+  totalSize: number;
+  ruleSource: string;
+}
+
+// ─── Position (Level 2 output) ─────────────────────────────────────────────
+
+export interface PositionData extends TradeUnit {
+  asset: string;
+  direction: 'long' | 'short';
+  orders: OrderGroupData[];
+  averageEntryPrice: number;
+  averageExitPrice: number | null;
+  totalSize: number;
+  holdTimeSeconds: number | null;
+  linkedStrategyId: string | null;
+}
+
+// ─── Linked Strategy (Level 3 output) ──────────────────────────────────────
+
+export type StrategyType = 'delta_neutral' | 'pairs_trade' | 'basis_trade';
+
+export interface LinkedStrategyData extends TradeUnit {
+  strategyType: StrategyType;
+  legs: PositionData[];
+  combinedPnl: number;
+  combinedFees: number;
+  combinedFunding: number;
+  netDelta: number;
+  spreadPnl: number | null;
+}
+
+// ─── Trade types ───────────────────────────────────────────────────────────
+
+export const ORDER_TYPES = ['partial_fill', 'twap', 'single'] as const;
+export type OrderType = (typeof ORDER_TYPES)[number];
+
+export const POSITION_TYPES = [
+  'scalp',
+  'directional',
+  'scaled_directional',
+  'carry_trade',
+  'market_making',
+] as const;
+export type PositionType = (typeof POSITION_TYPES)[number];
+
+export const STRATEGY_TYPES = ['delta_neutral', 'pairs_trade', 'basis_trade'] as const;
+
+// ─── Classifier interface ──────────────────────────────────────────────────
 
 export interface ClassificationResult {
-  type: TradeType;
+  type: string;
   confidence: number;
 }
 
-export interface GroupClassifier {
-  /** Human-readable name. */
+export interface Classifier<T> {
   readonly name: string;
-  /** Return a classification or null if this classifier doesn't match. */
-  classify(group: ProposedGroup): ClassificationResult | null;
+  classify(item: T): ClassificationResult | null;
 }
 
-// ─── Pipeline output ─────────────────────────────────────────────────────────
+// ─── Pipeline summary ──────────────────────────────────────────────────────
 
 export interface GroupingSummary {
   totalFills: number;
-  totalGroups: number;
-  autoGroupedHighConfidence: number;
+  totalOrders: number;
+  totalPositions: number;
+  totalLinkedStrategies: number;
+  positionsByType: Record<string, number>;
   needsReview: number;
-  byType: Partial<Record<TradeType, number>>;
-  byRule: Record<string, number>;
 }

@@ -33,8 +33,6 @@ export interface TradeCreateInput {
   captureMode: string;     // 'retroactive' | 'live'
   tradeType: string;       // 'directional' | 'liquidation_acquisition' etc.
   rawData: string;         // full JSON of the original fill
-  // These are filled in by the grouper or by the user
-  groupId: string | null;
   fundingEarned: number | null;
   fundingPaid: number | null;
   holdTimeSeconds: number | null;
@@ -109,8 +107,6 @@ export function mapFillToTrade(fill: TradeHistoryEntry, walletAddress: string): 
     captureMode: 'retroactive',
     tradeType: causeToTradeType(fill.cause),
 
-    // No group yet — assigned by grouper
-    groupId: null,
     fundingEarned: null,
     fundingPaid: null,
     holdTimeSeconds: null,
