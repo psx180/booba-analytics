@@ -4,7 +4,29 @@ import { useState, useEffect, useCallback, Fragment } from 'react';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-interface Trade {
+interface TradeGroup {
+  id: string;
+  asset: string;
+  direction: string;
+  tradeType: string | null;
+  status: string;
+  totalSize: number | null;
+  averageEntryPrice: number | null;
+  averageExitPrice: number | null;
+  aggregatePnl: number | null;
+  aggregateFees: number | null;
+  aggregateFunding: number | null;
+  firstEntryTime: string | null;
+  lastExitTime: string | null;
+  holdTimeSeconds: number | null;
+  confidence: number | null;
+  ruleSource: string | null;
+  linkedGroupId: string | null;
+  strategy: { name: string } | null;
+  _count: { trades: number };
+}
+
+interface Fill {
   id: string;
   asset: string;
   direction: string;
@@ -20,17 +42,7 @@ interface Trade {
   holdTimeSeconds: number | null;
   regimeAtEntry: string | null;
   tradeType: string | null;
-  sourceTag: string | null;
-  captureMode: string;
-  thesis: string | null;
-  invalidationPrice: number | null;
-  targetPrice: string | null;
-  mfePrice: number | null;
-  maePnl: number | null;
-  mfePnl: number | null;
-  maePrice: number | null;
   rawData: string | null;
-  strategy: { name: string } | null;
 }
 
 interface Pagination {
@@ -50,20 +62,26 @@ interface Summary {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
+const TRADE_TYPES = [
+  'scalp', 'directional', 'scaled_directional', 'market_making',
+  'delta_neutral', 'pairs_trade', 'carry_trade',
+];
+
 const REGIME_BADGE: Record<string, { label: string; bg: string; text: string }> = {
   trending_low_vol:  { label: 'Trending',    bg: 'bg-green-900/40',  text: 'text-green-400' },
-  trending_high_vol: { label: 'Trending ↑V', bg: 'bg-green-900/30',  text: 'text-green-300' },
+  trending_high_vol: { label: 'Trending HV', bg: 'bg-green-900/30',  text: 'text-green-300' },
   ranging_low_vol:   { label: 'Ranging',     bg: 'bg-amber-900/40',  text: 'text-amber-400' },
-  ranging_high_vol:  { label: 'Ranging ↑V',  bg: 'bg-amber-900/30',  text: 'text-amber-300' },
+  ranging_high_vol:  { label: 'Ranging HV',  bg: 'bg-amber-900/30',  text: 'text-amber-300' },
   transitional:      { label: 'Trans.',      bg: 'bg-slate-700/40',  text: 'text-slate-400' },
 };
 
 const SORT_FIELDS = [
-  { key: 'exitTime',        label: 'Date' },
-  { key: 'asset',           label: 'Asset' },
-  { key: 'pnlRealized',     label: 'P&L' },
-  { key: 'fees',            label: 'Fees' },
+  { key: 'firstEntryTime', label: 'Date' },
+  { key: 'asset',          label: 'Asset' },
+  { key: 'aggregatePnl',   label: 'P&L' },
+  { key: 'aggregateFees',  label: 'Fees' },
   { key: 'holdTimeSeconds', label: 'Hold Time' },
+  { key: 'confidence',     label: 'Confidence' },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -98,39 +116,41 @@ function fmtHoldTime(s: number | null) {
   return `${(s / 86400).toFixed(1)}d`;
 }
 
-function RegimeBadge({ regime }: { regime: string | null }) {
-  if (!regime) return <span className="text-[#6e7681]">—</span>;
-  const b = REGIME_BADGE[regime];
-  if (!b) return <span className="text-[#6e7681] text-xs">{regime}</span>;
-  return (
-    <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${b.bg} ${b.text}`}>
-      {b.label}
-    </span>
-  );
+function confidenceBadge(c: number | null) {
+  if (c == null) return null;
+  if (c > 0.8) return { bg: 'bg-green-900/30', text: 'text-green-400', label: `${Math.round(c * 100)}%` };
+  if (c >= 0.5) return { bg: 'bg-amber-900/30', text: 'text-amber-400', label: `${Math.round(c * 100)}%` };
+  return { bg: 'bg-red-900/30', text: 'text-red-400', label: `${Math.round(c * 100)}%` };
+}
+
+function tradeTypeBadge(type: string | null) {
+  if (!type) return null;
+  const colors: Record<string, string> = {
+    scalp: 'text-cyan-400 bg-cyan-900/30',
+    directional: 'text-blue-400 bg-blue-900/30',
+    scaled_directional: 'text-indigo-400 bg-indigo-900/30',
+    market_making: 'text-purple-400 bg-purple-900/30',
+    delta_neutral: 'text-teal-400 bg-teal-900/30',
+    pairs_trade: 'text-pink-400 bg-pink-900/30',
+    carry_trade: 'text-orange-400 bg-orange-900/30',
+  };
+  return colors[type] ?? 'text-[#6e7681] bg-[#21262d]';
 }
 
 // ── Filter Bar ────────────────────────────────────────────────────────────────
 
 interface Filters {
-  regime: string;
   tradeType: string;
-  strategy: string;
-  source: string;
   asset: string;
+  status: string;
 }
 
-const EMPTY_FILTERS: Filters = { regime: '', tradeType: '', strategy: '', source: '', asset: '' };
+const EMPTY_FILTERS: Filters = { tradeType: '', asset: '', status: '' };
 
 function FilterSelect({
-  label,
-  value,
-  onChange,
-  options,
+  label, value, onChange, options,
 }: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  options: string[];
+  label: string; value: string; onChange: (v: string) => void; options: string[];
 }) {
   return (
     <div className="flex flex-col gap-1">
@@ -142,7 +162,7 @@ function FilterSelect({
       >
         <option value="">All</option>
         {options.map((o) => (
-          <option key={o} value={o}>{o}</option>
+          <option key={o} value={o}>{o.replace(/_/g, ' ')}</option>
         ))}
       </select>
     </div>
@@ -152,17 +172,9 @@ function FilterSelect({
 // ── Sort Header Cell ──────────────────────────────────────────────────────────
 
 function SortTh({
-  label,
-  field,
-  sortBy,
-  sortDir,
-  onSort,
+  label, field, sortBy, sortDir, onSort,
 }: {
-  label: string;
-  field: string;
-  sortBy: string;
-  sortDir: 'asc' | 'desc';
-  onSort: (field: string) => void;
+  label: string; field: string; sortBy: string; sortDir: 'asc' | 'desc'; onSort: (f: string) => void;
 }) {
   const active = sortBy === field;
   return (
@@ -176,79 +188,77 @@ function SortTh({
   );
 }
 
-// ── Expanded Trade Detail ─────────────────────────────────────────────────────
+// ── Expanded Fills Table ──────────────────────────────────────────────────────
 
-function TradeDetail({ trade }: { trade: Trade }) {
+function GroupFills({ groupId }: { groupId: string }) {
+  const [fills, setFills] = useState<Fill[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`/api/groups/${groupId}/fills`)
+      .then((r) => r.json())
+      .then((data) => setFills(data.fills ?? []))
+      .finally(() => setLoading(false));
+  }, [groupId]);
+
+  if (loading) {
+    return (
+      <div className="px-8 py-3 text-xs text-[#6e7681]">Loading fills...</div>
+    );
+  }
+
   return (
-    <div className="px-4 py-3 bg-[#0d1117] border-t border-[#21262d] text-xs grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-2 text-[#8b949e]">
-      {trade.thesis && (
-        <div className="col-span-2 md:col-span-4">
-          <span className="text-[#6e7681] uppercase tracking-wider mr-2">Thesis</span>
-          <span className="text-[#e6edf3]">{trade.thesis}</span>
-        </div>
-      )}
-      <div>
-        <span className="text-[#6e7681] mr-1">Entry</span>
-        <span>{fmtDate(trade.entryTime)}</span>
+    <div className="px-4 py-2 bg-[#0d1117]">
+      <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-2 px-4">
+        {fills.length} fills in this group
       </div>
-      <div>
-        <span className="text-[#6e7681] mr-1">Exit</span>
-        <span>{fmtDate(trade.exitTime)}</span>
-      </div>
-      <div>
-        <span className="text-[#6e7681] mr-1">Size</span>
-        <span>{trade.size}</span>
-      </div>
-      <div>
-        <span className="text-[#6e7681] mr-1">Hold</span>
-        <span>{fmtHoldTime(trade.holdTimeSeconds)}</span>
-      </div>
-      {trade.invalidationPrice != null && (
-        <div>
-          <span className="text-[#6e7681] mr-1">Invalidation</span>
-          <span>{fmtPrice(trade.invalidationPrice)}</span>
-        </div>
-      )}
-      {trade.targetPrice && (
-        <div>
-          <span className="text-[#6e7681] mr-1">Target</span>
-          <span>{trade.targetPrice}</span>
-        </div>
-      )}
-      {trade.mfePrice != null && (
-        <div>
-          <span className="text-[#6e7681] mr-1">MFE</span>
-          <span>{fmtPrice(trade.mfePrice)}</span>
-          {trade.mfePnl != null && (
-            <span className="ml-1 text-green-400">({fmt$(trade.mfePnl)})</span>
-          )}
-        </div>
-      )}
-      {trade.maePrice != null && (
-        <div>
-          <span className="text-[#6e7681] mr-1">MAE</span>
-          <span>{fmtPrice(trade.maePrice)}</span>
-          {trade.maePnl != null && (
-            <span className="ml-1 text-red-400">({fmt$(trade.maePnl)})</span>
-          )}
-        </div>
-      )}
-      <div>
-        <span className="text-[#6e7681] mr-1">Capture</span>
-        <span>{trade.captureMode}</span>
-      </div>
-      {trade.fundingEarned != null && (
-        <div>
-          <span className="text-[#6e7681] mr-1">Funding Earned</span>
-          <span className="text-green-400">{fmt$(trade.fundingEarned)}</span>
-        </div>
-      )}
-      {trade.fundingPaid != null && (
-        <div>
-          <span className="text-[#6e7681] mr-1">Funding Paid</span>
-          <span className="text-red-400">{fmt$(trade.fundingPaid)}</span>
-        </div>
-      )}
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-[10px] uppercase tracking-widest text-[#6e7681] border-b border-[#21262d]">
+            <th className="pb-1 pr-3 text-left">Side</th>
+            <th className="pb-1 pr-3 text-left">Size</th>
+            <th className="pb-1 pr-3 text-left">Entry</th>
+            <th className="pb-1 pr-3 text-left">Exit</th>
+            <th className="pb-1 pr-3 text-left">P&L</th>
+            <th className="pb-1 pr-3 text-left">Fees</th>
+            <th className="pb-1 pr-3 text-left">Regime</th>
+            <th className="pb-1 text-left">Time</th>
+          </tr>
+        </thead>
+        <tbody>
+          {fills.map((fill) => {
+            const regime = fill.regimeAtEntry ? REGIME_BADGE[fill.regimeAtEntry] : null;
+            return (
+              <tr key={fill.id} className="border-t border-[#161b22]">
+                <td className="py-1 pr-3">
+                  <span className={fill.direction === 'long' ? 'text-green-400' : 'text-red-400'}>
+                    {fill.direction.toUpperCase()}
+                  </span>
+                </td>
+                <td className="py-1 pr-3 text-[#8b949e]">{fill.size}</td>
+                <td className="py-1 pr-3 text-[#8b949e]">{fmtPrice(fill.entryPrice)}</td>
+                <td className="py-1 pr-3 text-[#8b949e]">{fmtPrice(fill.exitPrice)}</td>
+                <td className={`py-1 pr-3 ${pnlColor(fill.pnlRealized)}`}>{fmt$(fill.pnlRealized)}</td>
+                <td className="py-1 pr-3 text-[#6e7681]">
+                  {fill.fees != null ? `-$${Math.abs(fill.fees).toFixed(2)}` : '—'}
+                </td>
+                <td className="py-1 pr-3">
+                  {regime ? (
+                    <span className={`inline-block px-1 py-0.5 rounded text-xs ${regime.bg} ${regime.text}`}>
+                      {regime.label}
+                    </span>
+                  ) : (
+                    <span className="text-[#6e7681]">—</span>
+                  )}
+                </td>
+                <td className="py-1 text-[#6e7681]">
+                  {fmtDate(fill.exitTime ?? fill.entryTime)}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -256,77 +266,53 @@ function TradeDetail({ trade }: { trade: Trade }) {
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function TradesClient({ walletAddress }: { walletAddress: string }) {
-  const [trades, setTrades] = useState<Trade[]>([]);
+  const [groups, setGroups] = useState<TradeGroup[]>([]);
   const [pagination, setPagination] = useState<Pagination | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
-  const [sortBy, setSortBy] = useState('exitTime');
+  const [sortBy, setSortBy] = useState('firstEntryTime');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [page, setPage] = useState(1);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-
-  // Collected filter options from loaded data
   const [assetOptions, setAssetOptions] = useState<string[]>([]);
-  const [strategyOptions, setStrategyOptions] = useState<string[]>([]);
-  const [sourceOptions, setSourceOptions] = useState<string[]>([]);
+  const [groupingRunning, setGroupingRunning] = useState(false);
+  const [groupingSummary, setGroupingSummary] = useState<any>(null);
 
-  const buildParams = useCallback(() => {
-    const p = new URLSearchParams({ walletAddress, sortBy, sortDir, page: String(page) });
-    if (filters.regime) p.set('regime', filters.regime);
-    if (filters.tradeType) p.set('tradeType', filters.tradeType);
-    if (filters.strategy) p.set('strategy', filters.strategy);
-    if (filters.source) p.set('source', filters.source);
-    if (filters.asset) p.set('asset', filters.asset);
-    return p;
-  }, [walletAddress, sortBy, sortDir, page, filters]);
-
-  const fetchTrades = useCallback(async () => {
+  const fetchGroups = useCallback(async () => {
     setLoading(true);
     try {
-      const params = buildParams();
-      const [tradesRes, summaryRes] = await Promise.all([
-        fetch(`/api/trades?${params}`),
-        fetch(`/api/analytics/summary?${params}`),
+      const p = new URLSearchParams({ walletAddress, sortBy, sortDir, page: String(page) });
+      if (filters.tradeType) p.set('tradeType', filters.tradeType);
+      if (filters.asset) p.set('asset', filters.asset);
+      if (filters.status) p.set('status', filters.status);
+
+      const [groupsRes, summaryRes] = await Promise.all([
+        fetch(`/api/groups?${p}`),
+        fetch(`/api/analytics/summary?walletAddress=${walletAddress}`),
       ]);
-      const [tradesData, summaryData] = await Promise.all([
-        tradesRes.json(),
+      const [groupsData, summaryData] = await Promise.all([
+        groupsRes.json(),
         summaryRes.json(),
       ]);
-      setTrades(tradesData.trades ?? []);
-      setPagination(tradesData.pagination ?? null);
+
+      setGroups(groupsData.groups ?? []);
+      setPagination(groupsData.pagination ?? null);
       setSummary(summaryData);
 
-      // Accumulate filter options from the unfiltered first load
-      if (
-        !filters.regime && !filters.tradeType &&
-        !filters.strategy && !filters.source && !filters.asset
-      ) {
-        const assets = [...new Set<string>((tradesData.trades ?? []).map((t: Trade) => t.asset))];
-        const strategies = [...new Set<string>(
-          (tradesData.trades ?? [])
-            .map((t: Trade) => t.strategy?.name)
-            .filter(Boolean) as string[]
-        )];
-        const sources = [...new Set<string>(
-          (tradesData.trades ?? [])
-            .map((t: Trade) => t.sourceTag)
-            .filter(Boolean) as string[]
-        )];
+      if (!filters.tradeType && !filters.asset && !filters.status) {
+        const assets = [...new Set<string>((groupsData.groups ?? []).map((g: TradeGroup) => g.asset))];
         setAssetOptions(assets.sort());
-        setStrategyOptions(strategies.sort());
-        setSourceOptions(sources.sort());
       }
     } finally {
       setLoading(false);
     }
-  }, [buildParams, filters]);
+  }, [walletAddress, sortBy, sortDir, page, filters]);
 
   useEffect(() => {
-    fetchTrades();
-  }, [fetchTrades]);
+    fetchGroups();
+  }, [fetchGroups]);
 
-  // Reset to page 1 when filters change
   useEffect(() => {
     setPage(1);
   }, [filters, sortBy, sortDir]);
@@ -344,16 +330,29 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
     setFilters((f) => ({ ...f, [key]: value }));
   };
 
-  const toggleExpand = (id: string) => {
-    setExpandedId((prev) => (prev === id ? null : id));
+  const runGrouping = async () => {
+    setGroupingRunning(true);
+    setGroupingSummary(null);
+    try {
+      const res = await fetch('/api/grouping/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ walletAddress }),
+      });
+      const data = await res.json();
+      setGroupingSummary(data);
+      await fetchGroups();
+    } finally {
+      setGroupingRunning(false);
+    }
   };
 
   return (
     <div className="space-y-4">
-      {/* ── Filtered Stats Bar ──────────────────────────────────────────── */}
+      {/* ── Stats Bar ──────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         {[
-          { label: 'Trades', value: summary?.tradeCount ?? '—' },
+          { label: 'Groups', value: summary?.tradeCount ?? '—' },
           {
             label: 'Total P&L',
             value: (
@@ -380,41 +379,65 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
         ))}
       </div>
 
-      {/* ── Filter Bar ──────────────────────────────────────────────────── */}
+      {/* ── Run Grouping + Summary ──────────────────────────────────── */}
+      <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-white">Trade Grouping</h2>
+            <p className="text-xs text-[#6e7681] mt-0.5">
+              Group individual fills into logical trades using the rule pipeline
+            </p>
+          </div>
+          <button
+            onClick={runGrouping}
+            disabled={groupingRunning}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:text-blue-400 text-white text-sm font-medium rounded transition-colors"
+          >
+            {groupingRunning ? 'Running...' : 'Run Grouping'}
+          </button>
+        </div>
+
+        {groupingSummary && (
+          <div className="mt-3 pt-3 border-t border-[#21262d] text-xs text-[#8b949e] space-y-1">
+            <div>
+              Grouped <span className="text-white font-medium">{groupingSummary.totalFills}</span> fills into{' '}
+              <span className="text-white font-medium">{groupingSummary.totalGroups}</span> trades.{' '}
+              <span className="text-green-400">{groupingSummary.autoGroupedHighConfidence}</span> high confidence.{' '}
+              <span className="text-amber-400">{groupingSummary.needsReview}</span> need review.
+            </div>
+            {groupingSummary.byRule && (
+              <div className="flex flex-wrap gap-3">
+                {Object.entries(groupingSummary.byRule).map(([rule, count]) => (
+                  <span key={rule} className="text-[#6e7681]">
+                    {rule}: <span className="text-[#8b949e]">{count as number}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Filter Bar ──────────────────────────────────────────────── */}
       <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
         <div className="flex flex-wrap gap-4 items-end">
-          <FilterSelect
-            label="Regime"
-            value={filters.regime}
-            onChange={(v) => handleFilterChange('regime', v)}
-            options={[
-              'trending_low_vol', 'trending_high_vol',
-              'ranging_low_vol', 'ranging_high_vol', 'transitional',
-            ]}
-          />
           <FilterSelect
             label="Trade Type"
             value={filters.tradeType}
             onChange={(v) => handleFilterChange('tradeType', v)}
-            options={['directional', 'carry', 'delta_neutral', 'market_making', 'liquidation_acquisition']}
-          />
-          <FilterSelect
-            label="Strategy"
-            value={filters.strategy}
-            onChange={(v) => handleFilterChange('strategy', v)}
-            options={strategyOptions}
-          />
-          <FilterSelect
-            label="Source"
-            value={filters.source}
-            onChange={(v) => handleFilterChange('source', v)}
-            options={sourceOptions}
+            options={TRADE_TYPES}
           />
           <FilterSelect
             label="Asset"
             value={filters.asset}
             onChange={(v) => handleFilterChange('asset', v)}
             options={assetOptions}
+          />
+          <FilterSelect
+            label="Status"
+            value={filters.status}
+            onChange={(v) => handleFilterChange('status', v)}
+            options={['open', 'closed']}
           />
           {Object.values(filters).some(Boolean) && (
             <button
@@ -427,23 +450,15 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
         </div>
       </div>
 
-      {/* ── Table ───────────────────────────────────────────────────────── */}
+      {/* ── Groups Table ────────────────────────────────────────────── */}
       <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
         {loading ? (
           <div className="h-48 flex items-center justify-center text-[#6e7681] text-sm">
-            Loading…
+            Loading...
           </div>
-        ) : trades.length === 0 ? (
+        ) : groups.length === 0 ? (
           <div className="h-48 flex flex-col items-center justify-center text-[#6e7681] text-sm gap-2">
-            <span>No trades found.</span>
-            {Object.values(filters).some(Boolean) && (
-              <button
-                onClick={() => setFilters(EMPTY_FILTERS)}
-                className="text-xs text-blue-400 hover:underline"
-              >
-                Clear filters
-              </button>
-            )}
+            <span>No trade groups found. Run the grouping pipeline first.</span>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -453,27 +468,27 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
                   <th className="px-4 py-3 text-left w-8" />
                   <SortTh label="Asset" field="asset" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
                   <th className="pb-2 pr-4 text-left">Dir</th>
+                  <th className="pb-2 pr-4 text-left">Fills</th>
                   <th className="pb-2 pr-4 text-left">Entry</th>
                   <th className="pb-2 pr-4 text-left">Exit</th>
-                  <SortTh label="P&L" field="pnlRealized" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
-                  <SortTh label="Fees" field="fees" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
-                  <th className="pb-2 pr-4 text-left">Funding</th>
+                  <SortTh label="P&L" field="aggregatePnl" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                  <SortTh label="Fees" field="aggregateFees" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
                   <SortTh label="Hold" field="holdTimeSeconds" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
-                  <th className="pb-2 pr-4 text-left">Regime</th>
-                  <th className="pb-2 pr-4 text-left">Strategy</th>
-                  <th className="pb-2 pr-4 text-left">Source</th>
                   <th className="pb-2 pr-4 text-left">Type</th>
-                  <SortTh label="Date" field="exitTime" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                  <SortTh label="Conf." field="confidence" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                  <th className="pb-2 pr-4 text-left">Rule</th>
+                  <SortTh label="Date" field="firstEntryTime" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
                 </tr>
               </thead>
               <tbody>
-                {trades.map((trade) => {
-                  const isExpanded = expandedId === trade.id;
-                  const fundingNet = (trade.fundingEarned ?? 0) - (trade.fundingPaid ?? 0);
+                {groups.map((group) => {
+                  const isExpanded = expandedId === group.id;
+                  const conf = confidenceBadge(group.confidence);
+                  const typeClass = tradeTypeBadge(group.tradeType);
                   return (
-                    <Fragment key={trade.id}>
+                    <Fragment key={group.id}>
                       <tr
-                        onClick={() => toggleExpand(trade.id)}
+                        onClick={() => setExpandedId(isExpanded ? null : group.id)}
                         className={`border-t border-[#21262d] cursor-pointer transition-colors ${
                           isExpanded ? 'bg-[#1c2128]' : 'hover:bg-[#1c2128]'
                         }`}
@@ -481,48 +496,55 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
                         <td className="px-4 py-2.5 text-[#6e7681] text-xs">
                           {isExpanded ? '▾' : '▸'}
                         </td>
-                        <td className="py-2.5 pr-4 font-medium text-white">{trade.asset}</td>
+                        <td className="py-2.5 pr-4 font-medium text-white">{group.asset}</td>
                         <td className="py-2.5 pr-4">
-                          <span className={`text-xs font-medium ${trade.direction === 'long' ? 'text-green-400' : 'text-red-400'}`}>
-                            {trade.direction.toUpperCase()}
+                          <span className={`text-xs font-medium ${group.direction === 'long' ? 'text-green-400' : 'text-red-400'}`}>
+                            {group.direction.toUpperCase()}
                           </span>
                         </td>
-                        <td className="py-2.5 pr-4 text-[#8b949e]">{fmtPrice(trade.entryPrice)}</td>
-                        <td className="py-2.5 pr-4 text-[#8b949e]">{fmtPrice(trade.exitPrice)}</td>
-                        <td className={`py-2.5 pr-4 font-medium ${pnlColor(trade.pnlRealized)}`}>
-                          {fmt$(trade.pnlRealized)}
+                        <td className="py-2.5 pr-4 text-[#8b949e] text-xs">
+                          {group._count.trades}
+                        </td>
+                        <td className="py-2.5 pr-4 text-[#8b949e]">{fmtPrice(group.averageEntryPrice)}</td>
+                        <td className="py-2.5 pr-4 text-[#8b949e]">{fmtPrice(group.averageExitPrice)}</td>
+                        <td className={`py-2.5 pr-4 font-medium ${pnlColor(group.aggregatePnl)}`}>
+                          {fmt$(group.aggregatePnl)}
                         </td>
                         <td className="py-2.5 pr-4 text-[#6e7681] text-xs">
-                          {trade.fees != null ? `-$${Math.abs(trade.fees).toFixed(2)}` : '—'}
-                        </td>
-                        <td className={`py-2.5 pr-4 text-xs ${fundingNet >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                          {trade.fundingEarned != null || trade.fundingPaid != null
-                            ? fmt$(fundingNet)
-                            : '—'}
+                          {group.aggregateFees != null ? `-$${Math.abs(group.aggregateFees).toFixed(2)}` : '—'}
                         </td>
                         <td className="py-2.5 pr-4 text-[#6e7681] text-xs">
-                          {fmtHoldTime(trade.holdTimeSeconds)}
+                          {fmtHoldTime(group.holdTimeSeconds)}
                         </td>
                         <td className="py-2.5 pr-4">
-                          <RegimeBadge regime={trade.regimeAtEntry} />
+                          {group.tradeType ? (
+                            <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${typeClass}`}>
+                              {group.tradeType.replace(/_/g, ' ')}
+                            </span>
+                          ) : (
+                            <span className="text-[#6e7681]">—</span>
+                          )}
                         </td>
-                        <td className="py-2.5 pr-4 text-xs text-[#8b949e]">
-                          {trade.strategy?.name ?? '—'}
-                        </td>
-                        <td className="py-2.5 pr-4 text-xs text-[#8b949e]">
-                          {trade.sourceTag ?? '—'}
+                        <td className="py-2.5 pr-4">
+                          {conf ? (
+                            <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${conf.bg} ${conf.text}`}>
+                              {conf.label}
+                            </span>
+                          ) : (
+                            <span className="text-[#6e7681]">—</span>
+                          )}
                         </td>
                         <td className="py-2.5 pr-4 text-xs text-[#6e7681]">
-                          {trade.tradeType ?? '—'}
+                          {group.ruleSource ?? '—'}
                         </td>
                         <td className="py-2.5 text-xs text-[#6e7681]">
-                          {fmtDate(trade.exitTime ?? trade.entryTime)}
+                          {fmtDate(group.lastExitTime ?? group.firstEntryTime)}
                         </td>
                       </tr>
                       {isExpanded && (
                         <tr className="bg-[#0d1117]">
-                          <td colSpan={14} className="p-0">
-                            <TradeDetail trade={trade} />
+                          <td colSpan={13} className="p-0">
+                            <GroupFills groupId={group.id} />
                           </td>
                         </tr>
                       )}
@@ -534,11 +556,11 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
           </div>
         )}
 
-        {/* ── Pagination ────────────────────────────────────────────────── */}
+        {/* ── Pagination ────────────────────────────────────────────── */}
         {pagination && pagination.totalPages > 1 && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-[#21262d] text-xs text-[#6e7681]">
             <span>
-              {pagination.total} trades · page {pagination.page} of {pagination.totalPages}
+              {pagination.total} groups · page {pagination.page} of {pagination.totalPages}
             </span>
             <div className="flex gap-2">
               <button
@@ -546,14 +568,14 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
                 onClick={() => setPage((p) => p - 1)}
                 className="px-3 py-1 bg-[#21262d] rounded disabled:opacity-30 hover:text-white transition-colors"
               >
-                ← Prev
+                Prev
               </button>
               <button
                 disabled={page >= pagination.totalPages}
                 onClick={() => setPage((p) => p + 1)}
                 className="px-3 py-1 bg-[#21262d] rounded disabled:opacity-30 hover:text-white transition-colors"
               >
-                Next →
+                Next
               </button>
             </div>
           </div>

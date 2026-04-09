@@ -17,6 +17,57 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'walletAddress required' }, { status: 400 });
   }
 
+  // Check if groups exist — if so, compute from groups
+  const groupCount = await prisma.tradeGroup.count({ where: { walletAddress } });
+
+  if (groupCount > 0) {
+    return computeFromGroups(walletAddress);
+  }
+
+  // Fallback to individual fills
+  return computeFromFills(walletAddress);
+}
+
+async function computeFromGroups(walletAddress: string) {
+  // For regime breakdown from groups, we need to look at the fills within
+  // each group to get regimeAtEntry, then aggregate at the group level.
+  const groups = await prisma.tradeGroup.findMany({
+    where: {
+      walletAddress,
+      status: 'closed',
+      aggregatePnl: { not: null },
+    },
+    include: {
+      trades: {
+        select: { regimeAtEntry: true },
+        take: 1, // regime at entry of the first fill
+        orderBy: { entryTime: 'asc' },
+      },
+    },
+  });
+
+  const byRegime: Record<string, { tradeCount: number; wins: number; totalPnl: number; grossWins: number; grossLosses: number }> = {};
+
+  for (const regime of ALL_REGIMES) {
+    byRegime[regime] = { tradeCount: 0, wins: 0, totalPnl: 0, grossWins: 0, grossLosses: 0 };
+  }
+  byRegime['unknown'] = { tradeCount: 0, wins: 0, totalPnl: 0, grossWins: 0, grossLosses: 0 };
+
+  for (const g of groups) {
+    const r = g.trades[0]?.regimeAtEntry ?? 'unknown';
+    if (!byRegime[r]) byRegime[r] = { tradeCount: 0, wins: 0, totalPnl: 0, grossWins: 0, grossLosses: 0 };
+    const bucket = byRegime[r];
+    const pnl = g.aggregatePnl ?? 0;
+    bucket.tradeCount++;
+    bucket.totalPnl += pnl;
+    if (pnl > 0) { bucket.wins++; bucket.grossWins += pnl; }
+    else if (pnl < 0) { bucket.grossLosses += Math.abs(pnl); }
+  }
+
+  return formatResult(byRegime);
+}
+
+async function computeFromFills(walletAddress: string) {
   const trades = await prisma.trade.findMany({
     where: {
       walletAddress,
@@ -44,6 +95,10 @@ export async function GET(req: NextRequest) {
     else if (pnl < 0) { bucket.grossLosses += Math.abs(pnl); }
   }
 
+  return formatResult(byRegime);
+}
+
+function formatResult(byRegime: Record<string, { tradeCount: number; wins: number; totalPnl: number; grossWins: number; grossLosses: number }>) {
   const result = Object.entries(byRegime).map(([regime, stats]) => ({
     regime,
     tradeCount: stats.tradeCount,
@@ -55,5 +110,5 @@ export async function GET(req: NextRequest) {
       : stats.grossWins > 0 ? 999 : 0,
   }));
 
-  return NextResponse.json({ regimes: result });
+  return Response.json({ regimes: result });
 }

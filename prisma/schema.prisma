@@ -44,13 +44,19 @@ model TradeGroup {
   strategyId          String?
   strategy            Strategy? @relation(fields: [strategyId], references: [id])
   sourceTag           String?
-  tradeType           String?   // directional | carry | delta_neutral | market_making | liquidation_acquisition
+  tradeType           String?   // scalp | directional | scaled_directional | market_making | delta_neutral | pairs_trade | carry_trade
   aggregatePnl        Float?
   aggregateFees       Float?
   aggregateFunding    Float?
   averageEntryPrice   Float?
   averageExitPrice    Float?
   totalSize           Float?
+  firstEntryTime      DateTime?
+  lastExitTime        DateTime?
+  holdTimeSeconds     Int?
+  confidence          Float?    // 0-1, from the rule that created this group
+  ruleSource          String?   // which grouping rule created this group
+  linkedGroupId       String?   // for delta_neutral / pairs_trade legs
   status              String    @default("open") // open | closed
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
