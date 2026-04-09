@@ -33,6 +33,7 @@ export interface SignatureHeader {
 export interface SignedRequestBase {
   account: string;
   signature: string;
+  type: string;
   timestamp: number;
   expiry_window: number;
   agent_wallet?: string;

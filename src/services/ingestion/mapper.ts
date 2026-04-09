@@ -20,6 +20,7 @@ import type { TradeHistoryEntry } from '../pacifica/types/account';
 // The shape Prisma expects for a Trade upsert
 export interface TradeCreateInput {
   id: string;              // our own ID — we use history_id as stable external key
+  walletAddress: string;
   asset: string;
   direction: string;       // 'long' | 'short'
   size: number;
@@ -80,12 +81,13 @@ function causeToTradeType(cause: string): string {
  * exit price, pnl, and fees. Open fills are placeholders that get merged
  * into trade groups during the grouping step.
  */
-export function mapFillToTrade(fill: TradeHistoryEntry): TradeCreateInput {
+export function mapFillToTrade(fill: TradeHistoryEntry, walletAddress: string): TradeCreateInput {
   const isClose = isCloseFill(fill.side);
   const now = new Date();
 
   return {
     id: fillId(fill),
+    walletAddress,
     asset: fill.symbol,
     direction: directionFromSide(fill.side),
     size: parseFloat(fill.amount),

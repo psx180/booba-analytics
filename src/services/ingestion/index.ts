@@ -47,11 +47,13 @@ export interface IngestFundingResult {
 /**
  * Ingest raw fills from Pacifica into the database.
  *
- * @param fills      Raw fill array from client.account.getAllTradeHistory()
- * @param strategy   Optional custom grouping strategy (defaults to FIFO)
+ * @param fills         Raw fill array from client.account.getAllTradeHistory()
+ * @param walletAddress The wallet address these fills belong to
+ * @param strategy      Optional custom grouping strategy (defaults to FIFO)
  */
 export async function ingestTrades(
   fills: TradeHistoryEntry[],
+  walletAddress: string,
   strategy?: GroupingStrategy,
 ): Promise<IngestTradesResult> {
   const result: IngestTradesResult = {
@@ -67,7 +69,7 @@ export async function ingestTrades(
   result.fillsProcessed = fills.length;
 
   // Step 1: Map all fills → TradeCreateInput
-  const mappedFills = fills.map(mapFillToTrade);
+  const mappedFills = fills.map((f) => mapFillToTrade(f, walletAddress));
 
   // Step 2: Group fills → assign groupIds, create TradeGroup records
   const { updatedTrades, groups } = buildGroups(mappedFills, strategy);
@@ -80,6 +82,7 @@ export async function ingestTrades(
         where: { id: group.id },
         create: {
           id: group.id,
+          walletAddress: group.walletAddress,
           asset: group.asset,
           direction: group.direction,
           status: group.status,
@@ -115,6 +118,7 @@ export async function ingestTrades(
         where: { id: trade.id },
         create: {
           id: trade.id,
+          walletAddress: trade.walletAddress,
           asset: trade.asset,
           direction: trade.direction,
           size: trade.size,
@@ -163,10 +167,12 @@ export async function ingestTrades(
  * time of the payment (same asset, overlapping time window). Updates the
  * matched trade's fundingEarned / fundingPaid accordingly.
  *
- * @param events   Raw funding events from client.account.getFundingHistory()
+ * @param events        Raw funding events from client.account.getFundingHistory()
+ * @param walletAddress The wallet address these events belong to
  */
 export async function ingestFunding(
   events: AccountFundingEntry[],
+  walletAddress: string,
 ): Promise<IngestFundingResult> {
   const result: IngestFundingResult = {
     eventsProcessed: 0,
@@ -184,9 +190,10 @@ export async function ingestFunding(
       const payout = parseFloat(event.payout);
 
       // Try to find the trade that was open during this funding event:
-      // same asset, entered before the event, exited after (or still open)
+      // same wallet, same asset, entered before the event, exited after (or still open)
       const matchedTrade = await prisma.trade.findFirst({
         where: {
+          walletAddress,
           asset: event.symbol,
           entryTime: { lte: eventTime },
           OR: [
@@ -202,6 +209,7 @@ export async function ingestFunding(
         where: { id: `funding_${event.history_id}` },
         create: {
           id: `funding_${event.history_id}`,
+          walletAddress,
           asset: event.symbol,
           amount: parseFloat(event.amount),
           rate: parseFloat(event.rate),

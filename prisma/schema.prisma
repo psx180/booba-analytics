@@ -16,6 +16,7 @@ datasource db {
 
 model Strategy {
   id                String   @id @default(cuid())
+  walletAddress     String?
   name              String   @unique
   directionBias     String?  // long_only | short_only | both
   preferredRegime   String?  // trending_low_vol | trending_high_vol | ranging_low_vol | ranging_high_vol
@@ -36,6 +37,7 @@ model Strategy {
 
 model TradeGroup {
   id                  String    @id @default(cuid())
+  walletAddress       String?
   asset               String
   direction           String    // long | short
   thesis              String?
@@ -60,6 +62,7 @@ model TradeGroup {
 
 model Trade {
   id                String     @id @default(cuid())
+  walletAddress     String?
   asset             String
   direction         String     // long | short
   size              Float
@@ -125,6 +128,7 @@ model CustomStatDefinition {
 
 model BoobaObservation {
   id                String    @id @default(cuid())
+  walletAddress     String?
   observationText   String
   confidence        String?   // high | medium | low
   sourceModule      String?   // exit_optimizer | disposition_detector | tilt_detector | novel_pattern | weekly_synthesis
@@ -139,6 +143,7 @@ model BoobaObservation {
 
 model AnalysisSnapshot {
   id                 String   @id @default(cuid())
+  walletAddress      String?
   periodType         String   // daily | weekly
   periodStart        DateTime
   periodEnd          DateTime
@@ -156,8 +161,9 @@ model AnalysisSnapshot {
 // ─── Funding History ───────────────────────────────────────────────────────────
 
 model FundingHistory {
-  id        String   @id @default(cuid())
-  asset     String
+  id            String   @id @default(cuid())
+  walletAddress String?
+  asset         String
   amount    Float
   rate      Float
   timestamp DateTime
@@ -174,12 +180,15 @@ model RegimeSnapshot {
   asset                String
   timestamp            DateTime
   timeframe            String   // daily | hourly | etc.
+  method               String   // detector name, e.g. 'adx-atr' — lets us know which algorithm produced this
+  regimeClassification String?  // trending_low_vol | trending_high_vol | ranging_low_vol | ranging_high_vol | transitional
+  confidence           Float?   // 0-1, how clearly this regime is established
   adxValue             Float?
   atrValue             Float?
   atrSmaValue          Float?
-  regimeClassification String?  // trending_low_vol | trending_high_vol | ranging_low_vol | ranging_high_vol
   createdAt            DateTime @default(now())
 
+  @@unique([asset, timestamp, timeframe, method])
   @@index([asset, timestamp])
 }
 
@@ -187,6 +196,7 @@ model RegimeSnapshot {
 
 model Alert {
   id             String   @id @default(cuid())
+  walletAddress  String?
   alertType      String   // utilization_spike | margin_warning | tilt_warning | sentiment_shift | funding_flip
   message        String
   severity       String   // info | warning | critical

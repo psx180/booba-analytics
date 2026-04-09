@@ -49,6 +49,7 @@ export interface GroupingStrategy {
 
 export interface TradeGroupCreateInput {
   id: string;
+  walletAddress: string;
   asset: string;
   direction: string;
   status: 'open' | 'closed';
@@ -155,6 +156,7 @@ export class FifoGrouper implements GroupingStrategy {
 
           groups.set(groupId, {
             id: groupId,
+            walletAddress: fill.walletAddress,
             asset: fill.asset,
             direction: fill.direction,
             status: 'closed',
@@ -180,6 +182,7 @@ export class FifoGrouper implements GroupingStrategy {
 
           groups.set(groupId, {
             id: groupId,
+            walletAddress: fill.walletAddress,
             asset: fill.asset,
             direction: fill.direction,
             status: 'closed',
@@ -208,12 +211,14 @@ export class FifoGrouper implements GroupingStrategy {
         if (t) t.groupId = groupId;
 
         if (!groups.has(groupId)) {
+          const fill = updatedTrades.get(open.fillId)!;
           groups.set(groupId, {
             id: groupId,
-            asset: updatedTrades.get(open.fillId)!.asset,
-            direction: updatedTrades.get(open.fillId)!.direction,
+            walletAddress: fill.walletAddress,
+            asset: fill.asset,
+            direction: fill.direction,
             status: 'open',
-            tradeType: updatedTrades.get(open.fillId)!.tradeType,
+            tradeType: fill.tradeType,
             totalSize: open.size,
             averageEntryPrice: open.entryPrice,
             averageExitPrice: null,

@@ -8,6 +8,12 @@
  *
  * For ongoing sync (only new trades since last import):
  *   npx tsx src/scripts/import.ts <wallet_address> --incremental
+ *
+ * To avoid rate limits, set PF_API_KEY in your environment first:
+ *   PF_API_KEY=yourkey npx tsx src/scripts/import.ts <wallet_address>
+ *
+ * To generate a key (requires your private key):
+ *   npx tsx src/scripts/create-api-key.ts
  */
 
 import { PacificaClient } from '../services/pacifica';
@@ -30,7 +36,10 @@ async function main() {
   console.log(`\nImporting trades for: ${walletAddress}`);
   console.log(`Mode: ${incremental ? 'incremental (new only)' : 'full history'}\n`);
 
-  const client = new PacificaClient({ walletAddress });
+  const apiConfigKey = process.env.PF_API_KEY;
+  if (apiConfigKey) console.log('Using API config key for higher rate limits.');
+
+  const client = new PacificaClient({ walletAddress, apiConfigKey });
 
   // ── Fetch trade history ────────────────────────────────────────────────────
 
@@ -47,7 +56,7 @@ async function main() {
   if (fills.length === 0) {
     console.log('  Nothing to import.');
   } else {
-    const tradeResult = await ingestTrades(fills);
+    const tradeResult = await ingestTrades(fills, walletAddress);
     console.log('\nTrade ingestion:');
     console.log(`  Fills processed : ${tradeResult.fillsProcessed}`);
     console.log(`  Trades upserted : ${tradeResult.tradesUpserted}`);
@@ -67,7 +76,7 @@ async function main() {
   console.log(`  Fetched ${fundingEvents.length} funding events`);
 
   if (fundingEvents.length > 0) {
-    const fundingResult = await ingestFunding(fundingEvents);
+    const fundingResult = await ingestFunding(fundingEvents, walletAddress);
     console.log('\nFunding ingestion:');
     console.log(`  Events processed : ${fundingResult.eventsProcessed}`);
     console.log(`  Linked to trades : ${fundingResult.eventsLinked}`);

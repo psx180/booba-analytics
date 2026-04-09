@@ -61,6 +61,14 @@ export interface PacificaClientConfig {
   wsUrl?: string;
   /** Default signature expiry in ms (default: 5000) */
   defaultExpiryWindow?: number;
+  /**
+   * Pacifica API config key (format: `xxxxxxxx_<base58>`).
+   * Sent as `PF-API-KEY` header on every request to raise rate limits.
+   * Create one via client.apiKeys.create() — requires signing, so privateKey
+   * or agentPrivateKey must also be set when creating it.
+   * Store it in an env var (e.g. PF_API_KEY) and pass it here.
+   */
+  apiConfigKey?: string;
 }
 
 export class PacificaBaseClient {
@@ -76,12 +84,15 @@ export class PacificaBaseClient {
   private _walletAddress?: string;
   /** Whether we're in agent mode (signing key != wallet key) */
   private _isAgentMode = false;
+  /** Sent as PF-API-KEY header on every request when present */
+  private _apiConfigKey?: string;
 
   constructor(config: PacificaClientConfig = {}) {
     const isTestnet = config.network === 'testnet';
     this.restUrl = config.restUrl ?? (isTestnet ? TESTNET_REST_URL : MAINNET_REST_URL);
     this.wsUrl = config.wsUrl ?? (isTestnet ? TESTNET_WS_URL : MAINNET_WS_URL);
     this.defaultExpiryWindow = config.defaultExpiryWindow ?? 5_000;
+    this._apiConfigKey = config.apiConfigKey;
 
     if (config.agentPrivateKey && config.walletAddress) {
       // Mode 3: Agent key — sign as agent, act on behalf of walletAddress
@@ -175,6 +186,7 @@ export class PacificaBaseClient {
     const result: SignedRequestBase & Record<string, unknown> = {
       account: this.publicKey,   // always the user's wallet address
       signature: signatureB58,
+      type: signatureType,
       timestamp,
       expiry_window: this.defaultExpiryWindow,
       ...payload,
@@ -189,6 +201,12 @@ export class PacificaBaseClient {
 
   // ─── HTTP ──────────────────────────────────────────────────────────────────
 
+  private get baseHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {};
+    if (this._apiConfigKey) headers['PF-API-KEY'] = this._apiConfigKey;
+    return headers;
+  }
+
   async get<T>(
     path: string,
     params: Record<string, string | number | boolean | undefined>,
@@ -198,8 +216,10 @@ export class PacificaBaseClient {
     for (const [key, value] of Object.entries(params)) {
       if (value !== undefined) url.searchParams.set(key, String(value));
     }
-    const response = await fetch(url.toString());
-    return this.parseResponse(response, schema);
+    return this.fetchWithRetry(
+      () => fetch(url.toString(), { headers: this.baseHeaders }),
+      schema,
+    );
   }
 
   async post<T>(
@@ -207,34 +227,66 @@ export class PacificaBaseClient {
     body: Record<string, unknown>,
     schema: z.ZodType<T>,
   ): Promise<T> {
-    const response = await fetch(`${this.restUrl}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    return this.parseResponse(response, schema);
+    return this.fetchWithRetry(
+      () => fetch(`${this.restUrl}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...this.baseHeaders },
+        body: JSON.stringify(body),
+      }),
+      schema,
+    );
+  }
+
+  /**
+   * Wraps a fetch call with exponential backoff retry on 429.
+   * On rate limit: waits 1s, 2s, 4s before giving up.
+   */
+  private async fetchWithRetry<T>(
+    doFetch: () => Promise<Response>,
+    schema: z.ZodType<T>,
+    maxRetries = 3,
+  ): Promise<T> {
+    let lastError: Error | undefined;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const response = await doFetch();
+      if (response.status === 429) {
+        lastError = new PacificaRateLimitError();
+        if (attempt < maxRetries) {
+          const delay = Math.pow(2, attempt) * 1_000;
+          await sleep(delay);
+          continue;
+        }
+        throw lastError;
+      }
+      return this.parseResponse(response, schema);
+    }
+    throw lastError;
   }
 
   private async parseResponse<T>(response: Response, schema: z.ZodType<T>): Promise<T> {
     const text = await response.text();
+
+    // Check status BEFORE parsing — error bodies are often plain text, not JSON
     let json: unknown;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      throw new PacificaError(`Non-JSON response: ${text}`, response.status);
-    }
+    try { json = JSON.parse(text); } catch { json = undefined; }
+
+    const message = (json as any)?.error ?? text;
 
     switch (response.status) {
-      case 401: throw new PacificaAuthError((json as any)?.error ?? 'Unauthorized');
-      case 403: throw new PacificaAuthError((json as any)?.error ?? 'Forbidden');
-      case 404: throw new PacificaNotFoundError((json as any)?.error ?? 'Not found');
-      case 429: throw new PacificaRateLimitError((json as any)?.error ?? 'Rate limited');
-      case 400: throw new PacificaValidationError((json as any)?.error ?? 'Bad request');
-      case 500: throw new PacificaServerError((json as any)?.error ?? 'Server error');
+      case 401: throw new PacificaAuthError(message);
+      case 403: throw new PacificaAuthError(message);
+      case 404: throw new PacificaNotFoundError(message);
+      case 429: throw new PacificaRateLimitError(message);
+      case 400: throw new PacificaValidationError(message);
+      case 500: throw new PacificaServerError(message);
     }
 
     if (!response.ok) {
-      throw new PacificaError(`HTTP ${response.status}`, response.status, text);
+      throw new PacificaError(`HTTP ${response.status}: ${message}`, response.status, text);
+    }
+
+    if (json === undefined) {
+      throw new PacificaError(`Non-JSON response: ${text}`, response.status);
     }
 
     const parsed = schema.safeParse(json);
@@ -247,4 +299,8 @@ export class PacificaBaseClient {
     }
     return parsed.data;
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

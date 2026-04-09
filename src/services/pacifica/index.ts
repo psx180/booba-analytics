@@ -1,6 +1,7 @@
 import { PacificaBaseClient, PacificaClientConfig } from './client';
 import { AccountAPI } from './rest/account';
 import { AgentAPI } from './rest/agent';
+import { ApiKeysAPI } from './rest/apiKeys';
 import { LakeAPI } from './rest/lake';
 import { MarketAPI } from './rest/market';
 import { OrdersAPI } from './rest/orders';
@@ -12,6 +13,7 @@ export class PacificaClient {
   readonly account: AccountAPI;
   readonly orders: OrdersAPI;
   readonly agent: AgentAPI;
+  readonly apiKeys: ApiKeysAPI;
   readonly lake: LakeAPI;
   readonly ws: PacificaWsClient;
   readonly subscribe: PacificaSubscriptions;
@@ -24,6 +26,7 @@ export class PacificaClient {
     this.account = new AccountAPI(this.base);
     this.orders = new OrdersAPI(this.base);
     this.agent = new AgentAPI(this.base);
+    this.apiKeys = new ApiKeysAPI(this.base);
     this.lake = new LakeAPI(this.base);
     this.ws = new PacificaWsClient({ url: this.base.wsUrl });
     this.subscribe = new PacificaSubscriptions(this.ws);

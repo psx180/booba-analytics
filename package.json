@@ -4,6 +4,7 @@
   "main": "index.js",
   "scripts": {
     "import": "tsx src/scripts/import.ts",
+    "regimes": "tsx src/scripts/compute-regimes.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev"
   },
@@ -17,6 +18,7 @@
     "better-sqlite3": "^12.8.0",
     "bs58": "^6.0.0",
     "prisma": "^7.7.0",
+    "trading-signals": "^7.4.3",
     "tweetnacl": "^1.0.3",
     "uuid": "^13.0.0",
     "ws": "^8.20.0",
