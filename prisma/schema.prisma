@@ -101,6 +101,9 @@ model Position {
   tiltScore           Float?
   tiltEpisodeId       String?
   tiltFeatures        String?         // JSON: TiltScore.features object
+  // User-annotated tags (set via trade detail modal / Phase 2 popup)
+  strategyTag         String?
+  sourceTag           String?
 
   customData          String?         // JSON
   linkedStrategyId    String?

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, Fragment } from 'react';
+import TradeDetailModal from './TradeDetailModal';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -363,6 +364,7 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [page, setPage] = useState(1);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [detailPositionId, setDetailPositionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [assetOptions, setAssetOptions] = useState<string[]>([]);
   const [groupingRunning, setGroupingRunning] = useState(false);
@@ -431,6 +433,14 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
 
   return (
     <div className="space-y-4">
+      {detailPositionId && (
+        <TradeDetailModal
+          positionId={detailPositionId}
+          walletAddress={walletAddress}
+          onClose={() => setDetailPositionId(null)}
+        />
+      )}
+
       {/* ── Stats Bar ──────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         {[
@@ -553,6 +563,7 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
                   <SortTh label="Conf." field="confidence" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
                   <th className="pb-2 pr-4 text-left">Regime</th>
                   <SortTh label="Date" field="firstEntryTime" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+                  <th className="pb-2 pr-4 text-left" />
                 </tr>
               </thead>
               <tbody>
@@ -634,10 +645,20 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
                         <td className="py-2.5 text-xs text-[#6e7681]">
                           {fmtDate(unit.lastExitTime ?? unit.firstEntryTime)}
                         </td>
+                        <td className="py-2.5 pr-4" onClick={(e) => e.stopPropagation()}>
+                          {unit.kind === 'position' && (
+                            <button
+                              onClick={() => setDetailPositionId(unit.id)}
+                              className="text-[10px] text-[#6e7681] hover:text-blue-400 bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] rounded px-2 py-0.5 transition-colors whitespace-nowrap"
+                            >
+                              Details
+                            </button>
+                          )}
+                        </td>
                       </tr>
                       {isExpanded && (
                         <tr className="bg-[#0d1117]">
-                          <td colSpan={13} className="p-0">
+                          <td colSpan={14} className="p-0">
                             {isLinked && unit.legs ? (
                               <div className="px-4 py-2 space-y-2">
                                 <div className="text-[10px] uppercase tracking-widest text-[#6e7681] px-4">
