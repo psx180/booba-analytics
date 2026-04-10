@@ -10,6 +10,6 @@ export async function GET(req: NextRequest) {
   }
 
   const service = createAnalyticsService();
-  const result = await service.aggregate('performance', walletAddress, parseFilters(sp));
+  const result = await service.aggregate('equity-curve', walletAddress, parseFilters(sp));
   return NextResponse.json(result);
 }

@@ -3,7 +3,8 @@
     "allow": [
       "WebFetch(domain:pacifica.gitbook.io)",
       "WebFetch(domain:github.com)",
-      "Bash(npx prisma:*)"
+      "Bash(npx prisma:*)",
+      "Bash(npx tsc:*)"
     ]
   }
 }

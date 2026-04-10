@@ -387,7 +387,9 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
 
       setTradeUnits(unitsData.tradeUnits ?? []);
       setPagination(unitsData.pagination ?? null);
-      setSummary(summaryData);
+      // /api/analytics/summary now returns an AggregationResult envelope —
+      // the flat performance stats live under .data.
+      setSummary(summaryData?.data ?? null);
 
       if (!filters.tradeType && !filters.asset && !filters.status) {
         const assets = [...new Set<string>(
@@ -437,7 +439,7 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
             label: 'Total P&L',
             value: <span className={pnlColor(summary?.totalPnl ?? null)}>{summary ? fmt$(summary.totalPnl) : '—'}</span>,
           },
-          { label: 'Win Rate', value: summary ? `${summary.winRate.toFixed(1)}%` : '—' },
+          { label: 'Win Rate', value: summary ? `${(summary.winRate * 100).toFixed(1)}%` : '—' },
           {
             label: 'Expectancy',
             value: <span className={pnlColor(summary?.expectancy ?? null)}>{summary ? fmt$(summary.expectancy) : '—'}</span>,

@@ -5,22 +5,54 @@ import EquityCurve, { EquityPoint, TradeMeta, REGIME_LABELS } from './EquityCurv
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-interface Summary {
+interface PerformanceData {
   tradeCount: number;
-  totalPnl: number;
-  winRate: number;
+  winRate: number;        // fraction 0-1
+  lossRate: number;
+  averageWin: number;
+  averageLoss: number;
   expectancy: number;
   profitFactor: number;
-  equityCurve: EquityPoint[];
+  totalPnl: number;
+  totalFees: number;
+  totalFunding: number;
 }
 
-interface RegimeStats {
+interface PerformanceResult {
+  name: string;
+  data: PerformanceData;
+  breakdowns?: { regime: Record<string, PerformanceData> };
+}
+
+interface EquityCurvePoint {
+  date: string;
+  value: number;
+  cumulativePnl: number;
   regime: string;
-  tradeCount: number;
-  totalPnl: number;
-  winRate: number;
-  expectancy: number;
-  profitFactor: number;
+  positionId: string;
+}
+
+interface EquityCurveResult {
+  name: string;
+  data: { tradeCount: number; finalPnl: number };
+  series: EquityCurvePoint[];
+}
+
+interface BreakdownResult {
+  name: string;
+  data: { groupBy: string; groupCount: number };
+  breakdowns: Record<string, Record<string, PerformanceData>>;
+}
+
+interface Insight {
+  module: string;
+  title: string;
+  description: string;
+  severity: 'info' | 'warning' | 'critical';
+  confidence: number;
+  suggestion?: string;
+  data: Record<string, any>;
+  regimeBreakdown?: Record<string, any>;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -41,6 +73,12 @@ const FILTER_REGIMES = [
   { key: 'transitional',      label: 'Transitional' },
 ];
 
+const SEVERITY_STYLE: Record<Insight['severity'], { border: string; badge: string; badgeText: string }> = {
+  info:     { border: 'border-blue-500/30',  badge: 'bg-blue-500/15',   badgeText: 'text-blue-300'   },
+  warning:  { border: 'border-amber-500/40', badge: 'bg-amber-500/15',  badgeText: 'text-amber-300'  },
+  critical: { border: 'border-red-500/40',   badge: 'bg-red-500/15',    badgeText: 'text-red-300'    },
+};
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function pnlColor(v: number) {
@@ -49,6 +87,10 @@ function pnlColor(v: number) {
 
 function formatPnl(v: number) {
   return `${v >= 0 ? '+' : ''}$${Math.abs(v).toFixed(2)}`;
+}
+
+function formatPercent(fraction: number) {
+  return `${(fraction * 100).toFixed(1)}%`;
 }
 
 // ── Stat Card ────────────────────────────────────────────────────────────────
@@ -65,7 +107,28 @@ function StatCard({ label, value, sub }: { label: string; value: React.ReactNode
 
 // ── Insight Card ─────────────────────────────────────────────────────────────
 
-function InsightCard({ title, body }: { title: string; body: string }) {
+function InsightCard({ insight }: { insight: Insight }) {
+  const style = SEVERITY_STYLE[insight.severity];
+  return (
+    <div className={`bg-[#161b22] border rounded-lg p-4 ${style.border}`}>
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <div className="text-sm font-semibold text-white">{insight.title}</div>
+        <span className={`px-2 py-0.5 rounded text-[10px] uppercase tracking-widest font-medium ${style.badge} ${style.badgeText}`}>
+          {insight.severity}
+        </span>
+      </div>
+      <p className="text-sm text-[#8b949e] leading-relaxed">{insight.description}</p>
+      {insight.suggestion && (
+        <p className="text-xs text-[#6e7681] leading-relaxed mt-2 pt-2 border-t border-[#21262d]">
+          <span className="text-[#8b949e] font-medium">Suggestion: </span>
+          {insight.suggestion}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function EmptyInsightCard({ title, body }: { title: string; body: string }) {
   return (
     <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
       <div className="text-xs font-semibold text-[#8b949e] mb-2 uppercase tracking-wider">
@@ -78,9 +141,9 @@ function InsightCard({ title, body }: { title: string; body: string }) {
 
 // ── Regime breakdown row ──────────────────────────────────────────────────────
 
-function RegimeRow({ stats }: { stats: RegimeStats }) {
+function RegimeRow({ regime, stats }: { regime: string; stats: PerformanceData }) {
   if (stats.tradeCount === 0) return null;
-  const badge = REGIME_BADGE[stats.regime];
+  const badge = REGIME_BADGE[regime];
   return (
     <tr className="border-t border-[#21262d] text-sm">
       <td className="py-2 pr-4">
@@ -89,14 +152,14 @@ function RegimeRow({ stats }: { stats: RegimeStats }) {
             {badge.label}
           </span>
         ) : (
-          <span className="text-[#6e7681]">{stats.regime}</span>
+          <span className="text-[#6e7681]">{regime}</span>
         )}
       </td>
       <td className="py-2 pr-4 text-[#8b949e]">{stats.tradeCount}</td>
       <td className={`py-2 pr-4 font-medium ${pnlColor(stats.totalPnl)}`}>
         {formatPnl(stats.totalPnl)}
       </td>
-      <td className="py-2 pr-4 text-[#8b949e]">{stats.winRate.toFixed(1)}%</td>
+      <td className="py-2 pr-4 text-[#8b949e]">{formatPercent(stats.winRate)}</td>
       <td className={`py-2 ${pnlColor(stats.expectancy)}`}>
         {formatPnl(stats.expectancy)}
       </td>
@@ -107,11 +170,15 @@ function RegimeRow({ stats }: { stats: RegimeStats }) {
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function DashboardClient({ walletAddress }: { walletAddress: string }) {
-  const [summary, setSummary] = useState<Summary | null>(null);
-  const [regimeBreakdown, setRegimeBreakdown] = useState<RegimeStats[]>([]);
+  const [performance, setPerformance] = useState<PerformanceData | null>(null);
+  const [equityCurve, setEquityCurve] = useState<EquityPoint[]>([]);
   const [tradeMetas, setTradeMetas] = useState<TradeMeta[]>([]);
+  const [regimeBreakdown, setRegimeBreakdown] = useState<Record<string, PerformanceData>>({});
+  const [insights, setInsights] = useState<Insight[]>([]);
   const [activeRegime, setActiveRegime] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [computing, setComputing] = useState(false);
+  const [computeResult, setComputeResult] = useState<string | null>(null);
 
   const fetchData = useCallback(
     async (regime: string | null) => {
@@ -120,31 +187,42 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
         const params = new URLSearchParams({ walletAddress });
         if (regime) params.set('regime', regime);
 
-        const [summaryRes, regimeRes, tradesRes] = await Promise.all([
+        const breakdownParams = new URLSearchParams({ walletAddress, groupBy: 'regime' });
+
+        const [summaryRes, equityRes, breakdownRes, insightsRes] = await Promise.all([
           fetch(`/api/analytics/summary?${params}`),
-          fetch(`/api/analytics/regime-breakdown?walletAddress=${walletAddress}`),
-          fetch(`/api/trades?${params}&pageSize=500&sortBy=exitTime&sortDir=asc`),
+          fetch(`/api/analytics/equity-curve?${params}`),
+          fetch(`/api/analytics/breakdown?${breakdownParams}`),
+          fetch(`/api/analytics/insights?walletAddress=${walletAddress}`),
         ]);
 
-        const [summaryData, regimeData, tradesData] = await Promise.all([
-          summaryRes.json(),
-          regimeRes.json(),
-          tradesRes.json(),
+        const [summaryData, equityData, breakdownData, insightsData] = await Promise.all([
+          summaryRes.json() as Promise<PerformanceResult>,
+          equityRes.json() as Promise<EquityCurveResult>,
+          breakdownRes.json() as Promise<BreakdownResult>,
+          insightsRes.json() as Promise<{ insights: Insight[] }>,
         ]);
 
-        setSummary(summaryData);
-        setRegimeBreakdown(regimeData.regimes ?? []);
-        setTradeMetas(
-          (tradesData.trades ?? []).map((t: any) => ({
-            date: t.exitTime ?? t.entryTime,
-            regimeAtEntry: t.regimeAtEntry,
-          }))
+        setPerformance(summaryData.data ?? null);
+        setEquityCurve(
+          (equityData.series ?? []).map((p) => ({
+            date: p.date,
+            cumulativePnl: p.cumulativePnl,
+          })),
         );
+        setTradeMetas(
+          (equityData.series ?? []).map((p) => ({
+            date: p.date,
+            regimeAtEntry: p.regime,
+          })),
+        );
+        setRegimeBreakdown(breakdownData.breakdowns?.regime ?? {});
+        setInsights(insightsData.insights ?? []);
       } finally {
         setLoading(false);
       }
     },
-    [walletAddress]
+    [walletAddress],
   );
 
   useEffect(() => {
@@ -156,40 +234,82 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
     setActiveRegime(next);
   };
 
-  const hasData = summary && summary.tradeCount > 0;
+  const handleCompute = async () => {
+    setComputing(true);
+    setComputeResult(null);
+    try {
+      const res = await fetch('/api/analytics/metrics/compute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ walletAddress }),
+      });
+      const data = await res.json();
+      const metricsCount = data.metrics?.computed ?? 0;
+      const insightsCount = data.insights?.produced ?? 0;
+      setComputeResult(`Computed metrics for ${metricsCount} positions. Found ${insightsCount} insights.`);
+      await fetchData(activeRegime);
+    } catch {
+      setComputeResult('Compute failed — see server logs.');
+    } finally {
+      setComputing(false);
+    }
+  };
+
+  const hasData = performance && performance.tradeCount > 0;
+
+  const regimeRows = Object.entries(regimeBreakdown)
+    .filter(([, stats]) => stats.tradeCount > 0)
+    .sort(([a], [b]) => a.localeCompare(b));
 
   return (
     <div className="space-y-6">
+      {/* ── Header / Compute button ──────────────────────────────────────── */}
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <h1 className="text-lg font-semibold text-white">Dashboard</h1>
+          {computeResult && (
+            <p className="text-xs text-[#8b949e] mt-1">{computeResult}</p>
+          )}
+        </div>
+        <button
+          onClick={handleCompute}
+          disabled={computing}
+          className="px-3 py-1.5 rounded text-xs font-medium bg-[#21262d] hover:bg-[#30363d] text-[#8b949e] hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {computing ? 'Computing…' : 'Compute Analytics'}
+        </button>
+      </div>
+
       {/* ── Stats Bar ─────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <StatCard
           label="Total P&L"
           value={
-            <span className={summary ? pnlColor(summary.totalPnl) : 'text-[#6e7681]'}>
-              {summary ? formatPnl(summary.totalPnl) : '—'}
+            <span className={performance ? pnlColor(performance.totalPnl) : 'text-[#6e7681]'}>
+              {performance ? formatPnl(performance.totalPnl) : '—'}
             </span>
           }
         />
         <StatCard
           label="Win Rate"
-          value={summary ? `${summary.winRate.toFixed(1)}%` : '—'}
+          value={performance ? formatPercent(performance.winRate) : '—'}
         />
         <StatCard
           label="Total Trades"
-          value={summary?.tradeCount ?? '—'}
+          value={performance?.tradeCount ?? '—'}
         />
         <StatCard
           label="Expectancy"
           value={
-            <span className={summary ? pnlColor(summary.expectancy) : 'text-[#6e7681]'}>
-              {summary ? formatPnl(summary.expectancy) : '—'}
+            <span className={performance ? pnlColor(performance.expectancy) : 'text-[#6e7681]'}>
+              {performance ? formatPnl(performance.expectancy) : '—'}
             </span>
           }
           sub="avg $ per trade"
         />
         <StatCard
           label="Profit Factor"
-          value={summary ? summary.profitFactor.toFixed(2) : '—'}
+          value={performance ? performance.profitFactor.toFixed(2) : '—'}
         />
       </div>
 
@@ -245,7 +365,7 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
           </div>
         ) : (
           <EquityCurve
-            equityCurve={summary?.equityCurve ?? []}
+            equityCurve={equityCurve}
             tradeMetas={tradeMetas}
             activeRegimeFilter={activeRegime}
           />
@@ -254,7 +374,7 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
         {/* Regime legend */}
         {!activeRegime && hasData && (
           <div className="flex flex-wrap gap-4 mt-3 pt-3 border-t border-[#21262d]">
-            {Object.entries(REGIME_BADGE).map(([key, { label, bg, text }]) => (
+            {Object.entries(REGIME_BADGE).map(([key, { label, bg }]) => (
               <span key={key} className="flex items-center gap-1.5 text-xs text-[#6e7681]">
                 <span className={`w-3 h-3 rounded-sm ${bg}`} />
                 {label}
@@ -264,8 +384,32 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
         )}
       </div>
 
+      {/* ── Insight Cards ─────────────────────────────────────────────────── */}
+      {insights.length > 0 ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {insights.map((insight, i) => (
+            <InsightCard key={`${insight.module}-${i}`} insight={insight} />
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <EmptyInsightCard
+            title="No Insights Yet"
+            body="Click Compute Analytics to run the behavioral detectors. Booba needs at least 20 closed positions with MFE/MAE data before insights will appear."
+          />
+          <EmptyInsightCard
+            title="Regime Insight"
+            body="Regime-conditional performance insights will appear here once there's enough data across regimes."
+          />
+          <EmptyInsightCard
+            title="Strategy Insight"
+            body="Strategy degradation alerts will appear here once a baseline has been established."
+          />
+        </div>
+      )}
+
       {/* ── Regime Breakdown Table ─────────────────────────────────────────── */}
-      {hasData && (
+      {hasData && regimeRows.length > 0 && (
         <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
           <h2 className="text-sm font-semibold text-white mb-3">Performance by Regime</h2>
           <table className="w-full text-left">
@@ -279,31 +423,13 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
               </tr>
             </thead>
             <tbody>
-              {regimeBreakdown
-                .filter((r) => r.tradeCount > 0)
-                .map((r) => (
-                  <RegimeRow key={r.regime} stats={r} />
-                ))}
+              {regimeRows.map(([regime, stats]) => (
+                <RegimeRow key={regime} regime={regime} stats={stats} />
+              ))}
             </tbody>
           </table>
         </div>
       )}
-
-      {/* ── Insight Cards ─────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <InsightCard
-          title="Behavioral Insight"
-          body="Behavioral insights will appear here as data accumulates. Booba is watching for disposition effect, revenge trading, and size escalation patterns."
-        />
-        <InsightCard
-          title="Regime Insight"
-          body="Regime-conditional performance insights will appear here. Booba will flag if your edge degrades in ranging markets vs. your trending performance."
-        />
-        <InsightCard
-          title="Strategy Insight"
-          body="Strategy degradation alerts will appear here. Booba tracks rolling win rate vs. historical baseline and flags statistically significant drops."
-        />
-      </div>
     </div>
   );
 }

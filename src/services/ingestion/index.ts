@@ -78,7 +78,7 @@ export async function ingestTrades(
           size: trade.size,
           entryPrice: trade.entryPrice,
           exitPrice: trade.exitPrice ?? null,
-          entryTime: trade.entryTime ?? new Date(0),
+          entryTime: trade.entryTime ?? null,
           exitTime: trade.exitTime ?? null,
           pnlRealized: trade.pnlRealized ?? null,
           fees: trade.fees ?? null,
@@ -94,7 +94,7 @@ export async function ingestTrades(
         update: {
           exitPrice: trade.exitPrice ?? null,
           exitTime: trade.exitTime ?? null,
-          entryTime: trade.entryTime ?? undefined,
+          entryTime: trade.entryTime ?? null,
           pnlRealized: trade.pnlRealized ?? null,
           holdTimeSeconds: trade.holdTimeSeconds ?? null,
           updatedAt: new Date(),
