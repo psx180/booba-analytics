@@ -1,81 +1,150 @@
 /**
  * Exit-optimizer insight.
  *
- * Detects a pattern of systematically early exits — positions that closed
- * well before their maximum favorable excursion.
- *
- * Requires ≥20 closed positions with exitEfficiency computed. Computes
- * average efficiency overall and per regime, finds the worst regime, and
- * projects the gain from a 20% improvement there.
+ * Detects systematic early exits — positions that closed well before their
+ * maximum favorable excursion. Uses Welch's t-test to check whether regime
+ * differences in exit efficiency are statistically significant before
+ * calling out a "worst regime."
  */
 
 import type { InsightDetector, Insight, Position } from './base';
 import { sampleSizeConfidence, bucketByRegime, formatRegimeLabel } from './base';
+import {
+  welchTTest,
+  bonferroniCorrect,
+  computeImpactScore,
+} from '../statistics';
+import type { StatisticalTest } from '../types';
 
-const MIN_POSITIONS = 20;
+const MIN_REGIME_N = 5;
 
 export const exitOptimizerDetector: InsightDetector = {
   name: 'exit-optimizer',
-  minimumPositions: MIN_POSITIONS,
+  minimumPositions: 5,   // lowered so we can emit a "need more data" insight
   dimensions: ['exitEfficiency', 'moneyLeftOnTable', 'regimeAtEntry'],
 
   detect(positions: Position[]): Insight[] {
     const qualified = positions.filter(
       (p) => p.exitEfficiency != null && p.moneyLeftOnTable != null,
     );
-    if (qualified.length < MIN_POSITIONS) return [];
 
+    // Surface a low-priority insight when there isn't enough data yet
+    if (qualified.length < 20) {
+      const needed = 20 - qualified.length;
+      const placeholder: StatisticalTest = {
+        testName: 'welch_t_test',
+        pValue: 1,
+        effectSize: 0,
+        sampleSizeA: qualified.length,
+        sampleSizeB: 0,
+        isSignificant: false,
+        description: `Not significant (insufficient data, N=${qualified.length}) — need more trades for reliable results`,
+      };
+      return [{
+        module: 'exit-optimizer',
+        title: 'Exit Analysis Pending',
+        description: `Need ${needed} more closed trades with MFE/MAE data before exit analysis becomes reliable.`,
+        severity: 'info',
+        confidence: 0,
+        affectedPositions: [],
+        data: { tradeCount: qualified.length, needed },
+        statistics: [placeholder],
+        impactScore: 0,
+        category: 'exit',
+        isSignificant: false,
+        sampleSize: qualified.length,
+      }];
+    }
+
+    const allEfficiencies = qualified.map((p) => p.exitEfficiency!);
     const overall = summarize(qualified);
     const regimeBuckets = bucketByRegime(qualified);
 
-    const regimeStats: Record<string, ReturnType<typeof summarize>> = {};
+    // Per-regime stats + Welch t-test vs. the overall distribution
+    const regimeResults: Record<string, { stats: ReturnType<typeof summarize>; test: StatisticalTest }> = {};
+    const allRegimeTests: StatisticalTest[] = [];
+
     for (const [regime, bucket] of Object.entries(regimeBuckets)) {
-      if (bucket.length >= 5) regimeStats[regime] = summarize(bucket);
+      if (bucket.length < MIN_REGIME_N) continue;
+      const stats = summarize(bucket);
+      const regimeEff = bucket.map((p) => p.exitEfficiency!);
+      // Compare this regime vs. all other positions
+      const others = allEfficiencies.filter(
+        (_, idx) => !regimeEff.includes(allEfficiencies[idx]),
+      );
+      const test = others.length >= 2
+        ? welchTTest(regimeEff, others)
+        : welchTTest(regimeEff, allEfficiencies);
+      regimeResults[regime] = { stats, test };
+      allRegimeTests.push(test);
     }
 
-    // Find the regime with the lowest average efficiency (among those with enough data).
-    const worst = Object.entries(regimeStats)
-      .sort(([, a], [, b]) => a.avgEfficiency - b.avgEfficiency)[0];
+    // Bonferroni-correct for multiple regime comparisons
+    const correctedTests = bonferroniCorrect(allRegimeTests);
+    let testIdx = 0;
+    for (const regime of Object.keys(regimeResults)) {
+      regimeResults[regime].test = correctedTests[testIdx++];
+    }
 
-    const worstRegime = worst?.[0] ?? null;
-    const worstStats = worst?.[1] ?? null;
+    // Find the worst regime that is statistically significant
+    const significantEntries = Object.entries(regimeResults)
+      .filter(([, { test }]) => test.isSignificant)
+      .sort(([, a], [, b]) => a.stats.avgEfficiency - b.stats.avgEfficiency);
 
-    // Projected gain: if efficiency in the worst regime improved by 20% (absolute),
-    // how much additional P&L would that capture?
+    const worstEntry = significantEntries[0] ?? null;
+    const anySignificant = significantEntries.length > 0;
+
+    // Projected gain from 20% absolute efficiency improvement in worst regime
     let projectedGain = 0;
-    if (worstStats && worstStats.avgEfficiency > 0) {
-      const improvementFactor = 0.2 / worstStats.avgEfficiency;
-      projectedGain = Math.round(worstStats.totalLeftOnTable * improvementFactor * 100) / 100;
+    if (worstEntry && worstEntry[1].stats.avgEfficiency > 0) {
+      const factor = 0.2 / worstEntry[1].stats.avgEfficiency;
+      projectedGain = Math.round(worstEntry[1].stats.totalLeftOnTable * factor * 100) / 100;
     }
 
-    // Severity: are we leaving more than 10% of total P&L on the table?
     const totalPnl = qualified.reduce((s, p) => s + (p.aggregatePnl ?? 0), 0);
     const leftOnTableRatio = totalPnl > 0 ? overall.totalLeftOnTable / totalPnl : Infinity;
     const severity = leftOnTableRatio > 0.1 ? 'warning' : 'info';
 
     const efficiencyPct = Math.round(overall.avgEfficiency * 1000) / 10;
-    const worstPct = worstStats ? Math.round(worstStats.avgEfficiency * 1000) / 10 : null;
 
-    const description = worstRegime && worstStats
-      ? `You capture ${efficiencyPct}% of available moves on average. In ${formatRegimeLabel(worstRegime)} markets, you only capture ${worstPct}%. You're leaving $${Math.round(overall.totalLeftOnTable).toLocaleString()} on the table across ${qualified.length} trades.`
-      : `You capture ${efficiencyPct}% of available moves on average. You're leaving $${Math.round(overall.totalLeftOnTable).toLocaleString()} on the table across ${qualified.length} trades.`;
+    let description: string;
+    let suggestion: string | undefined;
 
-    const suggestion = worstRegime
-      ? `Consider holding winners longer in ${formatRegimeLabel(worstRegime)} conditions — your MFE data suggests moves continue significantly past your exit point.`
-      : 'Consider holding winners longer — your MFE data suggests moves continue significantly past your exit point.';
+    if (anySignificant && worstEntry) {
+      const [worstRegime, { stats: worstStats }] = worstEntry;
+      const worstPct = Math.round(worstStats.avgEfficiency * 1000) / 10;
+      description = `You capture ${efficiencyPct}% of available moves on average. In ${formatRegimeLabel(worstRegime)} markets your exit efficiency drops to ${worstPct}% — a statistically significant difference. You're leaving $${Math.round(overall.totalLeftOnTable).toLocaleString()} on the table across ${qualified.length} trades.`;
+      suggestion = `Consider holding winners longer in ${formatRegimeLabel(worstRegime)} conditions — your MFE data suggests moves continue significantly past your exit point.`;
+    } else if (anySignificant) {
+      description = `You capture ${efficiencyPct}% of available moves on average. You're leaving $${Math.round(overall.totalLeftOnTable).toLocaleString()} on the table across ${qualified.length} trades.`;
+      suggestion = 'Consider holding winners longer — your MFE data suggests moves continue significantly past your exit point.';
+    } else {
+      description = `You capture ${efficiencyPct}% of available moves on average. Your exit efficiency is consistent across regimes (no statistically significant differences found). You're leaving $${Math.round(overall.totalLeftOnTable).toLocaleString()} on the table across ${qualified.length} trades.`;
+    }
+
+    // Best test for impactScore (lowest p-value across regime tests, or placeholder if none)
+    const representativeTest = correctedTests.length > 0
+      ? correctedTests.reduce((best, t) => (t.pValue < best.pValue ? t : best))
+      : { pValue: 0.5, isSignificant: false, effectSize: 0, sampleSizeA: qualified.length, sampleSizeB: 0, testName: 'welch_t_test', description: '', correctionApplied: undefined };
+
+    const impactScore = computeImpactScore(overall.totalLeftOnTable, representativeTest, 1.0);
 
     const regimeBreakdown: Record<string, any> = {};
-    for (const [regime, stats] of Object.entries(regimeStats)) {
+    for (const [regime, { stats, test }] of Object.entries(regimeResults)) {
       regimeBreakdown[regime] = {
         avgEfficiency: Math.round(stats.avgEfficiency * 1000) / 1000,
         totalLeftOnTable: Math.round(stats.totalLeftOnTable * 100) / 100,
         count: stats.count,
+        isSignificant: test.isSignificant,
+        pValue: Math.round(test.pValue * 1000) / 1000,
       };
     }
 
+    const allTests = correctedTests.length > 0 ? correctedTests : [representativeTest as StatisticalTest];
+
     return [{
       module: 'exit-optimizer',
-      title: 'Exit Optimization Opportunity',
+      title: anySignificant ? 'Exit Optimization Opportunity' : 'Exit Efficiency Baseline',
       description,
       suggestion,
       severity,
@@ -84,11 +153,16 @@ export const exitOptimizerDetector: InsightDetector = {
       data: {
         avgEfficiency: Math.round(overall.avgEfficiency * 1000) / 1000,
         totalLeftOnTable: Math.round(overall.totalLeftOnTable * 100) / 100,
-        worstRegime,
+        worstRegime: worstEntry?.[0] ?? null,
         projectedGain,
         tradeCount: qualified.length,
       },
       regimeBreakdown,
+      statistics: allTests,
+      impactScore,
+      category: 'exit',
+      isSignificant: anySignificant,
+      sampleSize: qualified.length,
     }];
   },
 };

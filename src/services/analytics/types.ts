@@ -76,6 +76,19 @@ export interface Aggregator {
 
 export type InsightSeverity = 'info' | 'warning' | 'critical';
 
+export type InsightCategory = 'exit' | 'entry' | 'behavior' | 'strategy' | 'risk' | 'timing' | 'pacifica';
+
+export interface StatisticalTest {
+  testName: string;           // 'welch_t_test' | 'chi_squared' | 'correlation'
+  pValue: number;
+  effectSize: number;         // Cohen's d for means, phi for proportions, |r| for correlation
+  sampleSizeA: number;
+  sampleSizeB: number;
+  isSignificant: boolean;     // p < 0.05 (or Bonferroni-adjusted threshold)
+  correctionApplied?: string; // 'bonferroni' if applicable
+  description: string;        // human-readable: "Statistically significant (p=0.003, N=47, large effect)"
+}
+
 export interface Insight {
   module: string;
   title: string;
@@ -86,6 +99,12 @@ export interface Insight {
   suggestion?: string;
   data: Record<string, any>;
   regimeBreakdown?: Record<string, any>;
+  // Statistical backing — every insight must include at least one test
+  statistics: StatisticalTest[];
+  impactScore: number;        // for ranking: higher = show first
+  category: InsightCategory;
+  isSignificant: boolean;     // true if ALL backing tests are significant
+  sampleSize: number;         // total trades this insight is based on
 }
 
 export interface InsightDetector {

@@ -44,6 +44,16 @@ interface BreakdownResult {
   breakdowns: Record<string, Record<string, PerformanceData>>;
 }
 
+interface StatisticalTest {
+  testName: string;
+  pValue: number;
+  effectSize: number;
+  sampleSizeA: number;
+  sampleSizeB: number;
+  isSignificant: boolean;
+  description: string;
+}
+
 interface Insight {
   module: string;
   title: string;
@@ -53,6 +63,12 @@ interface Insight {
   suggestion?: string;
   data: Record<string, any>;
   regimeBreakdown?: Record<string, any>;
+  // Statistical fields
+  statistics?: StatisticalTest[];
+  impactScore?: number;
+  category?: string;
+  isSignificant?: boolean;
+  sampleSize?: number;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -105,19 +121,68 @@ function StatCard({ label, value, sub }: { label: string; value: React.ReactNode
   );
 }
 
+const CATEGORY_LABEL: Record<string, string> = {
+  exit:      'Exit',
+  entry:     'Entry',
+  behavior:  'Behavior',
+  strategy:  'Strategy',
+  risk:      'Risk',
+  timing:    'Timing',
+  pacifica:  'Pacifica',
+};
+
 // ── Insight Card ─────────────────────────────────────────────────────────────
 
 function InsightCard({ insight }: { insight: Insight }) {
-  const style = SEVERITY_STYLE[insight.severity];
+  const style       = SEVERITY_STYLE[insight.severity];
+  const isSignif    = insight.isSignificant ?? false;
+  const primaryTest = insight.statistics?.[0];
+  const pValue      = primaryTest?.pValue;
+  const pStr        = pValue != null
+    ? (pValue < 0.001 ? 'p<0.001' : `p=${pValue.toFixed(3)}`)
+    : null;
+
   return (
-    <div className={`bg-[#161b22] border rounded-lg p-4 ${style.border}`}>
+    <div
+      className={`bg-[#161b22] border rounded-lg p-4 transition-opacity ${style.border} ${
+        isSignif ? '' : 'opacity-60'
+      }`}
+    >
+      {/* Header row */}
       <div className="flex items-start justify-between gap-2 mb-2">
-        <div className="text-sm font-semibold text-white">{insight.title}</div>
-        <span className={`px-2 py-0.5 rounded text-[10px] uppercase tracking-widest font-medium ${style.badge} ${style.badgeText}`}>
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="text-sm font-semibold text-white">{insight.title}</div>
+          {insight.category && (
+            <span className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-widest font-medium bg-[#21262d] text-[#6e7681]">
+              {CATEGORY_LABEL[insight.category] ?? insight.category}
+            </span>
+          )}
+        </div>
+        <span
+          className={`shrink-0 px-2 py-0.5 rounded text-[10px] uppercase tracking-widest font-medium ${style.badge} ${style.badgeText}`}
+        >
           {insight.severity}
         </span>
       </div>
+
+      {/* Significance + sample size badges */}
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
+        {isSignif ? (
+          <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-green-900/30 text-green-400">
+            Significant{pStr ? ` · ${pStr}` : ''}
+          </span>
+        ) : (
+          <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-amber-900/20 text-amber-500">
+            Preliminary{pStr ? ` · ${pStr}` : ''}
+          </span>
+        )}
+        {insight.sampleSize != null && (
+          <span className="text-[10px] text-[#6e7681]">Based on {insight.sampleSize} trades</span>
+        )}
+      </div>
+
       <p className="text-sm text-[#8b949e] leading-relaxed">{insight.description}</p>
+
       {insight.suggestion && (
         <p className="text-xs text-[#6e7681] leading-relaxed mt-2 pt-2 border-t border-[#21262d]">
           <span className="text-[#8b949e] font-medium">Suggestion: </span>
@@ -386,11 +451,18 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
 
       {/* ── Insight Cards ─────────────────────────────────────────────────── */}
       {insights.length > 0 ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {insights.map((insight, i) => (
-            <InsightCard key={`${insight.module}-${i}`} insight={insight} />
-          ))}
-        </div>
+        <>
+          {insights.some((i) => i.isSignificant) ? null : (
+            <p className="text-xs text-[#6e7681] -mb-1">
+              We're analyzing your trading patterns. Most insights require 20+ trades with sufficient variety to detect reliable patterns. Keep trading and check back.
+            </p>
+          )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {insights.map((insight, i) => (
+              <InsightCard key={`${insight.module}-${i}`} insight={insight} />
+            ))}
+          </div>
+        </>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <EmptyInsightCard

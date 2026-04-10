@@ -64,5 +64,7 @@ export type {
   AggregationResult,
   Insight,
   InsightSeverity,
+  InsightCategory,
+  StatisticalTest,
   Filters,
 } from './types';

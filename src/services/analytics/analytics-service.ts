@@ -190,6 +190,14 @@ export class AnalyticsService {
       }
     }
 
+    // Sort by impactScore descending — highest-impact insights first
+    insights.sort((a, b) => b.impactScore - a.impactScore);
+
+    const significantCount = insights.filter((i) => i.isSignificant).length;
+    console.log(
+      `[analytics] Found ${insights.length} insights. ${significantCount} are statistically significant.`,
+    );
+
     // Persist to booba_observations. Deactivate prior observations from the
     // same module for this wallet so stored insights reflect the latest run.
     const modulesProduced = new Set(insights.map((i) => i.module));
@@ -212,6 +220,9 @@ export class AnalyticsService {
           confidence: confidenceBand(insight.confidence),
           sourceModule: insight.module,
           isActive: true,
+          impactScore: insight.impactScore,
+          category: insight.category,
+          isSignificant: insight.isSignificant,
         },
       });
     }
@@ -234,6 +245,11 @@ export class AnalyticsService {
         // Legacy rows may not be JSON — skip.
       }
     }
+    // Sort significant insights first, then by impactScore descending
+    insights.sort((a, b) => {
+      if (a.isSignificant !== b.isSignificant) return a.isSignificant ? -1 : 1;
+      return (b.impactScore ?? 0) - (a.impactScore ?? 0);
+    });
     return insights;
   }
 

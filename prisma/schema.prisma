@@ -216,6 +216,10 @@ model BoobaObservation {
   isActive          Boolean   @default(true)
   createdAt         DateTime  @default(now())
   compressedAt      DateTime?
+  // Statistical metadata — enables server-side filtering/sorting without parsing JSON
+  impactScore       Float?
+  category          String?   // exit | entry | behavior | strategy | risk | timing | pacifica
+  isSignificant     Boolean?
 }
 
 // ─── Analysis Snapshots ────────────────────────────────────────────────────────
