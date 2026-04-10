@@ -1,7 +1,11 @@
 /**
  * Revenge-trading insight.
  *
- * Hypothesis: trades entered shortly after a loss perform worse than normal trades.
+ * Hypothesis: trades placed while the trader is in a "tilted" behavioural
+ * state perform worse than normal trades. The primary signal is
+ * position.tiltScore (from the tilt detection service). If tilt scores
+ * have not been computed yet we fall back to the original heuristic: a
+ * trade entered within 15 minutes of a losing position's exit.
  */
 
 import type { InsightDetector, Insight, Position } from './base';
@@ -9,8 +13,9 @@ import { sampleSizeConfidence, bucketByRegime } from './base';
 import { welchTTest, chiSquaredProportionTest, computeImpactScore } from '../statistics';
 import type { StatisticalTest } from '../types';
 
-const MIN_POSITIONS    = 30;
-const REVENGE_WINDOW   = 15 * 60 * 1000; // 15 minutes in ms
+const MIN_POSITIONS      = 30;
+const REVENGE_WINDOW     = 15 * 60 * 1000; // 15 minutes in ms (fallback heuristic)
+const TILT_SCORE_CUTOFF  = 0.5;
 
 export const revengeTradingDetector: InsightDetector = {
   name: 'revenge-trading',
@@ -50,28 +55,32 @@ export const revengeTradingDetector: InsightDetector = {
     const normalTrades: Position[]  = [];
 
     for (const pos of sorted) {
-      const entryMs = new Date(pos.firstEntryTime!).getTime();
+      // Primary signal: tilt score (from tilt detection service). If tilt
+      // scores have been computed, use position.tiltScore > 0.5 as the
+      // revenge-trade marker. If tiltScore is null for this position, fall
+      // back to the original 15-minute-after-loss heuristic.
+      let isRevengeTrade: boolean;
 
-      // Find the most recently closed position before this entry
-      let latestExitMs = -Infinity;
-      let latestPnl    = 0;
-
-      for (const c of closedByExit) {
-        if (c.id === pos.id) continue;
-        const exitMs = new Date(c.lastExitTime!).getTime();
-        if (exitMs >= entryMs) continue;                           // still open
-        if (exitMs > latestExitMs) { latestExitMs = exitMs; latestPnl = c.aggregatePnl!; }
-      }
-
-      if (
-        latestExitMs > -Infinity &&
-        entryMs - latestExitMs <= REVENGE_WINDOW &&
-        latestPnl < 0
-      ) {
-        revengeTrades.push(pos);
+      if (pos.tiltScore != null) {
+        isRevengeTrade = pos.tiltScore > TILT_SCORE_CUTOFF;
       } else {
-        normalTrades.push(pos);
+        const entryMs = new Date(pos.firstEntryTime!).getTime();
+        let latestExitMs = -Infinity;
+        let latestPnl    = 0;
+        for (const c of closedByExit) {
+          if (c.id === pos.id) continue;
+          const exitMs = new Date(c.lastExitTime!).getTime();
+          if (exitMs >= entryMs) continue;                           // still open
+          if (exitMs > latestExitMs) { latestExitMs = exitMs; latestPnl = c.aggregatePnl!; }
+        }
+        isRevengeTrade =
+          latestExitMs > -Infinity &&
+          entryMs - latestExitMs <= REVENGE_WINDOW &&
+          latestPnl < 0;
       }
+
+      if (isRevengeTrade) revengeTrades.push(pos);
+      else                normalTrades.push(pos);
     }
 
     if (revengeTrades.length < 2) {
@@ -111,8 +120,15 @@ export const revengeTradingDetector: InsightDetector = {
     const period    = `${firstDate.toLocaleDateString()} – ${lastDate.toLocaleDateString()}`;
     const verb      = totalRevengePnl < 0 ? 'cost' : 'earned';
 
+    // If the tilt detector has run, the signal is behaviour-based
+    // (not just "15 minutes after a loss") — reflect that in the copy.
+    const usingTiltSignal = sorted.some((p) => p.tiltScore != null);
+    const signalPhrase    = usingTiltSignal
+      ? 'while you were in a tilted state (elevated tilt score)'
+      : 'within 15 minutes of a loss';
+
     const description =
-      `You placed ${revengeTrades.length} trades within 15 minutes of a loss. ` +
+      `You placed ${revengeTrades.length} trades ${signalPhrase}. ` +
       `These "revenge trades" have average P&L of $${avgRevengePnl.toFixed(2)} ` +
       `vs $${avgNormalPnl.toFixed(2)} for normal trades. ${pnlTest.description}. ` +
       `Revenge trading has ${verb} you $${Math.abs(Math.round(totalRevengePnl)).toLocaleString()} over ${period}.`;

@@ -24,6 +24,9 @@ export interface PerformanceStats {
   totalPnl: number;
   totalFees: number;
   totalFunding: number;
+  avgTiltScore: number;    // 0-1, averaged over positions with computed tiltScore; 0 if none
+  tiltCoverage: number;    // fraction 0-1 of positions that have a computed tiltScore
+  tiltEpisodeCount: number;// distinct tilt episodes touched by this position set
 }
 
 export function computePerformanceStats(positions: Position[]): PerformanceStats {
@@ -38,6 +41,9 @@ export function computePerformanceStats(positions: Position[]): PerformanceStats
     totalPnl: 0,
     totalFees: 0,
     totalFunding: 0,
+    avgTiltScore: 0,
+    tiltCoverage: 0,
+    tiltEpisodeCount: 0,
   };
 
   if (positions.length === 0) return stats;
@@ -46,6 +52,10 @@ export function computePerformanceStats(positions: Position[]): PerformanceStats
   let losses = 0;
   let grossWins = 0;
   let grossLosses = 0;
+
+  let tiltTotal = 0;
+  let tiltCount = 0;
+  const episodeIds = new Set<string>();
 
   for (const p of positions) {
     const pnl = p.aggregatePnl ?? 0;
@@ -60,6 +70,14 @@ export function computePerformanceStats(positions: Position[]): PerformanceStats
       losses++;
       grossLosses += Math.abs(pnl);
     }
+
+    if (p.tiltScore != null) {
+      tiltTotal += p.tiltScore;
+      tiltCount++;
+    }
+    if (p.tiltEpisodeId != null) {
+      episodeIds.add(p.tiltEpisodeId);
+    }
   }
 
   const n = positions.length;
@@ -72,6 +90,9 @@ export function computePerformanceStats(positions: Position[]): PerformanceStats
   stats.profitFactor = grossLosses > 0
     ? grossWins / grossLosses
     : grossWins > 0 ? 999 : 0;
+  stats.avgTiltScore     = tiltCount > 0 ? tiltTotal / tiltCount : 0;
+  stats.tiltCoverage     = tiltCount / n;
+  stats.tiltEpisodeCount = episodeIds.size;
 
   return roundStats(stats);
 }
@@ -88,6 +109,9 @@ function roundStats(s: PerformanceStats): PerformanceStats {
     totalPnl: round(s.totalPnl, 2),
     totalFees: round(s.totalFees, 2),
     totalFunding: round(s.totalFunding, 2),
+    avgTiltScore: round(s.avgTiltScore, 4),
+    tiltCoverage: round(s.tiltCoverage, 4),
+    tiltEpisodeCount: s.tiltEpisodeCount,
   };
 }
 

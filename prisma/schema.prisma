@@ -97,6 +97,10 @@ model Position {
   entryDayOfWeek      Int?
   entrySession        String?         // asian | european | us
   holdTimeCategory    String?         // scalp | intraday | swing | position
+  // Tilt detection (computed by tilt service)
+  tiltScore           Float?
+  tiltEpisodeId       String?
+  tiltFeatures        String?         // JSON: TiltScore.features object
 
   customData          String?         // JSON
   linkedStrategyId    String?

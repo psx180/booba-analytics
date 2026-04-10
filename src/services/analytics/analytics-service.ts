@@ -27,6 +27,7 @@ import type {
   Candle,
 } from './types';
 import { benjaminiHochberg } from './statistics';
+import { TiltService, createDefaultTiltDetector, createHeuristicTiltDetector } from './tilt';
 
 export interface CandleSource {
   fetchCandles(asset: string, timeframe: string, start: Date, end: Date): Promise<Candle[]>;
@@ -36,6 +37,10 @@ export interface MetricComputeSummary {
   computed: number;
   skipped: number;
   positionsSeen: number;
+  tilt?: {
+    totalEpisodes    : number;
+    positionsAffected: number;
+  };
 }
 
 export interface InsightRunSummary {
@@ -44,13 +49,17 @@ export interface InsightRunSummary {
 }
 
 export class AnalyticsService {
+  private readonly tiltService: TiltService;
+
   constructor(
     private readonly metrics: MetricComputer[],
     private readonly aggregators: Aggregator[],
     private readonly insightDetectors: InsightDetector[],
     private readonly db: PrismaClient,
     private readonly candleSource?: CandleSource,
-  ) {}
+  ) {
+    this.tiltService = new TiltService(createDefaultTiltDetector(), db);
+  }
 
   // ─── Type 1: Metrics ────────────────────────────────────────────────────
 
@@ -129,7 +138,43 @@ export class AnalyticsService {
     }
 
     console.log(`[analytics] computeMetrics done — computed=${computed} skipped=${skipped}`);
-    return { computed, skipped, positionsSeen: positions.length };
+
+    // ─── Tilt detection pass ─────────────────────────────────────────
+    // Runs after standard metrics so tilt scores reflect the latest
+    // computed state. The default detector persists its output; the
+    // heuristic scorer is also run (dev comparison only — no persistence).
+    let tiltSummary: { totalEpisodes: number; positionsAffected: number } | undefined;
+    try {
+      const tiltResult = await this.tiltService.analyzeAndPersist(walletAddress);
+      tiltSummary = tiltResult.summary;
+
+      // Parallel comparison against the heuristic scorer.
+      try {
+        const heuristic = createHeuristicTiltDetector();
+        const allPositions = await this.db.position.findMany({
+          where  : { walletAddress },
+          orderBy: { firstEntryTime: 'asc' },
+        });
+        const comparison = heuristic.detect(allPositions as unknown as Position[]);
+        const aboveThreshold = comparison.scores.filter((s) => s.score > 0.5).length;
+        console.log(
+          `[tilt] heuristic scorer comparison: ${aboveThreshold}/${comparison.scores.length} ` +
+          `positions above 0.5, ${comparison.episodes.length} episodes detected`,
+        );
+      } catch (err) {
+        console.error('[tilt] heuristic comparison failed:', err);
+      }
+    } catch (err) {
+      console.error('[tilt] analyzeAndPersist failed:', err);
+    }
+
+    return { computed, skipped, positionsSeen: positions.length, tilt: tiltSummary };
+  }
+
+  // ─── Direct tilt access ────────────────────────────────────────────────
+  /** Expose the internal tilt service for API routes / scripts that want it. */
+  getTiltService(): TiltService {
+    return this.tiltService;
   }
 
   // ─── Type 2: Aggregations ───────────────────────────────────────────────

@@ -16,6 +16,9 @@ interface PerformanceData {
   totalPnl: number;
   totalFees: number;
   totalFunding: number;
+  avgTiltScore?: number;      // 0-1, averaged over positions with computed tiltScore
+  tiltCoverage?: number;      // 0-1, fraction of positions with a score
+  tiltEpisodeCount?: number;
 }
 
 interface PerformanceResult {
@@ -107,6 +110,13 @@ function formatPnl(v: number) {
 
 function formatPercent(fraction: number) {
   return `${(fraction * 100).toFixed(1)}%`;
+}
+
+// Tilt score shown on a 0-100 scale with a green/amber/red band.
+function tiltColor(score0to100: number): string {
+  if (score0to100 < 30) return 'text-green-400';
+  if (score0to100 < 60) return 'text-amber-400';
+  return 'text-red-400';
 }
 
 // ── Stat Card ────────────────────────────────────────────────────────────────
@@ -349,7 +359,7 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
       </div>
 
       {/* ── Stats Bar ─────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <StatCard
           label="Total P&L"
           value={
@@ -378,6 +388,23 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
         <StatCard
           label="Profit Factor"
           value={performance ? performance.profitFactor.toFixed(2) : '—'}
+        />
+        <StatCard
+          label="Tilt Score"
+          value={
+            performance && (performance.tiltCoverage ?? 0) > 0 ? (
+              <span className={tiltColor(Math.round((performance.avgTiltScore ?? 0) * 100))}>
+                {Math.round((performance.avgTiltScore ?? 0) * 100)}
+              </span>
+            ) : (
+              <span className="text-[#6e7681]">—</span>
+            )
+          }
+          sub={
+            performance && (performance.tiltEpisodeCount ?? 0) > 0
+              ? `${performance.tiltEpisodeCount} episode${performance.tiltEpisodeCount === 1 ? '' : 's'}`
+              : 'avg 0-100, wallet-wide'
+          }
         />
       </div>
 

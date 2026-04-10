@@ -115,6 +115,19 @@ export const streakBehaviorDetector: InsightDetector = {
     const lossStreakTotalPnl = lossPnls.reduce((a, b) => a + b, 0);
     const totalStreakPnl     = winStreakTotalPnl + lossStreakTotalPnl;
 
+    // Tilt-episode overlap: if trades in a losing streak share a
+    // tiltEpisodeId, the streak triggered (or occurred inside) a
+    // detected tilt episode. Count the distinct episode IDs that
+    // overlap with losing-streak positions.
+    const lossStreakEpisodeIds = new Set(
+      lossStreak.map((p) => p.tiltEpisodeId).filter((id): id is string => id != null),
+    );
+    const winStreakEpisodeIds = new Set(
+      winStreak.map((p) => p.tiltEpisodeId).filter((id): id is string => id != null),
+    );
+    const streakTiltEpisodes = lossStreakEpisodeIds.size + winStreakEpisodeIds.size;
+    const tiltDataAvailable  = qualified.some((p) => p.tiltScore != null);
+
     const allTests = [winSizeTest, lossSizeTest, winPnlTest, lossPnlTest].filter(
       (t): t is NonNullable<typeof t> => t !== null,
     );
@@ -153,6 +166,13 @@ export const streakBehaviorDetector: InsightDetector = {
     description += `Streak-influenced trades have ${verb} you $${Math.abs(Math.round(totalStreakPnl)).toLocaleString()}.`;
     if (allTests.length > 0) description += ` ${primaryTest.description}.`;
 
+    if (tiltDataAvailable && lossStreakEpisodeIds.size > 0) {
+      description +=
+        ` ${lossStreakEpisodeIds.size} losing streak${lossStreakEpisodeIds.size === 1 ? '' : 's'} ` +
+        `coincide${lossStreakEpisodeIds.size === 1 ? 's' : ''} with a detected tilt episode — ` +
+        `the streak triggered a measurable behavioural shift.`;
+    }
+
     const suggestion = isSignificant
       ? 'Be especially mindful of position sizing during streaks — the data suggests your behaviour changes in ways that hurt performance.'
       : undefined;
@@ -177,6 +197,9 @@ export const streakBehaviorDetector: InsightDetector = {
         winStreakTotalPnl:  Math.round(winStreakTotalPnl * 100) / 100,
         lossStreakTotalPnl: Math.round(lossStreakTotalPnl * 100) / 100,
         tradeCount:         qualified.length,
+        streakTiltEpisodes,
+        lossStreakTiltEpisodes: lossStreakEpisodeIds.size,
+        winStreakTiltEpisodes:  winStreakEpisodeIds.size,
       },
       statistics: allTests.length > 0 ? allTests : [placeholderTest],
       impactScore,
