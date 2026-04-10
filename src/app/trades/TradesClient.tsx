@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, Fragment } from 'react';
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
 import TradeDetailModal from './TradeDetailModal';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -78,10 +78,20 @@ interface Summary {
   profitFactor: number;
 }
 
+interface ToastState {
+  id: number;
+  msg: string;
+  undoFn?: () => Promise<void>;
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const POSITION_TYPES = [
   'scalp', 'directional', 'scaled_directional', 'carry_trade', 'market_making',
+];
+
+const ALL_TRADE_TYPES = [
+  'scalp', 'directional', 'scaled_directional', 'carry_trade', 'market_making', 'delta_neutral',
 ];
 
 const REGIME_BADGE: Record<string, { label: string; bg: string; text: string }> = {
@@ -132,25 +142,460 @@ function confidenceBadge(c: number | null) {
 }
 
 const ROLE_BADGE: Record<string, { bg: string; text: string; label: string }> = {
-  entry:        { bg: 'bg-blue-900/30',  text: 'text-blue-400',  label: 'Entry' },
-  'take profit': { bg: 'bg-green-900/30', text: 'text-green-400', label: 'TP' },
-  'stop loss':  { bg: 'bg-red-900/30',   text: 'text-red-400',   label: 'SL' },
+  entry:          { bg: 'bg-blue-900/30',  text: 'text-blue-400',  label: 'Entry' },
+  'take profit':  { bg: 'bg-green-900/30', text: 'text-green-400', label: 'TP' },
+  'stop loss':    { bg: 'bg-red-900/30',   text: 'text-red-400',   label: 'SL' },
   'manual close': { bg: 'bg-slate-700/40', text: 'text-slate-400', label: 'Close' },
 };
 
 function typeBadgeClass(type: string | null) {
   if (!type) return 'text-[#6e7681] bg-[#21262d]';
   const colors: Record<string, string> = {
-    scalp: 'text-cyan-400 bg-cyan-900/30',
-    directional: 'text-blue-400 bg-blue-900/30',
+    scalp:              'text-cyan-400 bg-cyan-900/30',
+    directional:        'text-blue-400 bg-blue-900/30',
     scaled_directional: 'text-indigo-400 bg-indigo-900/30',
-    market_making: 'text-purple-400 bg-purple-900/30',
-    carry_trade: 'text-orange-400 bg-orange-900/30',
-    delta_neutral: 'text-teal-400 bg-teal-900/30',
-    pairs_trade: 'text-pink-400 bg-pink-900/30',
-    basis_trade: 'text-emerald-400 bg-emerald-900/30',
+    market_making:      'text-purple-400 bg-purple-900/30',
+    carry_trade:        'text-orange-400 bg-orange-900/30',
+    delta_neutral:      'text-teal-400 bg-teal-900/30',
+    pairs_trade:        'text-pink-400 bg-pink-900/30',
+    basis_trade:        'text-emerald-400 bg-emerald-900/30',
   };
   return colors[type] ?? 'text-[#6e7681] bg-[#21262d]';
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+
+function Toast({
+  toast,
+  onDismiss,
+  onUndo,
+}: {
+  toast: ToastState;
+  onDismiss: () => void;
+  onUndo: () => void;
+}) {
+  return (
+    <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3 bg-[#21262d] border border-[#30363d] rounded-lg px-4 py-3 shadow-xl text-sm max-w-sm">
+      <span className="text-[#e6edf3] flex-1">{toast.msg}</span>
+      {toast.undoFn && (
+        <button
+          onClick={onUndo}
+          className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded font-medium transition-colors shrink-0"
+        >
+          Undo
+        </button>
+      )}
+      <button onClick={onDismiss} className="text-[#6e7681] hover:text-white transition-colors shrink-0 leading-none">
+        ✕
+      </button>
+    </div>
+  );
+}
+
+// ── Floating Toolbar ──────────────────────────────────────────────────────────
+
+function FloatingToolbar({
+  selectedIds,
+  selectedUnits,
+  onClear,
+  onMerge,
+  onLink,
+  onSplit,
+  onReclassify,
+}: {
+  selectedIds: Set<string>;
+  selectedUnits: TradeUnit[];
+  onClear: () => void;
+  onMerge: () => void;
+  onLink: (type: 'delta_neutral' | 'pairs_trade' | 'basis_trade') => void;
+  onSplit: () => void;
+  onReclassify: () => void;
+}) {
+  const count = selectedIds.size;
+  const [linkOpen, setLinkOpen] = useState(false);
+  const linkRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (linkRef.current && !linkRef.current.contains(e.target as Node)) setLinkOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const hasLinkedStrategy = selectedUnits.some((u) => u.kind === 'linked_strategy');
+
+  return (
+    <div className="sticky top-0 z-10 flex items-center gap-3 bg-[#13181f]/95 backdrop-blur-sm border border-[#30363d] rounded-lg px-4 py-2.5 shadow-lg">
+      <span className="text-sm font-medium text-white">{count} selected</span>
+      <button
+        onClick={onClear}
+        className="text-xs text-[#6e7681] hover:text-white transition-colors"
+      >
+        Clear
+      </button>
+      <div className="h-4 w-px bg-[#30363d]" />
+
+      {count === 1 ? (
+        <>
+          <button
+            onClick={onSplit}
+            disabled={hasLinkedStrategy}
+            className="px-3 py-1.5 bg-[#21262d] hover:bg-[#30363d] disabled:opacity-40 text-sm text-[#e6edf3] border border-[#30363d] rounded transition-colors"
+          >
+            Split
+          </button>
+          <button
+            onClick={onReclassify}
+            disabled={hasLinkedStrategy}
+            className="px-3 py-1.5 bg-[#21262d] hover:bg-[#30363d] disabled:opacity-40 text-sm text-[#e6edf3] border border-[#30363d] rounded transition-colors"
+          >
+            Reclassify
+          </button>
+        </>
+      ) : (
+        <>
+          <button
+            onClick={onMerge}
+            disabled={hasLinkedStrategy}
+            title={hasLinkedStrategy ? 'Cannot merge linked strategies' : undefined}
+            className="px-3 py-1.5 bg-[#21262d] hover:bg-[#30363d] disabled:opacity-40 text-sm text-[#e6edf3] border border-[#30363d] rounded transition-colors"
+          >
+            Merge Positions
+          </button>
+          <div className="relative" ref={linkRef}>
+            <button
+              onClick={() => setLinkOpen((o) => !o)}
+              className="px-3 py-1.5 bg-[#21262d] hover:bg-[#30363d] text-sm text-[#e6edf3] border border-[#30363d] rounded transition-colors flex items-center gap-1.5"
+            >
+              Link as... <span className="text-[10px]">▾</span>
+            </button>
+            {linkOpen && (
+              <div className="absolute top-full left-0 mt-1 bg-[#1c2128] border border-[#30363d] rounded shadow-xl z-20 min-w-[160px]">
+                {(['pairs_trade', 'delta_neutral', 'basis_trade'] as const).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => { onLink(t); setLinkOpen(false); }}
+                    className="w-full text-left px-3 py-2 text-sm text-[#e6edf3] hover:bg-[#21262d] transition-colors"
+                  >
+                    {t === 'pairs_trade' ? 'Pairs Trade' : t === 'delta_neutral' ? 'Delta Neutral' : 'Basis Trade'}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Three-Dot Menu ────────────────────────────────────────────────────────────
+
+function ThreeDotMenu({
+  unit,
+  onViewDetails,
+  onSplit,
+  onReclassify,
+  onDelete,
+  onUnlink,
+}: {
+  unit: TradeUnit;
+  onViewDetails: () => void;
+  onSplit: () => void;
+  onReclassify: () => void;
+  onDelete: () => void;
+  onUnlink: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const close = () => setOpen(false);
+  const isLinked = unit.kind === 'linked_strategy';
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+        className="p-1 text-[#6e7681] hover:text-white rounded hover:bg-[#30363d] transition-colors text-base leading-none"
+        aria-label="More options"
+      >
+        ⋮
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 bg-[#1c2128] border border-[#30363d] rounded shadow-xl z-30 min-w-[160px]">
+          {!isLinked && (
+            <button
+              onClick={() => { close(); onViewDetails(); }}
+              className="w-full text-left px-3 py-2 text-sm text-[#e6edf3] hover:bg-[#21262d] transition-colors"
+            >
+              View Details
+            </button>
+          )}
+          {isLinked ? (
+            <button
+              onClick={() => { close(); onUnlink(); }}
+              className="w-full text-left px-3 py-2 text-sm text-[#e6edf3] hover:bg-[#21262d] transition-colors"
+            >
+              Unlink Positions
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={() => { close(); onSplit(); }}
+                className="w-full text-left px-3 py-2 text-sm text-[#e6edf3] hover:bg-[#21262d] transition-colors"
+              >
+                Split Position
+              </button>
+              <button
+                onClick={() => { close(); onReclassify(); }}
+                className="w-full text-left px-3 py-2 text-sm text-[#e6edf3] hover:bg-[#21262d] transition-colors"
+              >
+                Reclassify
+              </button>
+              <div className="my-0.5 h-px bg-[#30363d]" />
+              <button
+                onClick={() => { close(); onDelete(); }}
+                className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-[#21262d] transition-colors"
+              >
+                Delete Position
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Merge Dialog ──────────────────────────────────────────────────────────────
+
+function MergeDialog({
+  units,
+  onConfirm,
+  onCancel,
+}: {
+  units: TradeUnit[];
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const assetSet = new Set(units.map((u) => u.asset));
+  const asset = assetSet.size === 1 ? units[0].asset : [...assetSet].join(', ');
+  const orderCount = units.reduce((s, u) => s + u.childCount, 0);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+      <div className="bg-[#0d1117] border border-[#21262d] rounded-xl shadow-2xl p-6 w-full max-w-md">
+        <h3 className="text-base font-semibold text-white mb-2">
+          Merge {units.length} Positions?
+        </h3>
+        <p className="text-sm text-[#8b949e] mb-6">
+          This will combine {orderCount} orders into a single position on {asset}. This can be undone.
+        </p>
+        <div className="flex gap-3 justify-end">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 text-sm text-[#e6edf3] bg-[#21262d] border border-[#30363d] rounded hover:bg-[#30363d] transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="px-4 py-2 text-sm text-white bg-blue-600 hover:bg-blue-500 rounded transition-colors"
+          >
+            Merge
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Split Dialog ──────────────────────────────────────────────────────────────
+
+function SplitDialog({
+  positionId,
+  onConfirm,
+  onCancel,
+}: {
+  positionId: string;
+  onConfirm: (splitTime: string) => void;
+  onCancel: () => void;
+}) {
+  const [orders, setOrders] = useState<OrderGroup[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [splitGap, setSplitGap] = useState<number | null>(null);
+
+  useEffect(() => {
+    fetch(`/api/positions/${positionId}/orders`)
+      .then((r) => r.json())
+      .then((d) => {
+        const sorted = (d.orders ?? []).slice().sort(
+          (a: OrderGroup, b: OrderGroup) =>
+            new Date(a.firstEntryTime ?? 0).getTime() - new Date(b.firstEntryTime ?? 0).getTime(),
+        );
+        setOrders(sorted);
+      })
+      .finally(() => setLoading(false));
+  }, [positionId]);
+
+  const handleSplit = () => {
+    if (splitGap == null || splitGap >= orders.length - 1) return;
+    const afterOrder = orders[splitGap + 1];
+    const afterTime = afterOrder.firstEntryTime ?? afterOrder.lastExitTime;
+    if (!afterTime) return;
+    const splitTime = new Date(new Date(afterTime).getTime() - 1).toISOString();
+    onConfirm(splitTime);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+      <div className="bg-[#0d1117] border border-[#21262d] rounded-xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col">
+        <div className="px-5 py-4 border-b border-[#21262d] flex items-center justify-between">
+          <h3 className="text-base font-semibold text-white">Split Position</h3>
+          <button onClick={onCancel} className="text-[#6e7681] hover:text-white text-xl leading-none">✕</button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-3">
+          {loading ? (
+            <div className="text-sm text-[#6e7681] py-8 text-center">Loading orders...</div>
+          ) : orders.length < 2 ? (
+            <div className="text-sm text-[#6e7681] py-8 text-center">
+              Need at least 2 orders to split this position.
+            </div>
+          ) : (
+            <>
+              <p className="text-xs text-[#8b949e] mb-3">
+                Click a divider between orders to set the split point.
+              </p>
+              <div>
+                {orders.map((order, i) => (
+                  <Fragment key={order.id}>
+                    <div
+                      className={`flex items-center gap-3 px-3 py-2 rounded border text-xs ${
+                        splitGap != null && i <= splitGap
+                          ? 'border-blue-500/40 bg-blue-900/10'
+                          : splitGap != null && i > splitGap
+                          ? 'border-purple-500/40 bg-purple-900/10'
+                          : 'border-[#21262d] bg-[#161b22]'
+                      }`}
+                    >
+                      <span className="text-[#6e7681] w-28 shrink-0">
+                        {fmtDate(order.firstEntryTime)}
+                      </span>
+                      <span className={order.direction === 'long' ? 'text-green-400' : 'text-red-400'}>
+                        {order.direction.toUpperCase()}
+                      </span>
+                      <span className="text-[#8b949e]">{order.totalSize?.toFixed(4) ?? '—'}</span>
+                      <span className={order.isEntry ? 'text-[#6e7681]' : pnlColor(order.aggregatePnl)}>
+                        {order.isEntry ? '—' : fmt$(order.aggregatePnl)}
+                      </span>
+                    </div>
+
+                    {i < orders.length - 1 && (
+                      <button
+                        onClick={() => setSplitGap(splitGap === i ? null : i)}
+                        className={`w-full flex items-center gap-2 py-1 text-[10px] uppercase tracking-widest transition-colors group ${
+                          splitGap === i ? 'text-amber-400' : 'text-[#30363d] hover:text-[#6e7681]'
+                        }`}
+                      >
+                        <div
+                          className={`flex-1 h-px transition-colors ${
+                            splitGap === i ? 'bg-amber-400' : 'bg-[#21262d] group-hover:bg-[#30363d]'
+                          }`}
+                        />
+                        <span>{splitGap === i ? '✂ split here' : '· split here ·'}</span>
+                        <div
+                          className={`flex-1 h-px transition-colors ${
+                            splitGap === i ? 'bg-amber-400' : 'bg-[#21262d] group-hover:bg-[#30363d]'
+                          }`}
+                        />
+                      </button>
+                    )}
+                  </Fragment>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="px-5 py-4 border-t border-[#21262d] flex justify-end gap-3">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 text-sm text-[#e6edf3] bg-[#21262d] border border-[#30363d] rounded hover:bg-[#30363d] transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSplit}
+            disabled={splitGap == null || orders.length < 2}
+            className="px-4 py-2 text-sm text-white bg-amber-600 hover:bg-amber-500 disabled:bg-[#21262d] disabled:text-[#6e7681] rounded transition-colors"
+          >
+            Split Here
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Reclassify Dialog ─────────────────────────────────────────────────────────
+
+function ReclassifyDialog({
+  unit,
+  onConfirm,
+  onCancel,
+}: {
+  unit: TradeUnit;
+  onConfirm: (type: string) => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+      <div className="bg-[#0d1117] border border-[#21262d] rounded-xl shadow-2xl p-5 w-full max-w-xs">
+        <h3 className="text-base font-semibold text-white mb-1">Reclassify Position</h3>
+        <p className="text-xs text-[#6e7681] mb-4">{unit.asset}</p>
+        <div className="space-y-1">
+          {ALL_TRADE_TYPES.map((t) => (
+            <button
+              key={t}
+              onClick={() => onConfirm(t)}
+              className={`w-full text-left px-3 py-2 text-sm rounded transition-colors flex items-center gap-2 ${
+                t === unit.tradeType
+                  ? 'bg-blue-900/30 border border-blue-500/30'
+                  : 'hover:bg-[#21262d]'
+              }`}
+            >
+              <span
+                className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${typeBadgeClass(t)}`}
+              >
+                {t.replace(/_/g, ' ')}
+              </span>
+              {t === unit.tradeType && (
+                <span className="text-xs text-[#6e7681] ml-auto">current</span>
+              )}
+            </button>
+          ))}
+        </div>
+        <div className="mt-4 flex justify-end">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 text-sm text-[#e6edf3] bg-[#21262d] border border-[#30363d] rounded hover:bg-[#30363d] transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ── Filter Select ─────────────────────────────────────────────────────────────
@@ -196,7 +641,7 @@ function SortTh({
   );
 }
 
-// ── Fills panel (innermost drill-down) ────────────────────────────────────────
+// ── Fills panel ───────────────────────────────────────────────────────────────
 
 function FillsPanel({ orderGroupId }: { orderGroupId: string }) {
   const [fills, setFills] = useState<Fill[]>([]);
@@ -251,7 +696,7 @@ function FillsPanel({ orderGroupId }: { orderGroupId: string }) {
   );
 }
 
-// ── Orders panel (middle drill-down) ──────────────────────────────────────────
+// ── Orders panel ──────────────────────────────────────────────────────────────
 
 function OrdersPanel({ positionId }: { positionId: string }) {
   const [orders, setOrders] = useState<OrderGroup[]>([]);
@@ -324,9 +769,7 @@ function OrdersPanel({ positionId }: { positionId: string }) {
                   <td className={`py-1 pr-3 ${order.isEntry ? 'text-[#6e7681]' : pnlColor(order.aggregatePnl)}`}>
                     {order.isEntry ? '—' : fmt$(order.aggregatePnl)}
                   </td>
-                  <td className="py-1 pr-3 text-[#6e7681]">
-                    {order.executionType ?? '—'}
-                  </td>
+                  <td className="py-1 pr-3 text-[#6e7681]">{order.executionType ?? '—'}</td>
                   <td className="py-1 text-[#6e7681]">{fmtDate(order.lastExitTime ?? order.firstEntryTime)}</td>
                 </tr>
                 {isExpanded && canExpand && (
@@ -368,7 +811,18 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
   const [loading, setLoading] = useState(true);
   const [assetOptions, setAssetOptions] = useState<string[]>([]);
   const [groupingRunning, setGroupingRunning] = useState(false);
-  const [groupingSummary, setGroupingSummary] = useState<any>(null);
+  const [groupingSummary, setGroupingSummary] = useState<Record<string, unknown> | null>(null);
+
+  // Group editing state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [mergeConfirm, setMergeConfirm] = useState(false);
+  const [splitPositionId, setSplitPositionId] = useState<string | null>(null);
+  const [reclassifyUnit, setReclassifyUnit] = useState<TradeUnit | null>(null);
+  const [analyticsStale, setAnalyticsStale] = useState(false);
+  const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
+  const [computingAnalytics, setComputingAnalytics] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -389,8 +843,6 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
 
       setTradeUnits(unitsData.tradeUnits ?? []);
       setPagination(unitsData.pagination ?? null);
-      // /api/analytics/summary now returns an AggregationResult envelope —
-      // the flat performance stats live under .data.
       setSummary(summaryData?.data ?? null);
 
       if (!filters.tradeType && !filters.asset && !filters.status) {
@@ -425,19 +877,234 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
       });
       const data = await res.json();
       setGroupingSummary(data);
+      setAnalyticsStale(false);
       await fetchData();
     } finally {
       setGroupingRunning(false);
     }
   };
 
+  // ── Toast helpers ───────────────────────────────────────────────────────────
+
+  const showToast = useCallback((msg: string, undoFn?: () => Promise<void>) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    const id = Date.now();
+    setToast({ id, msg, undoFn });
+    toastTimerRef.current = setTimeout(() => setToast(null), 10000);
+  }, []);
+
+  const dismissToast = useCallback(() => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast(null);
+  }, []);
+
+  const flashRows = useCallback((ids: string[]) => {
+    setFlashIds(new Set(ids));
+    setTimeout(() => setFlashIds(new Set()), 1500);
+  }, []);
+
+  // ── Selection ───────────────────────────────────────────────────────────────
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+
+  const selectedUnits = tradeUnits.filter((u) => selectedIds.has(u.id));
+
+  // ── Group edit operations ───────────────────────────────────────────────────
+
+  const handleMerge = useCallback(async () => {
+    const ids = [...selectedIds];
+    try {
+      const res = await fetch('/api/positions/merge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ positionIds: ids }),
+      });
+      const data = await res.json();
+      clearSelection();
+      setMergeConfirm(false);
+      setAnalyticsStale(true);
+      if (data.merged?.id) flashRows([data.merged.id]);
+      await fetchData();
+
+      const { undoData } = data;
+      showToast(`Merged ${ids.length} positions.`, async () => {
+        await fetch('/api/positions/merge/undo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ undoData }),
+        });
+        setAnalyticsStale(true);
+        await fetchData();
+      });
+    } catch (err) {
+      console.error('Merge failed', err);
+    }
+  }, [selectedIds, clearSelection, fetchData, showToast, flashRows]);
+
+  const handleLink = useCallback(async (strategyType: 'delta_neutral' | 'pairs_trade' | 'basis_trade') => {
+    const ids = [...selectedIds].filter((id) => tradeUnits.find((u) => u.id === id)?.kind === 'position');
+    if (ids.length < 2) return;
+    try {
+      const res = await fetch('/api/positions/link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ positionIds: ids, strategyType }),
+      });
+      const data = await res.json();
+      clearSelection();
+      setAnalyticsStale(true);
+      await fetchData();
+
+      const linkedId = data.id;
+      showToast(
+        `Linked ${ids.length} positions as ${strategyType.replace(/_/g, ' ')}.`,
+        linkedId
+          ? async () => {
+              await fetch(`/api/linked-strategies/${linkedId}`, { method: 'DELETE' });
+              setAnalyticsStale(true);
+              await fetchData();
+            }
+          : undefined,
+      );
+    } catch (err) {
+      console.error('Link failed', err);
+    }
+  }, [selectedIds, tradeUnits, clearSelection, fetchData, showToast]);
+
+  const handleSplit = useCallback(async (splitTime: string) => {
+    const positionId = splitPositionId!;
+    try {
+      const res = await fetch('/api/positions/split', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ positionId, splitTime }),
+      });
+      const data = await res.json();
+      setSplitPositionId(null);
+      clearSelection();
+      setAnalyticsStale(true);
+      const [pos1, pos2] = data.positions ?? [];
+      if (pos1) flashRows([pos1.id, pos2?.id].filter(Boolean));
+      await fetchData();
+
+      showToast('Split into 2 positions.', async () => {
+        if (pos1 && pos2) {
+          await fetch('/api/positions/merge', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ positionIds: [pos1.id, pos2.id] }),
+          });
+          setAnalyticsStale(true);
+          await fetchData();
+        }
+      });
+    } catch (err) {
+      console.error('Split failed', err);
+    }
+  }, [splitPositionId, clearSelection, fetchData, showToast, flashRows]);
+
+  const handleReclassify = useCallback(async (positionId: string, tradeType: string) => {
+    try {
+      await fetch(`/api/positions/${positionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tradeType }),
+      });
+      setReclassifyUnit(null);
+      clearSelection();
+      flashRows([positionId]);
+      await fetchData();
+    } catch (err) {
+      console.error('Reclassify failed', err);
+    }
+  }, [clearSelection, fetchData, flashRows]);
+
+  const handleDelete = useCallback(async (positionId: string) => {
+    if (!confirm('Delete this position? Its orders will become ungrouped.')) return;
+    try {
+      await fetch(`/api/positions/${positionId}`, { method: 'DELETE' });
+      setAnalyticsStale(true);
+      await fetchData();
+    } catch (err) {
+      console.error('Delete failed', err);
+    }
+  }, [fetchData]);
+
+  const handleUnlink = useCallback(async (strategyId: string) => {
+    if (!confirm('Remove strategy link? Individual positions will remain.')) return;
+    try {
+      await fetch(`/api/linked-strategies/${strategyId}`, { method: 'DELETE' });
+      setAnalyticsStale(true);
+      await fetchData();
+    } catch (err) {
+      console.error('Unlink failed', err);
+    }
+  }, [fetchData]);
+
+  const handleComputeAnalytics = useCallback(async () => {
+    setComputingAnalytics(true);
+    try {
+      await fetch('/api/analytics/metrics/compute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ walletAddress }),
+      });
+      setAnalyticsStale(false);
+      await fetchData();
+    } finally {
+      setComputingAnalytics(false);
+    }
+  }, [walletAddress, fetchData]);
+
   return (
     <div className="space-y-4">
+      {/* Dialogs */}
       {detailPositionId && (
         <TradeDetailModal
           positionId={detailPositionId}
           walletAddress={walletAddress}
           onClose={() => setDetailPositionId(null)}
+        />
+      )}
+      {mergeConfirm && (
+        <MergeDialog
+          units={selectedUnits}
+          onConfirm={handleMerge}
+          onCancel={() => setMergeConfirm(false)}
+        />
+      )}
+      {splitPositionId && (
+        <SplitDialog
+          positionId={splitPositionId}
+          onConfirm={handleSplit}
+          onCancel={() => setSplitPositionId(null)}
+        />
+      )}
+      {reclassifyUnit && (
+        <ReclassifyDialog
+          unit={reclassifyUnit}
+          onConfirm={(type) => handleReclassify(reclassifyUnit.id, type)}
+          onCancel={() => setReclassifyUnit(null)}
+        />
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <Toast
+          toast={toast}
+          onDismiss={dismissToast}
+          onUndo={async () => {
+            if (toast.undoFn) await toast.undoFn();
+            dismissToast();
+          }}
         />
       )}
 
@@ -463,6 +1130,22 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
         ))}
       </div>
 
+      {/* ── Stale Analytics Banner ─────────────────────────────────── */}
+      {analyticsStale && (
+        <div className="flex items-center justify-between bg-amber-900/20 border border-amber-500/30 rounded-lg px-4 py-2.5">
+          <span className="text-sm text-amber-300">
+            Grouping changed. Click &apos;Compute Analytics&apos; to update insights.
+          </span>
+          <button
+            onClick={handleComputeAnalytics}
+            disabled={computingAnalytics}
+            className="text-xs px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:bg-amber-900 text-white rounded transition-colors shrink-0 ml-4"
+          >
+            {computingAnalytics ? 'Computing...' : 'Compute Analytics'}
+          </button>
+        </div>
+      )}
+
       {/* ── Run Grouping ───────────────────────────────────────────── */}
       <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
         <div className="flex items-center justify-between">
@@ -484,17 +1167,19 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
         {groupingSummary && (
           <div className="mt-3 pt-3 border-t border-[#21262d] text-xs text-[#8b949e] space-y-1">
             <div>
-              <span className="text-white font-medium">{groupingSummary.totalFills}</span> fills →{' '}
-              <span className="text-white font-medium">{groupingSummary.totalOrders}</span> orders →{' '}
-              <span className="text-white font-medium">{groupingSummary.totalPositions}</span> positions.{' '}
-              {groupingSummary.totalLinkedStrategies > 0 && (
-                <span><span className="text-white font-medium">{groupingSummary.totalLinkedStrategies}</span> linked strategies. </span>
+              <span className="text-white font-medium">{groupingSummary.totalFills as number}</span> fills →{' '}
+              <span className="text-white font-medium">{groupingSummary.totalOrders as number}</span> orders →{' '}
+              <span className="text-white font-medium">{groupingSummary.totalPositions as number}</span> positions.{' '}
+              {(groupingSummary.totalLinkedStrategies as number) > 0 && (
+                <span>
+                  <span className="text-white font-medium">{groupingSummary.totalLinkedStrategies as number}</span> linked strategies.{' '}
+                </span>
               )}
-              <span className="text-amber-400">{groupingSummary.needsReview}</span> need review.
+              <span className="text-amber-400">{groupingSummary.needsReview as number}</span> need review.
             </div>
-            {groupingSummary.positionsByType && Object.keys(groupingSummary.positionsByType).length > 0 && (
+            {Boolean(groupingSummary.positionsByType) && Object.keys(groupingSummary.positionsByType as object).length > 0 && (
               <div className="flex flex-wrap gap-3">
-                {Object.entries(groupingSummary.positionsByType).map(([type, count]) => (
+                {Object.entries(groupingSummary.positionsByType as Record<string, unknown>).map(([type, count]) => (
                   <span key={type} className="text-[#6e7681]">
                     {type.replace(/_/g, ' ')}: <span className="text-[#8b949e]">{count as number}</span>
                   </span>
@@ -537,6 +1222,26 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
         </div>
       </div>
 
+      {/* ── Floating Toolbar ───────────────────────────────────────── */}
+      {selectedIds.size > 0 && (
+        <FloatingToolbar
+          selectedIds={selectedIds}
+          selectedUnits={selectedUnits}
+          onClear={clearSelection}
+          onMerge={() => setMergeConfirm(true)}
+          onLink={handleLink}
+          onSplit={() => {
+            const id = [...selectedIds][0];
+            setSplitPositionId(id);
+          }}
+          onReclassify={() => {
+            const id = [...selectedIds][0];
+            const unit = tradeUnits.find((u) => u.id === id);
+            if (unit) setReclassifyUnit(unit);
+          }}
+        />
+      )}
+
       {/* ── Trade Units Table ──────────────────────────────────────── */}
       <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
         {loading ? (
@@ -550,7 +1255,8 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-[10px] uppercase tracking-widest text-[#6e7681] border-b border-[#21262d]">
-                  <th className="px-4 py-3 text-left w-8" />
+                  <th className="px-3 py-3 text-left w-8" />
+                  <th className="px-3 py-3 text-left w-8" />
                   <SortTh label="Asset" field="asset" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
                   <th className="pb-2 pr-4 text-left">Dir</th>
                   <th className="pb-2 pr-4 text-left">Children</th>
@@ -563,12 +1269,14 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
                   <SortTh label="Conf." field="confidence" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
                   <th className="pb-2 pr-4 text-left">Regime</th>
                   <SortTh label="Date" field="firstEntryTime" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
-                  <th className="pb-2 pr-4 text-left" />
+                  <th className="pb-2 pr-4 text-left w-10" />
                 </tr>
               </thead>
               <tbody>
                 {tradeUnits.map((unit) => {
                   const isExpanded = expandedId === unit.id;
+                  const isSelected = selectedIds.has(unit.id);
+                  const isFlashing = flashIds.has(unit.id);
                   const conf = confidenceBadge(unit.confidence);
                   const regime = unit.regimeAtEntry ? REGIME_BADGE[unit.regimeAtEntry] : null;
                   const isLinked = unit.kind === 'linked_strategy';
@@ -578,12 +1286,34 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
                       <tr
                         onClick={() => setExpandedId(isExpanded ? null : unit.id)}
                         className={`border-t border-[#21262d] cursor-pointer transition-colors ${
-                          isExpanded ? 'bg-[#1c2128]' : 'hover:bg-[#1c2128]'
+                          isFlashing
+                            ? 'bg-blue-900/20'
+                            : isSelected
+                            ? 'bg-[#1c2128]'
+                            : isExpanded
+                            ? 'bg-[#1c2128]'
+                            : 'hover:bg-[#1c2128]'
                         }`}
+                        style={isSelected ? { boxShadow: 'inset 3px 0 0 #3b82f6' } : undefined}
                       >
-                        <td className="px-4 py-2.5 text-[#6e7681] text-xs">
+                        {/* Checkbox */}
+                        <td
+                          className="px-3 py-2.5"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleSelect(unit.id)}
+                            className="w-3.5 h-3.5 accent-blue-500 cursor-pointer"
+                          />
+                        </td>
+
+                        {/* Expand toggle */}
+                        <td className="px-1 py-2.5 text-[#6e7681] text-xs w-4">
                           {isExpanded ? '▾' : '▸'}
                         </td>
+
                         <td className="py-2.5 pr-4 font-medium text-white">
                           {unit.asset}
                           {isLinked && (
@@ -645,26 +1375,34 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
                         <td className="py-2.5 text-xs text-[#6e7681]">
                           {fmtDate(unit.lastExitTime ?? unit.firstEntryTime)}
                         </td>
-                        <td className="py-2.5 pr-4" onClick={(e) => e.stopPropagation()}>
-                          {unit.kind === 'position' && (
-                            <button
-                              onClick={() => setDetailPositionId(unit.id)}
-                              className="text-[10px] text-[#6e7681] hover:text-blue-400 bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] rounded px-2 py-0.5 transition-colors whitespace-nowrap"
-                            >
-                              Details
-                            </button>
-                          )}
+
+                        {/* Three-dot menu */}
+                        <td
+                          className="py-2.5 pr-3 text-right"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <ThreeDotMenu
+                            unit={unit}
+                            onViewDetails={() => setDetailPositionId(unit.id)}
+                            onSplit={() => setSplitPositionId(unit.id)}
+                            onReclassify={() => setReclassifyUnit(unit)}
+                            onDelete={() => handleDelete(unit.id)}
+                            onUnlink={() => handleUnlink(unit.id)}
+                          />
                         </td>
                       </tr>
+
                       {isExpanded && (
                         <tr className="bg-[#0d1117]">
-                          <td colSpan={14} className="p-0">
+                          <td colSpan={15} className="p-0">
                             {isLinked && unit.legs ? (
                               <div className="px-4 py-2 space-y-2">
                                 <div className="text-[10px] uppercase tracking-widest text-[#6e7681] px-4">
                                   {unit.legs.length} position legs
                                   {unit.netDelta != null && (
-                                    <span className="ml-3">Net delta: <span className="text-[#8b949e]">${Math.abs(unit.netDelta).toFixed(2)}</span></span>
+                                    <span className="ml-3">
+                                      Net delta: <span className="text-[#8b949e]">${Math.abs(unit.netDelta).toFixed(2)}</span>
+                                    </span>
                                   )}
                                 </div>
                                 {unit.legs.map((leg) => (

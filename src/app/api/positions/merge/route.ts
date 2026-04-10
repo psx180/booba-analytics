@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
   }
 
   const service = new GroupingService();
-  const merged = await service.mergePositions(positionIds);
+  const { merged, undoData } = await service.mergePositions(positionIds);
 
-  return NextResponse.json(merged);
+  return NextResponse.json({ merged, undoData });
 }

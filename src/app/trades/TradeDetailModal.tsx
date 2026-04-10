@@ -233,6 +233,15 @@ interface TradeDetailModalProps {
   onClose: () => void;
 }
 
+interface CandidatePosition {
+  id: string;
+  asset: string;
+  direction: string;
+  pnl: number | null;
+  firstEntryTime: string | null;
+  lastExitTime: string | null;
+}
+
 export default function TradeDetailModal({ positionId, walletAddress, onClose }: TradeDetailModalProps) {
   const [position, setPosition] = useState<PositionDetail | null>(null);
   const [orders, setOrders] = useState<OrderGroup[]>([]);
@@ -246,6 +255,12 @@ export default function TradeDetailModal({ positionId, walletAddress, onClose }:
   const [sourceTag, setSourceTag] = useState('');
   const [conviction, setConviction] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // Move order state
+  const [movingOrderId, setMovingOrderId] = useState<string | null>(null);
+  const [candidates, setCandidates] = useState<CandidatePosition[]>([]);
+  const [loadingCandidates, setLoadingCandidates] = useState(false);
+  const [moveToast, setMoveToast] = useState<string | null>(null);
 
   const overlayRef = useRef<HTMLDivElement>(null);
 
@@ -283,6 +298,60 @@ export default function TradeDetailModal({ positionId, walletAddress, onClose }:
 
     return () => controller.abort();
   }, [positionId, walletAddress]);
+
+  const loadCandidates = useCallback(async () => {
+    if (!position) return;
+    setLoadingCandidates(true);
+    try {
+      const res = await fetch(
+        `/api/trade-units?walletAddress=${encodeURIComponent(walletAddress)}&asset=${encodeURIComponent(position.asset)}&pageSize=100`,
+      );
+      const data = await res.json();
+      const list: CandidatePosition[] = (data.tradeUnits ?? [])
+        .filter((u: { kind: string; id: string }) => u.kind === 'position' && u.id !== positionId)
+        .map((u: { id: string; asset: string; direction: string; pnl: number | null; firstEntryTime: string | null; lastExitTime: string | null }) => ({
+          id: u.id,
+          asset: u.asset,
+          direction: u.direction,
+          pnl: u.pnl,
+          firstEntryTime: u.firstEntryTime,
+          lastExitTime: u.lastExitTime,
+        }));
+      setCandidates(list);
+    } finally {
+      setLoadingCandidates(false);
+    }
+  }, [position, walletAddress, positionId]);
+
+  const handleMoveOrder = useCallback(async (orderGroupId: string, targetPositionId: string) => {
+    try {
+      await fetch(`/api/orders/${orderGroupId}/move`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetPositionId }),
+      });
+      setMovingOrderId(null);
+
+      // Check if source position still exists
+      const [posRes, ordersRes] = await Promise.all([
+        fetch(`/api/positions/${positionId}`),
+        fetch(`/api/positions/${positionId}/orders`),
+      ]);
+      const posData = await posRes.json();
+      if (posData.error || !posData.position) {
+        onClose();
+        return;
+      }
+      const ordersData = await ordersRes.json();
+      setOrders(ordersData.orders ?? []);
+
+      const target = candidates.find((c) => c.id === targetPositionId);
+      setMoveToast(`Moved order to ${target?.asset ?? 'position'}.`);
+      setTimeout(() => setMoveToast(null), 5000);
+    } catch (err) {
+      console.error('Move failed', err);
+    }
+  }, [positionId, candidates, onClose]);
 
   const saveAnnotations = useCallback(async (patch: Partial<{
     thesis: string; strategyTag: string; sourceTag: string; conviction: number | null;
@@ -330,6 +399,14 @@ export default function TradeDetailModal({ positionId, walletAddress, onClose }:
         >
           ✕
         </button>
+
+        {/* Move toast */}
+        {moveToast && (
+          <div className="absolute bottom-4 right-4 z-20 flex items-center gap-3 bg-[#21262d] border border-[#30363d] rounded-lg px-4 py-2.5 shadow-xl text-sm">
+            <span className="text-[#e6edf3]">{moveToast}</span>
+            <button onClick={() => setMoveToast(null)} className="text-[#6e7681] hover:text-white leading-none">✕</button>
+          </div>
+        )}
 
         {loading ? (
           <div className="flex-1 flex items-center justify-center text-[#6e7681] text-sm">
@@ -468,7 +545,7 @@ export default function TradeDetailModal({ positionId, walletAddress, onClose }:
                           onClick={() => canExpand && setExpandedOrderId(isExpanded ? null : order.id)}
                           className={`flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 rounded text-xs border border-[#21262d] ${
                             canExpand ? 'cursor-pointer hover:bg-[#161b22]' : ''
-                          } ${isExpanded ? 'bg-[#161b22] rounded-b-none' : 'bg-[#0d1117]'}`}
+                          } ${isExpanded || movingOrderId === order.id ? 'bg-[#161b22] rounded-b-none' : 'bg-[#0d1117]'}`}
                         >
                           {/* Time */}
                           <span className="text-[#6e7681] w-28 shrink-0">
@@ -502,13 +579,72 @@ export default function TradeDetailModal({ positionId, walletAddress, onClose }:
                             {order.isEntry ? '—' : fmt$(order.aggregatePnl)}
                           </span>
 
-                          {/* Fills count */}
-                          {canExpand && (
-                            <span className="ml-auto text-[#6e7681] flex items-center gap-1">
-                              {order._count.trades} fills {isExpanded ? '▾' : '▸'}
-                            </span>
-                          )}
+                          {/* Fills count + Move button */}
+                          <span className="ml-auto flex items-center gap-2">
+                            {canExpand && (
+                              <span className="text-[#6e7681]">
+                                {order._count.trades} fills {isExpanded ? '▾' : '▸'}
+                              </span>
+                            )}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (movingOrderId === order.id) {
+                                  setMovingOrderId(null);
+                                } else {
+                                  setMovingOrderId(order.id);
+                                  if (candidates.length === 0) loadCandidates();
+                                }
+                              }}
+                              className={`px-2 py-0.5 rounded text-[10px] border transition-colors ${
+                                movingOrderId === order.id
+                                  ? 'border-blue-500/50 bg-blue-900/30 text-blue-400'
+                                  : 'border-[#30363d] bg-[#21262d] text-[#6e7681] hover:text-blue-400 hover:border-blue-500/30'
+                              }`}
+                            >
+                              Move →
+                            </button>
+                          </span>
                         </div>
+
+                        {/* Move target panel */}
+                        {movingOrderId === order.id && (
+                          <div className="border border-t-0 border-[#21262d] rounded-b bg-[#0a0e13] px-3 py-2.5">
+                            <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-2">
+                              Move to another position:
+                            </div>
+                            {loadingCandidates ? (
+                              <div className="text-xs text-[#6e7681] py-1">Loading positions...</div>
+                            ) : candidates.length === 0 ? (
+                              <div className="text-xs text-[#6e7681] py-1">
+                                No other positions on {position?.asset ?? 'this asset'}.
+                              </div>
+                            ) : (
+                              <div className="space-y-1">
+                                {candidates.map((c) => (
+                                  <button
+                                    key={c.id}
+                                    onClick={() => handleMoveOrder(order.id, c.id)}
+                                    className="w-full text-left flex items-center gap-3 px-2.5 py-2 rounded text-xs hover:bg-[#161b22] transition-colors border border-transparent hover:border-[#21262d]"
+                                  >
+                                    <span className={c.direction === 'long' ? 'text-green-400' : 'text-red-400'}>
+                                      {c.direction.toUpperCase()}
+                                    </span>
+                                    <span className="text-[#6e7681]">
+                                      {fmtDate(c.firstEntryTime)}
+                                      {c.lastExitTime && c.lastExitTime !== c.firstEntryTime && (
+                                        <> → {fmtDate(c.lastExitTime)}</>
+                                      )}
+                                    </span>
+                                    <span className={`ml-auto font-medium ${c.pnl == null ? 'text-[#6e7681]' : c.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                      {c.pnl == null ? '—' : `${c.pnl >= 0 ? '+' : '-'}$${Math.abs(c.pnl).toFixed(2)}`}
+                                    </span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
 
                         {isExpanded && canExpand && (
                           <div className="border border-t-0 border-[#21262d] rounded-b">

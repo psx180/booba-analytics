@@ -4,6 +4,16 @@ import { GroupingService } from '@/services/grouping';
 import { POSITION_TYPES } from '@/services/grouping/types';
 import type { PositionType } from '@/services/grouping/types';
 
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  const service = new GroupingService();
+  await service.deletePosition(id);
+  return NextResponse.json({ success: true });
+}
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },

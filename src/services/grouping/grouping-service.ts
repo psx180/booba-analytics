@@ -221,6 +221,15 @@ export class GroupingService {
     const target = positions[0];
     const otherIds = positionIds.slice(1);
 
+    // Capture pre-merge state for undo
+    const orderAssignments: Record<string, string> = {};
+    for (const p of positions) {
+      for (const og of p.orderGroups) {
+        if (og.positionId) orderAssignments[og.id] = og.positionId;
+      }
+    }
+    const originalPositions = positions.map(({ orderGroups: _og, ...p }) => p);
+
     // Move all order groups to the target position
     await prisma.orderGroup.updateMany({
       where: { positionId: { in: otherIds } },
@@ -233,7 +242,49 @@ export class GroupingService {
     // Recompute aggregates
     await this.recomputePosition(target.id);
 
-    return prisma.position.findUnique({ where: { id: target.id } });
+    const merged = await prisma.position.findUnique({ where: { id: target.id } });
+    return {
+      merged,
+      undoData: { targetId: target.id, originalPositions, orderAssignments },
+    };
+  }
+
+  async undoMerge(undoData: {
+    targetId: string;
+    originalPositions: Array<Record<string, unknown>>;
+    orderAssignments: Record<string, string>;
+  }) {
+    const { targetId, originalPositions, orderAssignments } = undoData;
+
+    // Recreate deleted positions (everything except the target which still exists)
+    for (const orig of originalPositions) {
+      if (orig.id === targetId) continue;
+      const { createdAt: _c, updatedAt: _u, ...rest } = orig as Record<string, unknown>;
+      const posData: Record<string, unknown> = { ...rest };
+      if (posData.firstEntryTime) posData.firstEntryTime = new Date(posData.firstEntryTime as string);
+      if (posData.lastExitTime) posData.lastExitTime = new Date(posData.lastExitTime as string);
+      await prisma.position.create({ data: posData as Parameters<typeof prisma.position.create>[0]['data'] });
+    }
+
+    // Reassign orders back to their original positions
+    for (const [orderGroupId, origPositionId] of Object.entries(orderAssignments)) {
+      await prisma.orderGroup.update({
+        where: { id: orderGroupId },
+        data: { positionId: origPositionId },
+      });
+    }
+
+    // Recompute all affected positions
+    const allIds = [...new Set(Object.values(orderAssignments))];
+    await Promise.all(allIds.map((id) => this.recomputePosition(id)));
+  }
+
+  async deletePosition(positionId: string) {
+    await prisma.orderGroup.updateMany({
+      where: { positionId },
+      data: { positionId: null },
+    });
+    await prisma.position.delete({ where: { id: positionId } });
   }
 
   async splitPosition(positionId: string, splitTime: Date) {
