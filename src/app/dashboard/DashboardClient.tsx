@@ -141,6 +141,9 @@ function InsightCard({ insight }: { insight: Insight }) {
   const pStr        = pValue != null
     ? (pValue < 0.001 ? 'p<0.001' : `p=${pValue.toFixed(3)}`)
     : null;
+  // Guard: only show green badge when the displayed p-value also supports significance.
+  // Prevents "Significant · p=0.391" when one backing test passed but statistics[0] didn't.
+  const showSignificant = isSignif && (pValue == null || pValue < 0.05);
 
   return (
     <div
@@ -167,7 +170,7 @@ function InsightCard({ insight }: { insight: Insight }) {
 
       {/* Significance + sample size badges */}
       <div className="flex items-center gap-2 mb-2 flex-wrap">
-        {isSignif ? (
+        {showSignificant ? (
           <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-green-900/30 text-green-400">
             Significant{pStr ? ` · ${pStr}` : ''}
           </span>

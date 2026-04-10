@@ -26,6 +26,7 @@ import type {
   Filters,
   Candle,
 } from './types';
+import { benjaminiHochberg } from './statistics';
 
 export interface CandleSource {
   fetchCandles(asset: string, timeframe: string, start: Date, end: Date): Promise<Candle[]>;
@@ -166,7 +167,7 @@ export class AnalyticsService {
 
   async detectInsights(walletAddress: string): Promise<InsightRunSummary> {
     const positions = await this.loadFilteredPositions(walletAddress);
-    const insights: Insight[] = [];
+    let insights: Insight[] = [];
     const skipped: string[] = [];
 
     // Provide performance + equity-curve results to detectors that want them.
@@ -189,6 +190,16 @@ export class AnalyticsService {
         skipped.push(detector.name);
       }
     }
+
+    // Apply Benjamini-Hochberg FDR correction across all detectors
+    const totalTests = insights.reduce((s, i) => s + i.statistics.length, 0);
+    insights = benjaminiHochberg(insights);
+    const significantTests = insights.reduce(
+      (s, i) => s + i.statistics.filter((t) => t.isSignificant).length, 0,
+    );
+    console.log(
+      `[analytics] BH correction applied: ${significantTests} of ${totalTests} tests remain significant at FDR=0.10`,
+    );
 
     // Sort by impactScore descending — highest-impact insights first
     insights.sort((a, b) => b.impactScore - a.impactScore);

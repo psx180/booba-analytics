@@ -6,6 +6,7 @@
  */
 
 import * as ss from 'simple-statistics';
+import type { Insight } from './types';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -180,6 +181,70 @@ export function computeImpactScore(
   actionability: number,
 ): number {
   return Math.abs(dollarImpact) * (1 - test.pValue) * actionability;
+}
+
+/**
+ * Benjamini-Hochberg FDR correction across all insight detectors.
+ *
+ * Collects every StatisticalTest from every insight, ranks by p-value, and
+ * marks only those that fall below the BH threshold as significant.
+ * Updates each parent Insight's isSignificant flag (true only if ALL its
+ * backing tests survived) and penalises impactScore for demoted insights.
+ *
+ * @param fdrRate - False Discovery Rate target (default 0.10)
+ */
+export function benjaminiHochberg(insights: Insight[], fdrRate = 0.10): Insight[] {
+  // Collect all tests with origin indices
+  interface TestRef { pValue: number; insightIdx: number; testIdx: number; }
+  const allTests: TestRef[] = [];
+  insights.forEach((insight, insightIdx) => {
+    insight.statistics.forEach((test, testIdx) => {
+      allTests.push({ pValue: test.pValue, insightIdx, testIdx });
+    });
+  });
+
+  const m = allTests.length;
+  if (m === 0) return insights;
+
+  // Sort ascending by p-value (rank 1 = most significant)
+  const sorted = [...allTests].sort((a, b) => a.pValue - b.pValue);
+
+  // Find the largest rank k where p_k ≤ (k/m) × fdrRate
+  let cutoffIndex = -1;
+  for (let i = m - 1; i >= 0; i--) {
+    if (sorted[i].pValue <= ((i + 1) / m) * fdrRate) {
+      cutoffIndex = i;
+      break;
+    }
+  }
+
+  // Deep-copy so we don't mutate the originals
+  const updated = insights.map((insight) => ({
+    ...insight,
+    statistics: insight.statistics.map((test) => ({ ...test })),
+  }));
+
+  // Apply BH significance to each test
+  for (let i = 0; i < m; i++) {
+    const { insightIdx, testIdx } = sorted[i];
+    updated[insightIdx].statistics[testIdx] = {
+      ...updated[insightIdx].statistics[testIdx],
+      isSignificant: i <= cutoffIndex,
+      correctionApplied: 'benjamini-hochberg',
+    };
+  }
+
+  // Update insight-level isSignificant; penalise demoted insights
+  for (const insight of updated) {
+    const wasSignificant = insight.isSignificant;
+    insight.isSignificant =
+      insight.statistics.length > 0 && insight.statistics.every((t) => t.isSignificant);
+    if (wasSignificant && !insight.isSignificant) {
+      insight.impactScore *= 0.1;
+    }
+  }
+
+  return updated;
 }
 
 // ─── Internal helpers ──────────────────────────────────────────────────────

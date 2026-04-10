@@ -34,6 +34,7 @@ import { regimeMismatchDetector }   from './insights/regime-mismatch';
 import { streakBehaviorDetector }   from './insights/streak-behavior';
 import { holdTimeOptimizerDetector } from './insights/hold-time-optimizer';
 import { outlierDependencyDetector } from './insights/outlier-dependency';
+import { sizingAnalysisDetector }    from './insights/sizing-analysis';
 
 export const metricComputers: MetricComputer[] = [
   exitQualityComputer,
@@ -60,6 +61,7 @@ export const insightDetectors: InsightDetector[] = [
   streakBehaviorDetector,
   holdTimeOptimizerDetector,
   outlierDependencyDetector,
+  sizingAnalysisDetector,
 ];
 
 const bybitCandleSource = new BybitCandleSource();
