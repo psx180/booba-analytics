@@ -12,6 +12,7 @@ const VALID_DIMENSIONS = new Set([
   'entryDayOfWeek',
   'entrySession',
   'holdTimeCategory',
+  'date',
 ]);
 
 export async function GET(req: NextRequest) {

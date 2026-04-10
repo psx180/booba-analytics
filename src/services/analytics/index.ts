@@ -9,6 +9,7 @@
 
 import { prisma } from '../../lib/prisma';
 import { AnalyticsService } from './analytics-service';
+import { BybitCandleSource } from '../regime/candle-sources/bybit';
 
 import type { MetricComputer, Aggregator, InsightDetector } from './types';
 
@@ -45,12 +46,15 @@ export const insightDetectors: InsightDetector[] = [
   dispositionDetector,
 ];
 
+const bybitCandleSource = new BybitCandleSource();
+
 export function createAnalyticsService(): AnalyticsService {
   return new AnalyticsService(
     metricComputers,
     aggregators,
     insightDetectors,
     prisma as any,
+    bybitCandleSource,
   );
 }
 

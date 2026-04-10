@@ -25,7 +25,8 @@ export type BreakdownDimension =
   | 'entryHour'
   | 'entryDayOfWeek'
   | 'entrySession'
-  | 'holdTimeCategory';
+  | 'holdTimeCategory'
+  | 'date';
 
 export interface BreakdownOptions {
   groupBy: BreakdownDimension;
@@ -67,6 +68,7 @@ function getDimensionValue(p: Position, dim: BreakdownDimension): string {
     case 'entryDayOfWeek':  return p.entryDayOfWeek != null ? String(p.entryDayOfWeek) : 'unknown';
     case 'entrySession':    return p.entrySession ?? 'unknown';
     case 'holdTimeCategory': return p.holdTimeCategory ?? 'unknown';
+    case 'date':             return p.firstEntryTime ? p.firstEntryTime.toISOString().slice(0, 10) : 'unknown';
   }
 }
 
