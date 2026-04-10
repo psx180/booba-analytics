@@ -24,8 +24,16 @@ import { breakdownAggregator } from './aggregations/breakdown';
 import { whatIfAggregator } from './aggregations/what-if';
 
 // Insights
-import { exitOptimizerDetector } from './insights/exit-optimizer';
-import { dispositionDetector } from './insights/disposition';
+import { exitOptimizerDetector }    from './insights/exit-optimizer';
+import { dispositionDetector }      from './insights/disposition';
+import { revengeTradingDetector }   from './insights/revenge-trading';
+import { overtradingDetector }      from './insights/overtrading';
+import { sizeEscalationDetector }   from './insights/size-escalation';
+import { timeOfDayEdgeDetector }    from './insights/time-of-day-edge';
+import { regimeMismatchDetector }   from './insights/regime-mismatch';
+import { streakBehaviorDetector }   from './insights/streak-behavior';
+import { holdTimeOptimizerDetector } from './insights/hold-time-optimizer';
+import { outlierDependencyDetector } from './insights/outlier-dependency';
 
 export const metricComputers: MetricComputer[] = [
   exitQualityComputer,
@@ -44,6 +52,14 @@ export const aggregators: Aggregator[] = [
 export const insightDetectors: InsightDetector[] = [
   exitOptimizerDetector,
   dispositionDetector,
+  revengeTradingDetector,
+  overtradingDetector,
+  sizeEscalationDetector,
+  timeOfDayEdgeDetector,
+  regimeMismatchDetector,
+  streakBehaviorDetector,
+  holdTimeOptimizerDetector,
+  outlierDependencyDetector,
 ];
 
 const bybitCandleSource = new BybitCandleSource();

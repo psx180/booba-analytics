@@ -458,10 +458,20 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
             </p>
           )}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {insights.map((insight, i) => (
+            {insights.slice(0, 5).map((insight, i) => (
               <InsightCard key={`${insight.module}-${i}`} insight={insight} />
             ))}
           </div>
+          {insights.length > 5 && (
+            <div className="text-right">
+              <a
+                href="/analytics"
+                className="text-xs text-[#6e7681] hover:text-white transition-colors"
+              >
+                View all {insights.length} insights →
+              </a>
+            </div>
+          )}
         </>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">

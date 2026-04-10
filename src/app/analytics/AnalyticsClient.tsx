@@ -10,6 +10,105 @@ import StrategyBreakdown from './StrategyBreakdown';
 import WhatIfExplorer from './WhatIfExplorer';
 import RegimePerformance from './RegimePerformance';
 
+// ── Insight types (mirror of backend Insight) ──────────────────────────────────
+
+interface StatisticalTest {
+  testName: string;
+  pValue: number;
+  effectSize: number;
+  sampleSizeA: number;
+  sampleSizeB: number;
+  isSignificant: boolean;
+  correctionApplied?: string;
+  description: string;
+}
+
+interface Insight {
+  module: string;
+  title: string;
+  description: string;
+  severity: 'info' | 'warning' | 'critical';
+  confidence: number;
+  affectedPositions: string[];
+  suggestion?: string;
+  data: Record<string, any>;
+  regimeBreakdown?: Record<string, any>;
+  statistics: StatisticalTest[];
+  impactScore: number;
+  category: string;
+  isSignificant: boolean;
+  sampleSize: number;
+}
+
+const CATEGORY_ORDER = ['behavior', 'exit', 'timing', 'strategy', 'risk', 'entry', 'pacifica'] as const;
+const CATEGORY_LABEL: Record<string, string> = {
+  behavior:  'Behavior',
+  exit:      'Exit',
+  timing:    'Timing',
+  strategy:  'Strategy',
+  risk:      'Risk',
+  entry:     'Entry',
+  pacifica:  'Pacifica',
+};
+
+const SEVERITY_STYLE: Record<string, { border: string; badge: string; badgeText: string }> = {
+  info:     { border: 'border-blue-500/30',  badge: 'bg-blue-500/15',   badgeText: 'text-blue-300'   },
+  warning:  { border: 'border-amber-500/40', badge: 'bg-amber-500/15',  badgeText: 'text-amber-300'  },
+  critical: { border: 'border-red-500/40',   badge: 'bg-red-500/15',    badgeText: 'text-red-300'    },
+};
+
+function InsightCard({ insight }: { insight: Insight }) {
+  const style    = SEVERITY_STYLE[insight.severity] ?? SEVERITY_STYLE.info;
+  const isSignif = insight.isSignificant ?? false;
+  const primary  = insight.statistics?.[0];
+  const pValue   = primary?.pValue;
+  const pStr     = pValue != null
+    ? (pValue < 0.001 ? 'p<0.001' : `p=${pValue.toFixed(3)}`)
+    : null;
+
+  return (
+    <div className={`bg-[#161b22] border ${style.border} rounded-lg p-4 flex flex-col gap-2`}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-semibold text-white">{insight.title}</span>
+          {insight.category && (
+            <span className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-widest font-medium bg-[#21262d] text-[#6e7681]">
+              {CATEGORY_LABEL[insight.category] ?? insight.category}
+            </span>
+          )}
+        </div>
+        <span className={`shrink-0 px-2 py-0.5 rounded text-[10px] uppercase tracking-widest font-medium ${style.badge} ${style.badgeText}`}>
+          {insight.severity}
+        </span>
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        {isSignif ? (
+          <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-emerald-500/15 text-emerald-400">
+            Significant{pStr ? ` · ${pStr}` : ''}
+          </span>
+        ) : (
+          <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-[#21262d] text-[#6e7681]">
+            Preliminary{pStr ? ` · ${pStr}` : ''}
+          </span>
+        )}
+        {insight.sampleSize != null && (
+          <span className="text-[10px] text-[#6e7681]">Based on {insight.sampleSize} trades</span>
+        )}
+      </div>
+
+      <p className="text-sm text-[#8b949e] leading-relaxed">{insight.description}</p>
+
+      {insight.suggestion && (
+        <p className="text-xs text-[#6e7681] leading-relaxed pt-2 border-t border-[#21262d]">
+          <span className="text-[#8b949e] font-medium">Suggestion: </span>
+          {insight.suggestion}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ── Filter Select ──────────────────────────────────────────────────────────────
 
 function FilterSelect({
@@ -70,6 +169,7 @@ function Section({
 export default function AnalyticsClient({ walletAddress }: { walletAddress: string }) {
   const [filters, setFilters] = useState<AnalyticsFilters>(EMPTY_FILTERS);
   const [assetOptions, setAssetOptions] = useState<string[]>([]);
+  const [insights, setInsights] = useState<Insight[]>([]);
 
   const set = useCallback(<K extends keyof AnalyticsFilters>(key: K, value: string) => {
     setFilters((f) => ({ ...f, [key]: value }));
@@ -90,8 +190,23 @@ export default function AnalyticsClient({ walletAddress }: { walletAddress: stri
       .catch(() => {});
   }, [walletAddress]);
 
+  // Load insights once on mount
+  useEffect(() => {
+    fetch(`/api/analytics/insights?walletAddress=${walletAddress}`)
+      .then((r) => r.json())
+      .then((d) => setInsights(d.insights ?? []))
+      .catch(() => {});
+  }, [walletAddress]);
+
   const hasFilters = Object.values(filters).some(Boolean);
   const chartProps = { walletAddress, filters };
+
+  // Group insights by category in display order
+  const insightsByCategory = CATEGORY_ORDER.reduce<Record<string, Insight[]>>((acc, cat) => {
+    const group = insights.filter((i) => i.category === cat);
+    if (group.length > 0) acc[cat] = group;
+    return acc;
+  }, {});
 
   return (
     <div className="space-y-4">
@@ -183,6 +298,29 @@ export default function AnalyticsClient({ walletAddress }: { walletAddress: stri
       >
         <RegimePerformance {...chartProps} />
       </Section>
+
+      {/* ── Behavioural Insights ───────────────────────────────────────── */}
+      {insights.length > 0 && (
+        <Section
+          title="Behavioural Insights"
+          subtitle={`${insights.length} pattern${insights.length > 1 ? 's' : ''} detected · ${insights.filter((i) => i.isSignificant).length} statistically significant`}
+        >
+          <div className="space-y-6">
+            {Object.entries(insightsByCategory).map(([category, group]) => (
+              <div key={category}>
+                <h3 className="text-xs font-semibold uppercase tracking-widest text-[#6e7681] mb-3">
+                  {CATEGORY_LABEL[category] ?? category}
+                </h3>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                  {group.map((insight, i) => (
+                    <InsightCard key={`${insight.module}-${i}`} insight={insight} />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
     </div>
   );
 }
