@@ -1,187 +1,451 @@
 /**
- * Exit-quality metrics.
+ * Exit-quality metrics — MFE, MAE, exit efficiency, money left on table.
  *
- *   exitEfficiency   = actual move captured / maximum favorable move available
- *                      1.0 = perfect exit at the top,
- *                      0.5 = captured half the move,
- *                      0.0 = exited at entry,
- *                      <0  = exited in the red.
+ *   mfePrice          — best price the position reached during its hold
+ *   mfePnl            — best $ P&L the position would have shown at MFE (≥ 0)
+ *   maePrice          — worst price the position reached during its hold
+ *   maePnl            — worst $ P&L the position would have shown at MAE (≤ 0)
+ *   exitEfficiency    — actual price move captured / max favorable move
+ *                       1.0 = perfect exit at the top
+ *                       0.5 = captured half the move
+ *                       0.0 = exited at entry
+ *                       <0  = exited in the red
+ *   moneyLeftOnTable  = MFE dollar P&L − actual dollar P&L (clamped at 0)
+ *   maeRatio          = |MAE dollar P&L| / |actual dollar P&L|
+ *                       High values → took a lot of heat for the gain realized.
  *
- *   moneyLeftOnTable = MFE dollar P&L − actual dollar P&L.
+ * ─── Why a factory + computeAll ────────────────────────────────────────────
  *
- *   maeRatio         = MAE dollar P&L (absolute) / actual dollar P&L (absolute).
- *                      High values → took a lot of heat for the gain realized.
+ * Computing MFE/MAE requires fetching price candles for every closed position
+ * over its hold window. Per-position `compute()` can't do that — it's sync,
+ * pure, and has no I/O. So this module exports a factory:
  *
- * MFE/MAE can be sourced two ways:
- *   1. Already stored on the position (mfePrice / mfePnl / maePnl) — used as-is.
- *   2. Derived from candle priceData passed by the analytics service. In this
- *      case the computer also OUTPUTS mfePrice/mfePnl/maePrice/maePnl so the
- *      analytics service can persist them alongside the efficiency metrics.
+ *     createExitQualityComputer(fetcher) → MetricComputer
  *
- * A position must be closed to produce any output.
+ * The returned computer implements `computeAll(positions)` which:
+ *   1. Filters to closed positions with valid timestamps and entry/size
+ *   2. Picks a candle timeframe per position based on hold duration
+ *      (1m for <15min trades, 15m for <4h, 1h for ≥4h)
+ *   3. Buckets positions by (asset, timeframe), computes the union date range
+ *      for each bucket, and fetches once
+ *   4. Falls through Pacifica → Bybit → Binance for each asset, logging
+ *      which source served the data and skipping unsupported assets without
+ *      failing the pipeline
+ *   5. Slices each bucket's candles to each position's exact entry-to-exit
+ *      window, then computes MFE/MAE/exitEfficiency/moneyLeftOnTable/maeRatio
+ *
+ * The per-position `compute()` is kept as a no-op pass-through so the metric
+ * still type-checks against MetricComputer for analytics-service.ts's loop.
  */
 
-import type { MetricComputer, Position } from './base';
-import type { Candle } from '../types';
+import type { MetricComputer, Position, Candle } from './base';
+import type { CandleSource } from '../../regime/types';
 
-interface CandleDerivedMfeMae {
-  mfePrice: number;
-  mfePnl: number;
-  maePrice: number;
-  maePnl: number;
-}
+// ─── Public types ─────────────────────────────────────────────────────────
 
 /**
- * Compute MFE and MAE prices from a candle slice covering the position's
- * hold period. Returns null if required position fields are missing.
- *
- * For longs:  MFE = highest high (best price you could have exited at)
- *             MAE = lowest low   (worst price the position reached)
- * For shorts: MFE = lowest low   (best price you could have covered at)
- *             MAE = highest high (worst price the position reached)
+ * One candle backend with the symbol-format conversion baked in. The same
+ * Pacifica asset (e.g. 'BTC') maps to different symbol strings per source
+ * ('BTC' for Pacifica's own /kline, 'BTCUSDT' for Bybit/Binance), so each
+ * source decides how to translate.
  */
-function deriveFromCandles(position: Position, candles: Candle[]): CandleDerivedMfeMae | null {
-  const entry = position.averageEntryPrice;
-  const size = position.totalSize;
+export interface CandleSourceAdapter {
+  /** Logged so the operator can see which backend served the data. */
+  readonly name: string;
+  /**
+   * Map a Pacifica asset to the symbol this backend uses, or return null
+   * if the asset isn't listed. Returning null lets the multi-source fetcher
+   * fall through to the next backend without making a doomed request.
+   */
+  toSymbol(asset: string): string | null;
+  /** Underlying candle source. */
+  source: CandleSource;
+}
 
-  if (entry == null || entry === 0 || size == null || size === 0) {
-    console.log(`[exit-quality] position ${position.id}: skipping — missing entry (${entry}) or size (${size})`);
-    return null;
-  }
-  if (candles.length === 0) {
-    console.log(`[exit-quality] position ${position.id}: skipping — no candles provided`);
-    return null;
-  }
+export interface MultiSourceCandleFetcher {
+  /**
+   * Try each configured source in order. Returns candles from the first
+   * source that yields a non-empty result. Returns [] if every source fails
+   * or returns nothing — caller logs and skips that asset.
+   */
+  fetch(asset: string, timeframe: string, start: Date, end: Date): Promise<Candle[]>;
+}
 
-  const mfePrice = position.direction === 'long'
-    ? Math.max(...candles.map((c) => c.high))
-    : Math.min(...candles.map((c) => c.low));
+// ─── Default fetcher implementation ───────────────────────────────────────
 
-  const maePrice = position.direction === 'long'
-    ? Math.min(...candles.map((c) => c.low))
-    : Math.max(...candles.map((c) => c.high));
-
-  // PnL = price_move_per_unit × total_size
-  const mfePnl = position.direction === 'long'
-    ? (mfePrice - entry) * size
-    : (entry - mfePrice) * size;
-
-  const maePnl = position.direction === 'long'
-    ? (maePrice - entry) * size
-    : (entry - maePrice) * size;
-
-  console.log(
-    `[exit-quality] position ${position.id} (${position.direction} ${position.asset}): ` +
-    `entry=${entry} size=${size} ${candles.length} candles → ` +
-    `mfePrice=${mfePrice.toFixed(4)} mfePnl=${mfePnl.toFixed(2)} ` +
-    `maePrice=${maePrice.toFixed(4)} maePnl=${maePnl.toFixed(2)}`,
-  );
-
+export function createMultiSourceFetcher(adapters: CandleSourceAdapter[]): MultiSourceCandleFetcher {
   return {
-    mfePrice: round(mfePrice, 6),
-    mfePnl: round(mfePnl, 2),
-    maePrice: round(maePrice, 6),
-    maePnl: round(maePnl, 2),
+    async fetch(asset, timeframe, start, end) {
+      for (const adapter of adapters) {
+        const symbol = adapter.toSymbol(asset);
+        if (symbol == null) {
+          console.log(`[exit-quality] ${adapter.name} does not list ${asset}, trying next source...`);
+          continue;
+        }
+        try {
+          const candles = await adapter.source.fetchCandles(symbol, timeframe, start, end);
+          if (candles.length > 0) {
+            console.log(
+              `[exit-quality] Using ${adapter.name} candle source for ${asset} ` +
+              `(${candles.length} ${timeframe} candles)`,
+            );
+            return candles;
+          }
+          console.log(
+            `[exit-quality] ${adapter.name} returned 0 candles for ${asset} ${timeframe} ` +
+            `[${start.toISOString()} → ${end.toISOString()}], trying next source...`,
+          );
+        } catch (err) {
+          console.log(
+            `[exit-quality] ${adapter.name} candles failed for ${asset}: ` +
+            `${(err as Error).message}, trying next source...`,
+          );
+        }
+      }
+      return [];
+    },
   };
 }
 
-export const exitQualityComputer: MetricComputer = {
-  name: 'exit-quality',
-  requiredFields: [
-    'status',
-    'direction',
-    'averageEntryPrice',
-    'averageExitPrice',
-    'totalSize',
-    // These may be pre-stored or derived from priceData:
-    'mfePrice', 'mfePnl', 'maePnl',
-    'aggregatePnl',
-  ],
+// ─── Factory ──────────────────────────────────────────────────────────────
 
-  compute(position: Position, priceData?: Candle[]): Record<string, number | string | null> {
-    const out: Record<string, number | null> = {
-      exitEfficiency: null,
-      moneyLeftOnTable: null,
-      maeRatio: null,
-      // These will be set if we derive them from candles
-      mfePrice: null,
-      mfePnl: null,
-      maePrice: null,
-      maePnl: null,
-    };
+const HOLD_15_MIN_SEC = 15 * 60;
+const HOLD_4_HOUR_SEC = 4 * 60 * 60;
 
-    if (position.status !== 'closed') return out;
-
-    // ── Resolve MFE/MAE source ──────────────────────────────────────────────
-    let mfePnl = position.mfePnl;
-    let maePnl = position.maePnl;
-    let mfePrice = position.mfePrice;
-
-    const hasMfeData = mfePnl != null && mfePrice != null;
-
-    if (!hasMfeData) {
-      if (!priceData || priceData.length === 0) {
-        // No pre-stored data and no candles — can't compute anything.
-        console.log(
-          `[exit-quality] position ${position.id}: no MFE data on record and no candles passed — ` +
-          `exitEfficiency will remain null. Run analytics after candle data is available.`,
-        );
-        return out;
-      }
-      // Derive from candle data
-      const derived = deriveFromCandles(position, priceData);
-      if (!derived) return out;
-
-      mfePnl    = derived.mfePnl;
-      maePnl    = derived.maePnl;
-      mfePrice  = derived.mfePrice;
-
-      // Write derived values into the output so the analytics service persists them
-      out.mfePrice = derived.mfePrice;
-      out.mfePnl   = derived.mfePnl;
-      out.maePrice = derived.maePrice;
-      out.maePnl   = derived.maePnl;
-    }
-
-    // ── Exit efficiency — price-based ──────────────────────────────────────
-    const entry = position.averageEntryPrice;
-    const exit  = position.averageExitPrice;
-
-    if (
-      entry != null && entry > 0 &&
-      exit  != null &&
-      mfePrice != null && mfePrice !== entry
-    ) {
-      const actualMove = position.direction === 'long' ? exit - entry : entry - exit;
-      const maxMove    = position.direction === 'long' ? mfePrice - entry : entry - mfePrice;
-      if (maxMove > 0) {
-        out.exitEfficiency = round(actualMove / maxMove, 4);
-      }
-    }
-
-    // ── Money left on table — dollar-based ────────────────────────────────
-    const actualPnl = position.aggregatePnl;
-    if (mfePnl != null && actualPnl != null) {
-      out.moneyLeftOnTable = round(Math.max(0, mfePnl - actualPnl), 2);
-    }
-
-    // ── MAE ratio — how much heat relative to gain ────────────────────────
-    if (maePnl != null && actualPnl != null && actualPnl !== 0) {
-      out.maeRatio = round(Math.abs(maePnl) / Math.abs(actualPnl), 3);
-    }
-
-    // Clear the stored-price pass-throughs if we didn't derive them
-    // (don't overwrite non-null DB values with null)
-    if (hasMfeData) {
-      delete out.mfePrice;
-      delete out.mfePnl;
-      delete out.maePrice;
-      delete out.maePnl;
-    }
-
-    return out;
-  },
+const TIMEFRAME_MS: Record<string, number> = {
+  '1m':  60_000,
+  '5m':  300_000,
+  '15m': 900_000,
+  '1h':  3_600_000,
 };
+
+/** 5-minute pre-entry / post-exit buffer so the entry candle is always covered. */
+const WINDOW_BUFFER_MS = 5 * 60 * 1000;
+
+/**
+ * Pacifica's /kline endpoint has an undocumented minimum range requirement:
+ * the request span must be wider than ~60 candles for 1m, ~20 candles for 1h
+ * (and similar thresholds for other intervals). When the bucket's natural
+ * range is below that threshold, the API rejects the request with the
+ * misleading error "start_time must be less than end_time" — even when start
+ * is plainly less than end.
+ *
+ * Solution: pad every bucket range to at least 120 candles wide AND at least
+ * 24 hours wide. The per-position slice filter throws away any candles that
+ * fall outside the actual entry-to-exit window, so over-fetching is harmless
+ * to the computed MFE/MAE.
+ */
+const PACIFICA_MIN_CANDLES_PER_REQUEST = 120;
+const PACIFICA_MIN_RANGE_MS = 24 * 60 * 60 * 1000;
+
+/** Pick the candle timeframe to use for a position based on its hold duration. */
+function pickTimeframe(holdSeconds: number | null): '1m' | '15m' | '1h' {
+  if (holdSeconds == null) return '15m';
+  if (holdSeconds < HOLD_15_MIN_SEC) return '1m';
+  if (holdSeconds < HOLD_4_HOUR_SEC) return '15m';
+  return '1h';
+}
+
+interface BucketKey {
+  asset: string;
+  timeframe: '1m' | '15m' | '1h';
+}
+
+interface Bucket {
+  asset: string;
+  timeframe: '1m' | '15m' | '1h';
+  positions: Position[];
+  startMs: number;
+  endMs: number;
+}
+
+export function createExitQualityComputer(
+  fetcher: MultiSourceCandleFetcher,
+): MetricComputer {
+  return {
+    name: 'exit-quality',
+    requiredFields: [
+      'status',
+      'direction',
+      'averageEntryPrice',
+      'averageExitPrice',
+      'totalSize',
+      'aggregatePnl',
+      'firstEntryTime',
+      'lastExitTime',
+      'holdTimeSeconds',
+    ],
+
+    /**
+     * No-op per-position computer. The real work happens in computeAll.
+     * Kept so the analytics service can still loop over compute() during
+     * the write phase without special-casing this metric — the loop will
+     * just merge the empty result, then merge the batch result on top.
+     */
+    compute(): Record<string, number | string | null> {
+      return {};
+    },
+
+    async computeAll(positions: Position[]) {
+      const result = new Map<string, Record<string, number | string | null>>();
+
+      // ─── 1. Filter to positions that need (and can have) MFE/MAE ───────
+      const eligible = positions.filter((p) => {
+        if (p.status !== 'closed') return false;
+        if (!p.firstEntryTime || !p.lastExitTime) return false;
+        if (p.averageEntryPrice == null || p.averageEntryPrice === 0) return false;
+        if (p.totalSize == null || p.totalSize === 0) return false;
+        return true;
+      });
+
+      console.log(
+        `[exit-quality] computeAll: ${eligible.length}/${positions.length} positions ` +
+        `eligible for MFE/MAE computation`,
+      );
+
+      if (eligible.length === 0) return result;
+
+      // ─── 2. Bucket by (asset, timeframe) and compute union ranges ──────
+      const buckets = new Map<string, Bucket>();
+      for (const p of eligible) {
+        const timeframe = pickTimeframe(p.holdTimeSeconds);
+        const key = `${p.asset}::${timeframe}`;
+        const startMs = p.firstEntryTime!.getTime() - WINDOW_BUFFER_MS;
+        const endMs   = p.lastExitTime!.getTime()   + WINDOW_BUFFER_MS;
+
+        const existing = buckets.get(key);
+        if (existing) {
+          existing.positions.push(p);
+          if (startMs < existing.startMs) existing.startMs = startMs;
+          if (endMs   > existing.endMs)   existing.endMs   = endMs;
+        } else {
+          buckets.set(key, {
+            asset: p.asset,
+            timeframe,
+            positions: [p],
+            startMs,
+            endMs,
+          });
+        }
+      }
+
+      console.log(
+        `[exit-quality] computeAll: ${buckets.size} (asset, timeframe) buckets`,
+      );
+
+      // ─── 3. Per-bucket fetch + per-position MFE/MAE ────────────────────
+      let computed = 0;
+      let skippedNoCandles = 0;
+
+      for (const bucket of buckets.values()) {
+        // Pad the request range so it always exceeds Pacifica's minimum span.
+        // The slice filter still uses each position's exact entry/exit window,
+        // so over-fetching is purely a request-shape concern.
+        const intervalMs = TIMEFRAME_MS[bucket.timeframe];
+        const minRangeMs = Math.max(
+          PACIFICA_MIN_RANGE_MS,
+          PACIFICA_MIN_CANDLES_PER_REQUEST * intervalMs,
+        );
+        const naturalRange = bucket.endMs - bucket.startMs;
+        const padPerSide = naturalRange < minRangeMs
+          ? Math.ceil((minRangeMs - naturalRange) / 2)
+          : 0;
+        const fetchStartMs = bucket.startMs - padPerSide;
+        const fetchEndMs   = bucket.endMs   + padPerSide;
+
+        const start = new Date(fetchStartMs);
+        const end   = new Date(fetchEndMs);
+        const days  = ((fetchEndMs - fetchStartMs) / 86_400_000).toFixed(1);
+
+        console.log(
+          `[exit-quality] Fetching candles for ${bucket.asset} (${bucket.positions.length} positions, ` +
+          `${start.toISOString().slice(0, 10)} to ${end.toISOString().slice(0, 10)}, ${days}d) ` +
+          `at ${bucket.timeframe}...`,
+        );
+
+        // For very long ranges at fine timeframes the union fetch would be
+        // wasteful (1m × 6 months = 260k candles, ~75 paginated requests).
+        // Fall back to per-position fetches in that case.
+        const estimatedCandles = (fetchEndMs - fetchStartMs) / intervalMs;
+        const useUnionFetch = estimatedCandles <= 50_000;
+
+        if (useUnionFetch) {
+          const candles = await fetcher.fetch(bucket.asset, bucket.timeframe, start, end);
+          if (candles.length === 0) {
+            console.warn(
+              `[exit-quality] No candle data available for ${bucket.asset} — ` +
+              `MFE/MAE will not be computed for ${bucket.positions.length} position(s)`,
+            );
+            skippedNoCandles += bucket.positions.length;
+            continue;
+          }
+          for (const p of bucket.positions) {
+            const slice = sliceCandlesForPosition(candles, p);
+            const updates = computeMfeMaeUpdates(p, slice);
+            if (updates) {
+              result.set(p.id, updates);
+              computed++;
+            } else {
+              skippedNoCandles++;
+            }
+          }
+        } else {
+          // Per-position fallback for huge ranges.
+          console.log(
+            `[exit-quality]   union range too large (~${estimatedCandles.toFixed(0)} candles), ` +
+            `falling back to per-position fetches`,
+          );
+          for (const p of bucket.positions) {
+            const naturalStart = p.firstEntryTime!.getTime() - WINDOW_BUFFER_MS;
+            const naturalEnd   = p.lastExitTime!.getTime()   + WINDOW_BUFFER_MS;
+            const naturalRange = naturalEnd - naturalStart;
+            const posPad = naturalRange < minRangeMs
+              ? Math.ceil((minRangeMs - naturalRange) / 2)
+              : 0;
+            const posStart = new Date(naturalStart - posPad);
+            const posEnd   = new Date(naturalEnd   + posPad);
+            const candles  = await fetcher.fetch(bucket.asset, bucket.timeframe, posStart, posEnd);
+            if (candles.length === 0) {
+              skippedNoCandles++;
+              continue;
+            }
+            const slice  = sliceCandlesForPosition(candles, p);
+            const updates = computeMfeMaeUpdates(p, slice);
+            if (updates) {
+              result.set(p.id, updates);
+              computed++;
+            } else {
+              skippedNoCandles++;
+            }
+          }
+        }
+      }
+
+      console.log(
+        `[exit-quality] Computed MFE/MAE for ${computed}/${eligible.length} positions ` +
+        `(${skippedNoCandles} skipped — unsupported assets or empty candle slices)`,
+      );
+
+      return result;
+    },
+  };
+}
+
+// ─── Per-position math ────────────────────────────────────────────────────
+
+function sliceCandlesForPosition(candles: Candle[], position: Position): Candle[] {
+  const startMs = position.firstEntryTime!.getTime();
+  const endMs   = position.lastExitTime!.getTime();
+
+  const strict = candles.filter((c) => {
+    const t = c.timestamp.getTime();
+    return t >= startMs && t <= endMs;
+  });
+  if (strict.length > 0) return strict;
+
+  // Sub-candle hold time (e.g. a 30-second scalp on 1m candles): no candle
+  // open-time falls strictly inside [entry, exit]. Bracket the trade with the
+  // candles immediately before entry and after exit so we still get an
+  // approximate high/low for the period the position was open. The candles
+  // are pre-sorted chronologically by the source, so a linear scan suffices.
+  let before: Candle | undefined;
+  for (const c of candles) {
+    if (c.timestamp.getTime() <= startMs) before = c;
+    else break;
+  }
+  const after = candles.find((c) => c.timestamp.getTime() >= endMs);
+
+  const fallback: Candle[] = [];
+  if (before) fallback.push(before);
+  if (after && (!before || after.timestamp.getTime() !== before.timestamp.getTime())) {
+    fallback.push(after);
+  }
+  return fallback;
+}
+
+/**
+ * Returns the per-position update payload, or null if the slice was empty
+ * (no candles fall inside this position's hold window — likely a sub-minute
+ * trade we can't resolve). Also computes the dependent metrics
+ * (exitEfficiency, moneyLeftOnTable, maeRatio).
+ */
+function computeMfeMaeUpdates(
+  position: Position,
+  slice: Candle[],
+): Record<string, number | null> | null {
+  if (slice.length === 0) {
+    console.log(
+      `[exit-quality] position ${position.id} (${position.asset} ${position.direction}): ` +
+      `no candles in window [${position.firstEntryTime?.toISOString()} → ` +
+      `${position.lastExitTime?.toISOString()}], skipping`,
+    );
+    return null;
+  }
+
+  const entry = position.averageEntryPrice!;
+  const size  = position.totalSize!;
+  const dir   = position.direction;
+
+  // Raw extremes from the candle slice — high is max favorable for longs and
+  // max adverse for shorts; low is the inverse.
+  const highestHigh = Math.max(...slice.map((c) => c.high));
+  const lowestLow   = Math.min(...slice.map((c) => c.low));
+
+  // MFE/MAE are EXCURSIONS from entry, not just extreme prices. If the trade
+  // never went favorable (or never went adverse) during its hold, the
+  // corresponding excursion is zero — represented by clamping the extreme to
+  // the entry price. Without this clamp a trade that went straight against
+  // the position would report a negative mfePnl (impossible by definition).
+  // The spec is explicit: "mfePnl is always ≥ 0 (best case), maePnl is
+  // always ≤ 0 (worst case)".
+  const mfePrice = dir === 'long'
+    ? Math.max(highestHigh, entry)
+    : Math.min(lowestLow,   entry);
+
+  const maePrice = dir === 'long'
+    ? Math.min(lowestLow,   entry)
+    : Math.max(highestHigh, entry);
+
+  const mfePnl = dir === 'long'
+    ? (mfePrice - entry) * size
+    : (entry - mfePrice) * size;
+
+  const maePnl = dir === 'long'
+    ? (maePrice - entry) * size
+    : (entry - maePrice) * size;
+
+  const updates: Record<string, number | null> = {
+    mfePrice: round(mfePrice, 6),
+    mfePnl:   round(mfePnl, 2),
+    maePrice: round(maePrice, 6),
+    maePnl:   round(maePnl, 2),
+    exitEfficiency:   null,
+    moneyLeftOnTable: null,
+    maeRatio:         null,
+  };
+
+  // ── Exit efficiency — only meaningful for winning trades ──────────────
+  // Per spec: "actualPnl / mfePnl, for winners only, 0-1 range, how much of
+  // the available profit was captured." Computing it on losers produces
+  // huge negative percentages (loser exited deep red after a tiny favorable
+  // blip) that wreck the histogram, so leave it null on losing trades.
+  const actualPnl = position.aggregatePnl;
+  if (actualPnl != null && actualPnl > 0 && mfePnl > 0) {
+    updates.exitEfficiency = round(actualPnl / mfePnl, 4);
+  }
+
+  // ── Money left on table — dollars missed vs. perfect exit ──────────────
+  if (actualPnl != null) {
+    updates.moneyLeftOnTable = round(Math.max(0, mfePnl - actualPnl), 2);
+  }
+
+  // ── MAE ratio — how much heat was taken to earn the realized P&L ──────
+  if (actualPnl != null && actualPnl !== 0) {
+    updates.maeRatio = round(Math.abs(maePnl) / Math.abs(actualPnl), 3);
+  }
+
+  return updates;
+}
 
 function round(value: number, digits: number): number {
   const mult = Math.pow(10, digits);

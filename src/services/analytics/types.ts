@@ -52,14 +52,22 @@ export interface MetricComputer {
   compute(position: Position, priceData?: Candle[]): Record<string, number | string | null>;
   /**
    * Optional batch computation for metrics that need full-history context
-   * (sequential state, leave-one-out KNN, cross-position normalization).
+   * (sequential state, leave-one-out KNN, cross-position normalization) or
+   * that need to perform async work like fetching candle data.
    *
    * The analytics service prefers `computeAll` when present and uses the
    * returned map to look up per-position values during the write phase.
    * Detectors that override this should still implement a no-op `compute`
    * that returns `{}` so the per-position fallback path stays type-safe.
+   *
+   * May return synchronously or as a Promise — the analytics service awaits
+   * the result either way.
    */
-  computeAll?(positions: Position[]): Map<string, Record<string, number | string | null>>;
+  computeAll?(
+    positions: Position[],
+  ):
+    | Map<string, Record<string, number | string | null>>
+    | Promise<Map<string, Record<string, number | string | null>>>;
 }
 
 // ─── Type 2: Aggregations ──────────────────────────────────────────────────

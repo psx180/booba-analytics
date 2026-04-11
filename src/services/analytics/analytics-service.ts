@@ -24,7 +24,6 @@ import type {
   AggregationResult,
   Insight,
   Filters,
-  Candle,
 } from './types';
 import { benjaminiHochberg } from './statistics';
 import { TiltService, createDefaultTiltDetector, createHeuristicTiltDetector } from './tilt';
@@ -34,10 +33,6 @@ import { computeWartResult, type WartResult } from './metrics/wart';
 import { computeEntropyResult, type EntropyResult } from './insights/entropy-insight';
 import { performanceAggregator } from './aggregations/performance';
 import { equityCurveAggregator } from './aggregations/equity-curve';
-
-export interface CandleSource {
-  fetchCandles(asset: string, timeframe: string, start: Date, end: Date): Promise<Candle[]>;
-}
 
 export interface MetricComputeSummary {
   computed: number;
@@ -76,7 +71,6 @@ export class AnalyticsService {
     private readonly aggregators: Aggregator[],
     private readonly insightDetectors: InsightDetector[],
     private readonly db: PrismaClient,
-    private readonly candleSource?: CandleSource,
   ) {
     this.tiltService = new TiltService(createDefaultTiltDetector(), db);
   }
@@ -90,40 +84,17 @@ export class AnalyticsService {
 
     console.log(`[analytics] computeMetrics: ${positions.length} closed positions for ${walletAddress}`);
 
-    // Positions that need MFE/MAE derived from candles (mfePnl not yet stored).
-    // Only guard on firstEntryTime — averageEntryPrice null is handled gracefully
-    // inside deriveFromCandles, and excluding on it silently empties needsCandles
-    // for positions created via split/merge where averageEntryPrice wasn't written.
-    const needsCandles = positions.filter(
-      (p) => p.mfePnl == null && p.firstEntryTime != null,
-    );
-
-    console.log(
-      `[analytics] needsCandles=${needsCandles.length}/${positions.length} ` +
-      `(excluded ${positions.length - needsCandles.length}: ` +
-      `${positions.filter((p) => p.mfePnl != null).length} already have mfePnl, ` +
-      `${positions.filter((p) => p.mfePnl == null && p.firstEntryTime == null).length} missing firstEntryTime)`,
-    );
-
-    if (needsCandles.length > 0 && !this.candleSource) {
-      console.warn(
-        `[analytics] ${needsCandles.length} positions need MFE/MAE but no candle source configured — exitEfficiency will stay null`,
-      );
-    }
-
-    const candlesByPosition = await this.fetchCandlesForPositions(needsCandles);
-
-    console.log(`[analytics] candlesByPosition map has ${candlesByPosition.size} entries`);
-
     // Run any batch metric computers up front. The result is a per-metric map
     // from positionId → metric updates that the per-position loop merges into
     // each row's update payload. Used by metrics that need full-history context
-    // (xPnL KNN leave-one-out, sequential Elo, cross-position normalization).
+    // (xPnL KNN leave-one-out, sequential Elo) or that need to perform async
+    // I/O (exit-quality fetches candles per asset). computeAll may return
+    // either a Map or a Promise<Map>, so we await both cases.
     const batchResults = new Map<string, Map<string, Record<string, number | string | null>>>();
     for (const metric of this.metrics) {
       if (typeof metric.computeAll !== 'function') continue;
       try {
-        const result = metric.computeAll(positions);
+        const result = await metric.computeAll(positions);
         batchResults.set(metric.name, result);
         console.log(`[analytics] batch ${metric.name}: ${result.size} positions computed`);
       } catch (err) {
@@ -135,7 +106,6 @@ export class AnalyticsService {
     let skipped = 0;
 
     for (const position of positions) {
-      const positionCandles = candlesByPosition.get(position.id);
       const updates: Record<string, any> = {};
 
       for (const metric of this.metrics) {
@@ -150,32 +120,16 @@ export class AnalyticsService {
           }
           continue;
         }
-        console.log(
-          `[analytics] → ${metric.name} on ${position.id} (${position.asset}): ` +
-          `priceData=${positionCandles !== undefined ? `${positionCandles.length} candles` : 'undefined'}`,
-        );
-        const result = metric.compute(position, positionCandles);
+        const result = metric.compute(position);
         for (const [key, value] of Object.entries(result)) {
           if (value != null) updates[key] = value;
         }
       }
 
       if (Object.keys(updates).length === 0) {
-        console.log(
-          `[analytics] skip ${position.id} (${position.asset} ${position.direction}) — ` +
-          `mfePrice=${position.mfePrice} entry=${position.averageEntryPrice} exit=${position.averageExitPrice} ` +
-          `candles=${positionCandles?.length ?? 'none'}`,
-        );
         skipped++;
         continue;
       }
-
-      console.log(
-        `[analytics] write ${position.id} (${position.asset}): ` +
-        Object.entries(updates)
-          .map(([k, v]) => `${k}=${typeof v === 'number' ? v.toFixed(4) : v}`)
-          .join(' '),
-      );
 
       await this.db.position.update({
         where: { id: position.id },
@@ -422,77 +376,6 @@ export class AnalyticsService {
     return insights;
   }
 
-  // ─── Candle fetching ────────────────────────────────────────────────────
-
-  /**
-   * Fetches candles for positions that need MFE/MAE data.
-   * Groups by asset to minimize API calls — one request per asset covering
-   * the full date range of all positions for that asset.
-   */
-  private async fetchCandlesForPositions(
-    positions: Position[],
-  ): Promise<Map<string, Candle[]>> {
-    const result = new Map<string, Candle[]>();
-    if (!this.candleSource || positions.length === 0) return result;
-
-    // Group by asset
-    const byAsset = new Map<string, Position[]>();
-    for (const p of positions) {
-      if (!byAsset.has(p.asset)) byAsset.set(p.asset, []);
-      byAsset.get(p.asset)!.push(p);
-    }
-
-    for (const [asset, assetPositions] of byAsset) {
-      const times = assetPositions.flatMap((p) => [
-        p.firstEntryTime?.getTime(),
-        p.lastExitTime?.getTime(),
-      ]).filter((t): t is number => t != null && t > 0);
-
-      if (times.length === 0) continue;
-
-      const startTime = new Date(Math.min(...times) - 5 * 60 * 1000); // 5m buffer before
-      const endTime   = new Date(Math.max(...times) + 5 * 60 * 1000); // 5m buffer after
-
-      const symbol = toBinanceSymbol(asset);
-
-      try {
-        console.log(
-          `[analytics] fetching 5m candles for ${asset} → Binance ${symbol} ` +
-          `[${startTime.toISOString()} → ${endTime.toISOString()}]`,
-        );
-        const candles = await this.candleSource.fetchCandles(symbol, '5m', startTime, endTime);
-        console.log(`[analytics] received ${candles.length} candles for ${asset}`);
-
-        if (candles.length === 0) {
-          console.warn(
-            `[analytics] 0 candles for ${symbol} — symbol mapping may be wrong or ` +
-            `data not available for this date range`,
-          );
-        }
-
-        // Assign each position its candle slice
-        for (const p of assetPositions) {
-          if (!p.firstEntryTime) continue;
-          const posStart = p.firstEntryTime.getTime();
-          const posEnd   = (p.lastExitTime ?? new Date()).getTime();
-          const slice = candles.filter(
-            (c) => c.timestamp.getTime() >= posStart && c.timestamp.getTime() <= posEnd,
-          );
-          console.log(
-            `[analytics]   position ${p.id} (${p.direction}): ` +
-            `${slice.length} candles in [${p.firstEntryTime.toISOString()} → ` +
-            `${p.lastExitTime?.toISOString() ?? 'now'}]`,
-          );
-          result.set(p.id, slice);
-        }
-      } catch (err) {
-        console.error(`[analytics] candle fetch failed for ${symbol}:`, err);
-      }
-    }
-
-    return result;
-  }
-
   // ─── Internal helpers ───────────────────────────────────────────────────
 
   private async loadFilteredPositions(
@@ -523,13 +406,4 @@ function confidenceBand(value: number): 'high' | 'medium' | 'low' {
   if (value >= 0.8) return 'high';
   if (value >= 0.5) return 'medium';
   return 'low';
-}
-
-/**
- * Convert a Pacifica asset symbol to Binance spot symbol.
- * "BTC-PERP" → "BTCUSDT", "SOL-PERP" → "SOLUSDT"
- */
-function toBinanceSymbol(pacificaAsset: string): string {
-  const base = pacificaAsset.split('-')[0].toUpperCase();
-  return `${base}USDT`;
 }
