@@ -25,6 +25,39 @@ interface PerformanceResult {
   name: string;
   data: PerformanceData;
   breakdowns?: { regime: Record<string, PerformanceData> };
+  // Advanced summary fields appended by /api/analytics/summary
+  eloResult?: EloResult;
+  entropyResult?: EntropyResult;
+  xpnlLuckScore?: number;
+  xpnlResult?: XpnlSummary;
+  equityCurveConsistency?: number;
+}
+
+interface EloResult {
+  currentElo: number;
+  tier: string;
+  peakElo: number;
+  peakDate: string | null;
+  eloSeries: { date: string; elo: number }[];
+  conditionDifficulty: { condition: string; elo: number }[];
+  recentTrend: 'improving' | 'declining' | 'stable';
+  tradeCount: number;
+}
+
+interface EntropyResult {
+  compositeScore: number;
+  dimensions: { name: string; entropy: number; normalizedEntropy: number; maxEntropy: number }[];
+  conditionalEntropy: number;
+  rollingSeries: { date: string; score: number }[];
+  trend: 'improving' | 'declining' | 'stable';
+  tradeCount: number;
+}
+
+interface XpnlSummary {
+  positions: { positionId: string; actualPnl: number; xpnl: number; residual: number }[];
+  cumulativeSeries: { date: string; actualCumPnl: number; xpnlCumPnl: number }[];
+  luckScore: number;
+  r2: number;
 }
 
 interface EquityCurvePoint {
@@ -117,6 +150,32 @@ function tiltColor(score0to100: number): string {
   if (score0to100 < 30) return 'text-green-400';
   if (score0to100 < 60) return 'text-amber-400';
   return 'text-red-400';
+}
+
+function eloColor(elo: number): string {
+  if (elo >= 1800) return 'text-purple-400';
+  if (elo >= 1600) return 'text-blue-400';
+  if (elo >= 1400) return 'text-green-400';
+  if (elo >= 1200) return 'text-amber-400';
+  return 'text-red-400';
+}
+
+function disciplineColor(score: number): string {
+  if (score >= 65) return 'text-green-400';
+  if (score >= 40) return 'text-amber-400';
+  return 'text-red-400';
+}
+
+function consistencyColor(r2: number): string {
+  if (r2 >= 0.7) return 'text-green-400';
+  if (r2 >= 0.4) return 'text-amber-400';
+  return 'text-red-400';
+}
+
+function trendArrow(trend: 'improving' | 'declining' | 'stable'): string {
+  if (trend === 'improving') return '↑';
+  if (trend === 'declining') return '↓';
+  return '→';
 }
 
 // ── Stat Card ────────────────────────────────────────────────────────────────
@@ -257,6 +316,12 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
   const [loading, setLoading] = useState(true);
   const [computing, setComputing] = useState(false);
   const [computeResult, setComputeResult] = useState<string | null>(null);
+  // Advanced analytics
+  const [eloResult, setEloResult] = useState<EloResult | null>(null);
+  const [entropyResult, setEntropyResult] = useState<EntropyResult | null>(null);
+  const [equityConsistency, setEquityConsistency] = useState<number | null>(null);
+  const [xpnlSummary, setXpnlSummary] = useState<XpnlSummary | null>(null);
+  const [showXpnlOverlay, setShowXpnlOverlay] = useState(true);
 
   const fetchData = useCallback(
     async (regime: string | null) => {
@@ -266,22 +331,28 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
         if (regime) params.set('regime', regime);
 
         const breakdownParams = new URLSearchParams({ walletAddress, groupBy: 'regime' });
+        const equityParams = new URLSearchParams(params);
+        equityParams.set('withXpnl', 'true');
 
         const [summaryRes, equityRes, breakdownRes, insightsRes] = await Promise.all([
           fetch(`/api/analytics/summary?${params}`),
-          fetch(`/api/analytics/equity-curve?${params}`),
+          fetch(`/api/analytics/equity-curve?${equityParams}`),
           fetch(`/api/analytics/breakdown?${breakdownParams}`),
           fetch(`/api/analytics/insights?walletAddress=${walletAddress}`),
         ]);
 
         const [summaryData, equityData, breakdownData, insightsData] = await Promise.all([
           summaryRes.json() as Promise<PerformanceResult>,
-          equityRes.json() as Promise<EquityCurveResult>,
+          equityRes.json() as Promise<EquityCurveResult & { xpnl?: XpnlSummary }>,
           breakdownRes.json() as Promise<BreakdownResult>,
           insightsRes.json() as Promise<{ insights: Insight[] }>,
         ]);
 
         setPerformance(summaryData.data ?? null);
+        setEloResult(summaryData.eloResult ?? null);
+        setEntropyResult(summaryData.entropyResult ?? null);
+        setEquityConsistency(summaryData.equityCurveConsistency ?? null);
+        setXpnlSummary(equityData.xpnl ?? summaryData.xpnlResult ?? null);
         setEquityCurve(
           (equityData.series ?? []).map((p) => ({
             date: p.date,
@@ -359,7 +430,7 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
       </div>
 
       {/* ── Stats Bar ─────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-9 gap-3">
         <StatCard
           label="Total P&L"
           value={
@@ -406,6 +477,52 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
               : 'avg 0-100, wallet-wide'
           }
         />
+        <StatCard
+          label="ELO"
+          value={
+            eloResult ? (
+              <span className="flex items-center gap-1.5">
+                <span className={eloColor(eloResult.currentElo)}>
+                  {Math.round(eloResult.currentElo)}
+                </span>
+                <span className="text-xs text-[#6e7681]">{trendArrow(eloResult.recentTrend)}</span>
+              </span>
+            ) : (
+              <span className="text-[#6e7681]">—</span>
+            )
+          }
+          sub={eloResult ? `${eloResult.tier} · peak ${Math.round(eloResult.peakElo)}` : 'chess-style rating'}
+        />
+        <StatCard
+          label="Discipline"
+          value={
+            entropyResult ? (
+              <span className="flex items-center gap-1.5">
+                <span className={disciplineColor(entropyResult.compositeScore)}>
+                  {Math.round(entropyResult.compositeScore)}
+                </span>
+                <span className="text-xs text-[#6e7681]">/100</span>
+                <span className="text-xs text-[#6e7681]">{trendArrow(entropyResult.trend)}</span>
+              </span>
+            ) : (
+              <span className="text-[#6e7681]">—</span>
+            )
+          }
+          sub="Shannon entropy"
+        />
+        <StatCard
+          label="Consistency"
+          value={
+            equityConsistency != null ? (
+              <span className={consistencyColor(equityConsistency)}>
+                {Math.round(equityConsistency * 100)}%
+              </span>
+            ) : (
+              <span className="text-[#6e7681]">—</span>
+            )
+          }
+          sub="equity curve R²"
+        />
       </div>
 
       {/* ── Equity Curve ──────────────────────────────────────────────────── */}
@@ -413,19 +530,51 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
           <div>
             <h2 className="text-sm font-semibold text-white">Equity Curve</h2>
-            {activeRegime && (
-              <p className="text-xs text-[#6e7681] mt-0.5">
-                Showing trades in{' '}
-                <span className="text-amber-400">
-                  {REGIME_LABELS[activeRegime] ?? activeRegime}
-                </span>{' '}
-                only
+            {(activeRegime || equityConsistency != null || xpnlSummary) && (
+              <p className="text-xs text-[#6e7681] mt-0.5 flex items-center gap-3 flex-wrap">
+                {activeRegime && (
+                  <span>
+                    Showing trades in{' '}
+                    <span className="text-amber-400">
+                      {REGIME_LABELS[activeRegime] ?? activeRegime}
+                    </span>{' '}
+                    only
+                  </span>
+                )}
+                {equityConsistency != null && (
+                  <span>
+                    Consistency:{' '}
+                    <span className={consistencyColor(equityConsistency)}>
+                      {Math.round(equityConsistency * 100)}%
+                    </span>
+                  </span>
+                )}
+                {xpnlSummary && (
+                  <span>
+                    Luck score:{' '}
+                    <span className={xpnlSummary.luckScore >= 0 ? 'text-green-400' : 'text-red-400'}>
+                      {xpnlSummary.luckScore >= 0 ? '+' : ''}
+                      {Math.round(xpnlSummary.luckScore * 100)}%
+                    </span>
+                  </span>
+                )}
               </p>
             )}
           </div>
 
           {/* Regime filter toggles */}
           <div className="flex flex-wrap gap-1.5">
+            <button
+              onClick={() => setShowXpnlOverlay((v) => !v)}
+              className={`px-2.5 py-1 rounded text-xs font-medium transition-all ${
+                showXpnlOverlay
+                  ? 'bg-slate-700/60 text-slate-200 ring-1 ring-current'
+                  : 'bg-[#21262d] text-[#6e7681] hover:text-[#8b949e]'
+              }`}
+              title="Toggle expected P&L overlay"
+            >
+              Expected P&L
+            </button>
             {FILTER_REGIMES.map(({ key, label }) => {
               const isActive = activeRegime === key;
               const badge = REGIME_BADGE[key];
@@ -463,6 +612,8 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
             equityCurve={equityCurve}
             tradeMetas={tradeMetas}
             activeRegimeFilter={activeRegime}
+            xpnlSeries={xpnlSummary?.cumulativeSeries}
+            showXpnl={showXpnlOverlay}
           />
         )}
 

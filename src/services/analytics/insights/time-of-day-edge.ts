@@ -1,8 +1,22 @@
 /**
  * Time-of-day edge insight.
  *
- * Hypothesis: some hours of the day are significantly better or worse
- * than all other hours. Applies Bonferroni correction for 24 comparisons.
+ * Two complementary analyses, both reported in the same insight card:
+ *
+ *   1. Per-hour edge — hypothesis that some hours of the day are significantly
+ *      better or worse than all other hours. Bonferroni correction over 24
+ *      comparisons. (Original analysis.)
+ *
+ *   2. Within-session decision fatigue — for each trade compute its
+ *      `tradeNumberInSession` (how many trades the user has already taken
+ *      that day), then look for performance decay as the day wears on.
+ *      Welch t-test on early-session (trades 1-3) vs late-session (4+).
+ *      Also finds the optimal stopping point N that maximises early-session
+ *      average P&L and quantifies the dollar cost of trades past N.
+ *
+ * The two questions are different — "which hours are best?" vs "do you get
+ * worse as you trade more?" — so the fatigue analysis is additive rather
+ * than a replacement.
  */
 
 import type { InsightDetector, Insight, Position } from './base';
@@ -19,13 +33,15 @@ export const timeOfDayEdgeDetector: InsightDetector = {
   dimensions: ['aggregatePnl', 'entryHour', 'firstEntryTime'],
 
   detect(positions: Position[]): Insight[] {
-    // Accept entryHour if computed, otherwise derive from firstEntryTime (UTC)
+    // Accept entryHour if computed, otherwise derive from firstEntryTime (UTC).
+    // Carry firstEntryTime forward so the fatigue analysis can group by date.
     const qualified = positions
       .filter((p) => p.aggregatePnl != null && (p.entryHour != null || p.firstEntryTime != null))
       .map((p) => ({
         id:          p.id,
         aggregatePnl: p.aggregatePnl!,
         entryHour:   p.entryHour ?? new Date(p.firstEntryTime!).getUTCHours(),
+        firstEntryTime: p.firstEntryTime ?? null,
       }));
 
     if (qualified.length < MIN_POSITIONS) {
@@ -121,10 +137,24 @@ export const timeOfDayEdgeDetector: InsightDetector = {
 
     const worstHourPositionIds = qualified.filter((p) => p.entryHour === worstHour.hour).map((p) => p.id);
 
+    // ─── Decision-fatigue regression ─────────────────────────────────────
+    const fatigue = computeFatigueAnalysis(qualified);
+    let fatigueDescription = '';
+    if (fatigue) {
+      fatigueDescription =
+        ` Within each session, your performance declines after trade ${fatigue.optimalCutoff}. ` +
+        `Trades 1-${fatigue.optimalCutoff} average $${fatigue.earlyAvg.toFixed(2)}, ` +
+        `trades ${fatigue.optimalCutoff + 1}+ average $${fatigue.lateAvg.toFixed(2)} (${fatigue.test.description}). ` +
+        `Daily trade limit suggestion: ${fatigue.optimalCutoff} trades. ` +
+        `Estimated savings from stopping earlier: $${Math.round(fatigue.estimatedSavings).toLocaleString()}.`;
+    }
+
+    const finalStatistics = fatigue ? [...corrected, fatigue.test] : corrected;
+
     return [{
       module: 'time-of-day-edge',
       title: isSignificant ? 'Time-of-Day Edge Detected' : 'No Time-of-Day Edge',
-      description,
+      description: description + fatigueDescription,
       suggestion,
       severity: 'info',
       confidence: sampleSizeConfidence(qualified.length),
@@ -137,8 +167,18 @@ export const timeOfDayEdgeDetector: InsightDetector = {
         bestHourAvgPnl:  Math.round(bestHour.avgPnl * 100) / 100,
         worstHourAvgPnl: Math.round(worstHour.avgPnl * 100) / 100,
         tradeCount:      qualified.length,
+        fatigue: fatigue
+          ? {
+              optimalCutoff:    fatigue.optimalCutoff,
+              earlyAvg:         Math.round(fatigue.earlyAvg * 100) / 100,
+              lateAvg:          Math.round(fatigue.lateAvg * 100) / 100,
+              fatigueSlope:     Math.round(fatigue.slope * 1000) / 1000,
+              estimatedSavings: Math.round(fatigue.estimatedSavings * 100) / 100,
+              maxTradesPerDay:  fatigue.maxTradesPerDay,
+            }
+          : null,
       },
-      statistics: corrected,
+      statistics: finalStatistics,
       impactScore,
       category: 'timing',
       isSignificant,
@@ -146,6 +186,106 @@ export const timeOfDayEdgeDetector: InsightDetector = {
     }];
   },
 };
+
+// ─── Decision fatigue helpers ─────────────────────────────────────────────
+
+interface FatigueResult {
+  slope: number;            // OLS slope of pnl ~ tradeNumberInSession
+  test: StatisticalTest;    // Welch on early (1..N) vs late (N+1..)
+  optimalCutoff: number;
+  earlyAvg: number;
+  lateAvg: number;
+  estimatedSavings: number; // sum of pnl for trades past the optimal cutoff
+  maxTradesPerDay: number;
+}
+
+interface QualifiedTrade {
+  id: string;
+  aggregatePnl: number;
+  entryHour: number;
+  firstEntryTime: Date | null;
+}
+
+function computeFatigueAnalysis(qualified: QualifiedTrade[]): FatigueResult | null {
+  // Group by trading day. Without firstEntryTime we can't sequence within a
+  // day, so anything missing it gets dropped from the fatigue analysis.
+  const byDay = new Map<string, QualifiedTrade[]>();
+  for (const t of qualified) {
+    if (!t.firstEntryTime) continue;
+    const dayKey = t.firstEntryTime.toISOString().slice(0, 10);
+    if (!byDay.has(dayKey)) byDay.set(dayKey, []);
+    byDay.get(dayKey)!.push(t);
+  }
+  if (byDay.size === 0) return null;
+
+  // Number trades within each day chronologically.
+  const numbered: { trade: QualifiedTrade; numberInSession: number }[] = [];
+  for (const trades of byDay.values()) {
+    trades.sort((a, b) => a.firstEntryTime!.getTime() - b.firstEntryTime!.getTime());
+    trades.forEach((t, i) => numbered.push({ trade: t, numberInSession: i + 1 }));
+  }
+  if (numbered.length < 4) return null;
+
+  const maxTradesPerDay = numbered.reduce((m, n) => Math.max(m, n.numberInSession), 0);
+
+  // OLS slope of pnl ~ tradeNumberInSession.
+  const xs = numbered.map((n) => n.numberInSession);
+  const ys = numbered.map((n) => n.trade.aggregatePnl);
+  const slope = simpleSlope(xs, ys);
+
+  // Try every cutoff N in [1, maxTradesPerDay-1] and pick the one that
+  // maximises the average P&L of trades 1..N. The maximising N becomes the
+  // recommended daily limit.
+  let bestN = 1;
+  let bestEarlyAvg = -Infinity;
+  for (let n = 1; n < maxTradesPerDay; n++) {
+    const earlyPnls = numbered.filter((t) => t.numberInSession <= n).map((t) => t.trade.aggregatePnl);
+    if (earlyPnls.length === 0) continue;
+    const avg = earlyPnls.reduce((a, b) => a + b, 0) / earlyPnls.length;
+    if (avg > bestEarlyAvg) {
+      bestEarlyAvg = avg;
+      bestN = n;
+    }
+  }
+
+  const earlyPnls = numbered.filter((t) => t.numberInSession <= bestN).map((t) => t.trade.aggregatePnl);
+  const latePnls  = numbered.filter((t) => t.numberInSession >  bestN).map((t) => t.trade.aggregatePnl);
+  if (earlyPnls.length < 2 || latePnls.length < 2) return null;
+
+  const earlyAvg = earlyPnls.reduce((a, b) => a + b, 0) / earlyPnls.length;
+  const lateAvg  = latePnls.reduce((a, b) => a + b, 0)  / latePnls.length;
+  const test = welchTTest(earlyPnls, latePnls);
+
+  // The "savings" is the sum of P&L from trades the user would have skipped
+  // if they'd stopped at the cutoff. Negative late P&L → positive savings.
+  const lateTotal = latePnls.reduce((a, b) => a + b, 0);
+  const estimatedSavings = -lateTotal;
+
+  return {
+    slope,
+    test,
+    optimalCutoff: bestN,
+    earlyAvg,
+    lateAvg,
+    estimatedSavings,
+    maxTradesPerDay,
+  };
+}
+
+function simpleSlope(xs: number[], ys: number[]): number {
+  const n = Math.min(xs.length, ys.length);
+  if (n < 2) return 0;
+  let sx = 0, sy = 0, sxy = 0, sxx = 0;
+  for (let i = 0; i < n; i++) {
+    sx += xs[i];
+    sy += ys[i];
+    sxy += xs[i] * ys[i];
+    sxx += xs[i] * xs[i];
+  }
+  const denom = n * sxx - sx * sx;
+  if (Math.abs(denom) < 1e-9) return 0;
+  return (n * sxy - sx * sy) / denom;
+}
 
 function pending(testName: string, n: number): StatisticalTest {
   return {

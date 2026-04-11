@@ -50,6 +50,16 @@ export interface MetricComputer {
    * so the service can persist them directly.
    */
   compute(position: Position, priceData?: Candle[]): Record<string, number | string | null>;
+  /**
+   * Optional batch computation for metrics that need full-history context
+   * (sequential state, leave-one-out KNN, cross-position normalization).
+   *
+   * The analytics service prefers `computeAll` when present and uses the
+   * returned map to look up per-position values during the write phase.
+   * Detectors that override this should still implement a no-op `compute`
+   * that returns `{}` so the per-position fallback path stays type-safe.
+   */
+  computeAll?(positions: Position[]): Map<string, Record<string, number | string | null>>;
 }
 
 // ─── Type 2: Aggregations ──────────────────────────────────────────────────

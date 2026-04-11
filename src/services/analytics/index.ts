@@ -16,6 +16,8 @@ import type { MetricComputer, Aggregator, InsightDetector } from './types';
 // Metrics
 import { exitQualityComputer } from './metrics/exit-quality';
 import { timingComputer } from './metrics/timing';
+import { xpnlComputer } from './metrics/xpnl';
+import { eloComputer } from './metrics/elo';
 
 // Aggregators
 import { performanceAggregator } from './aggregations/performance';
@@ -38,10 +40,14 @@ import { sizingAnalysisDetector }    from './insights/sizing-analysis';
 import { tiltEpisodesDetector }      from './insights/tilt-episodes';
 import { mlPatternsDetector }        from './insights/ml-patterns';
 import { combinatorialSearchDetector } from './insights/combinatorial-search';
+import { xpnlInsightDetector }       from './insights/xpnl-insight';
+import { entropyInsightDetector }    from './insights/entropy-insight';
 
 export const metricComputers: MetricComputer[] = [
   exitQualityComputer,
   timingComputer,
+  xpnlComputer,
+  eloComputer,
 ];
 
 // breakdown and what-if aren't plain Aggregators (they take options), but the
@@ -68,6 +74,8 @@ export const insightDetectors: InsightDetector[] = [
   tiltEpisodesDetector,
   mlPatternsDetector,
   combinatorialSearchDetector,
+  xpnlInsightDetector,
+  entropyInsightDetector,
 ];
 
 const bybitCandleSource = new BybitCandleSource();

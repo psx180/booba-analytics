@@ -101,6 +101,9 @@ model Position {
   tiltScore           Float?
   tiltEpisodeId       String?
   tiltFeatures        String?         // JSON: TiltScore.features object
+  // Advanced analytics (computed by xpnl/elo metric computers)
+  xpnl                Float?
+  eloAtTrade          Float?
   // User-annotated tags (set via trade detail modal / Phase 2 popup)
   strategyTag         String?
   sourceTag           String?

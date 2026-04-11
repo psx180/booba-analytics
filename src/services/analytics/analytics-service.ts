@@ -28,6 +28,11 @@ import type {
 } from './types';
 import { benjaminiHochberg } from './statistics';
 import { TiltService, createDefaultTiltDetector, createHeuristicTiltDetector } from './tilt';
+import { computeEloResult, type EloResult } from './metrics/elo';
+import { computeXpnlResult, type XpnlResult } from './metrics/xpnl';
+import { computeEntropyResult, type EntropyResult } from './insights/entropy-insight';
+import { performanceAggregator } from './aggregations/performance';
+import { equityCurveAggregator } from './aggregations/equity-curve';
 
 export interface CandleSource {
   fetchCandles(asset: string, timeframe: string, start: Date, end: Date): Promise<Candle[]>;
@@ -46,6 +51,18 @@ export interface MetricComputeSummary {
 export interface InsightRunSummary {
   insights: Insight[];
   skipped: string[];
+}
+
+export interface AdvancedSummary {
+  /** The classic performance aggregation (winRate, expectancy, etc.) */
+  performance: AggregationResult;
+  eloResult: EloResult;
+  entropyResult: EntropyResult;
+  /** Total xPnL luck score plus the cumulative dual series for the chart overlay. */
+  xpnl: XpnlResult;
+  xpnlLuckScore: number;
+  /** R² of cumulative P&L vs trade index from the equity curve aggregator. */
+  equityCurveConsistency: number;
 }
 
 export class AnalyticsService {
@@ -95,6 +112,22 @@ export class AnalyticsService {
 
     console.log(`[analytics] candlesByPosition map has ${candlesByPosition.size} entries`);
 
+    // Run any batch metric computers up front. The result is a per-metric map
+    // from positionId → metric updates that the per-position loop merges into
+    // each row's update payload. Used by metrics that need full-history context
+    // (xPnL KNN leave-one-out, sequential Elo, cross-position normalization).
+    const batchResults = new Map<string, Map<string, Record<string, number | string | null>>>();
+    for (const metric of this.metrics) {
+      if (typeof metric.computeAll !== 'function') continue;
+      try {
+        const result = metric.computeAll(positions);
+        batchResults.set(metric.name, result);
+        console.log(`[analytics] batch ${metric.name}: ${result.size} positions computed`);
+      } catch (err) {
+        console.error(`[analytics] batch metric ${metric.name} failed:`, err);
+      }
+    }
+
     let computed = 0;
     let skipped = 0;
 
@@ -103,6 +136,17 @@ export class AnalyticsService {
       const updates: Record<string, any> = {};
 
       for (const metric of this.metrics) {
+        const batchMap = batchResults.get(metric.name);
+        if (batchMap) {
+          // Batch metric — pull this position's precomputed values out of the map.
+          const result = batchMap.get(position.id);
+          if (result) {
+            for (const [key, value] of Object.entries(result)) {
+              if (value != null) updates[key] = value;
+            }
+          }
+          continue;
+        }
         console.log(
           `[analytics] → ${metric.name} on ${position.id} (${position.asset}): ` +
           `priceData=${positionCandles !== undefined ? `${positionCandles.length} candles` : 'undefined'}`,
@@ -206,6 +250,38 @@ export class AnalyticsService {
       results[aggregator.name] = aggregator.aggregate(positions, filters);
     }
     return results;
+  }
+
+  /**
+   * Composed dashboard summary that bundles performance, Elo, entropy, xPnL,
+   * and equity-curve consistency in a single payload. Used by the dashboard
+   * stats bar so the client only fires one request to populate every card.
+   */
+  async getAdvancedSummary(
+    walletAddress: string,
+    filters?: Filters,
+  ): Promise<AdvancedSummary> {
+    const positions = await this.loadFilteredPositions(walletAddress, filters);
+
+    const performance = performanceAggregator.aggregate(positions, filters);
+    const equityCurve = equityCurveAggregator.aggregate(positions, filters);
+    const equityCurveConsistency =
+      typeof equityCurve.data?.consistency === 'number'
+        ? (equityCurve.data.consistency as number)
+        : 0;
+
+    const eloResult = computeEloResult(positions);
+    const entropyResult = computeEntropyResult(positions);
+    const xpnl = computeXpnlResult(positions);
+
+    return {
+      performance,
+      eloResult,
+      entropyResult,
+      xpnl,
+      xpnlLuckScore: xpnl.luckScore,
+      equityCurveConsistency,
+    };
   }
 
   // ─── Type 3: Insights ───────────────────────────────────────────────────

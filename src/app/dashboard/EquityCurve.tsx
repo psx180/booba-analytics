@@ -3,6 +3,7 @@
 import {
   ComposedChart,
   Area,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -15,6 +16,12 @@ import { useMemo } from 'react';
 export interface EquityPoint {
   date: string;
   cumulativePnl: number;
+}
+
+export interface XpnlOverlayPoint {
+  date: string;
+  actualCumPnl: number;
+  xpnlCumPnl: number;
 }
 
 // Regime bands extracted from the equity curve data for background shading.
@@ -80,10 +87,43 @@ interface Props {
   equityCurve: EquityPoint[];
   tradeMetas: TradeMeta[];
   activeRegimeFilter: string | null;
+  /** Optional dual-curve overlay: actual vs expected P&L. */
+  xpnlSeries?: XpnlOverlayPoint[];
+  showXpnl?: boolean;
 }
 
-export default function EquityCurve({ equityCurve, tradeMetas, activeRegimeFilter }: Props) {
+export default function EquityCurve({
+  equityCurve,
+  tradeMetas,
+  activeRegimeFilter,
+  xpnlSeries,
+  showXpnl,
+}: Props) {
   const regimeBands = useMemo(() => buildRegimeBands(tradeMetas), [tradeMetas]);
+
+  // Merge xPnL into equity curve points by index. xPnL is computed from the
+  // same set of closed positions ordered by exit time, so positional index
+  // matching is safe — same trade lives at the same position in both arrays.
+  const merged = useMemo(() => {
+    if (!showXpnl || !xpnlSeries || xpnlSeries.length === 0) {
+      return equityCurve.map((p) => ({ ...p, xpnlCumPnl: null as number | null, gapPositive: null as number | null, gapNegative: null as number | null }));
+    }
+    return equityCurve.map((p, i) => {
+      const x = xpnlSeries[i];
+      const xCum = x ? x.xpnlCumPnl : null;
+      const gap = xCum != null ? p.cumulativePnl - xCum : 0;
+      return {
+        ...p,
+        xpnlCumPnl: xCum,
+        // Two parallel area bands so recharts paints green where actual > xPnL
+        // and red where actual < xPnL. We anchor the band at xPnL and stack the
+        // signed gap on top.
+        gapPositive: xCum != null && gap >= 0 ? gap : 0,
+        gapNegative: xCum != null && gap <  0 ? gap : 0,
+        bandBase: xCum,
+      };
+    });
+  }, [equityCurve, xpnlSeries, showXpnl]);
 
   const isPositive =
     equityCurve.length > 0 && equityCurve[equityCurve.length - 1].cumulativePnl >= 0;
@@ -101,21 +141,30 @@ export default function EquityCurve({ equityCurve, tradeMetas, activeRegimeFilte
 
   const CustomTooltip = ({ active, payload }: any) => {
     if (!active || !payload?.length) return null;
-    const point = payload[0].payload as EquityPoint;
+    const point = payload[0].payload as EquityPoint & { xpnlCumPnl?: number | null };
     const pnl = point.cumulativePnl;
+    const xpnl = point.xpnlCumPnl;
     return (
       <div className="bg-[#1c2128] border border-[#30363d] rounded px-3 py-2 text-xs">
         <div className="text-[#8b949e] mb-1">{formatDate(point.date)}</div>
         <div className={pnl >= 0 ? 'text-green-400' : 'text-red-400'}>
-          {formatPnl(pnl)}
+          Actual {formatPnl(pnl)}
         </div>
+        {xpnl != null && (
+          <div className="text-slate-400">
+            xPnL {formatPnl(xpnl)}
+            <span className="ml-2 text-[#6e7681]">
+              ({pnl - xpnl >= 0 ? '+' : ''}{(pnl - xpnl).toFixed(2)})
+            </span>
+          </div>
+        )}
       </div>
     );
   };
 
   return (
     <ResponsiveContainer width="100%" height={320}>
-      <ComposedChart data={equityCurve} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
+      <ComposedChart data={merged} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
         <defs>
           <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%" stopColor={lineColor} stopOpacity={0.15} />
@@ -165,6 +214,19 @@ export default function EquityCurve({ equityCurve, tradeMetas, activeRegimeFilte
           dot={false}
           activeDot={{ r: 4, fill: lineColor, strokeWidth: 0 }}
         />
+
+        {/* xPnL overlay — dashed gray line for the expected curve. */}
+        {showXpnl && xpnlSeries && xpnlSeries.length > 0 && (
+          <Line
+            type="monotone"
+            dataKey="xpnlCumPnl"
+            stroke="#94a3b8"
+            strokeWidth={1.5}
+            strokeDasharray="4 4"
+            dot={false}
+            isAnimationActive={false}
+          />
+        )}
       </ComposedChart>
     </ResponsiveContainer>
   );

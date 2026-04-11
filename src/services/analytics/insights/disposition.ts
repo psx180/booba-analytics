@@ -2,10 +2,23 @@
  * Disposition-effect insight.
  *
  * Classic behavioral bias: holding losing positions longer than winners.
- * Uses Welch's t-test to confirm the hold-time difference is statistically
- * significant before labelling it a "disposition effect." If not significant,
- * emits an informational "no disposition effect detected" finding instead of
- * presenting a noisy ratio as fact.
+ *
+ * Two measurement methods are run side by side. Both are reported in the
+ * insight description and both are returned in `statistics`; the more
+ * significant one becomes the primary narrative.
+ *
+ *   1. Hold-time ratio (legacy fallback) — average loser hold time divided
+ *      by average winner hold time. Welch t-test on the two hold-time
+ *      distributions.
+ *
+ *   2. PGR/PLR proxy (Odean 1998 — adapted for closed-trade history) — we
+ *      can't observe live "decided not to close" events, so we use the
+ *      reciprocal hold time as a proxy for realisation rate:
+ *           PGR_proxy = 1 / avg_winner_hold_time
+ *           PLR_proxy = 1 / avg_loser_hold_time
+ *           Disposition = PGR_proxy - PLR_proxy   (positive ⇒ winners
+ *                                                  realised faster)
+ *      Welch t-test on the per-position 1/hold series for winners vs losers.
  */
 
 import type { InsightDetector, Insight, Position } from './base';
@@ -32,8 +45,30 @@ export const dispositionDetector: InsightDetector = {
     const overall = computeDisposition(qualified);
     if (!overall) return [];
 
-    // Primary statistical test: do winners and losers have different hold times?
-    const test = welchTTest(overall.winnerHoldTimes, overall.loserHoldTimes);
+    // Method 1 — hold-time ratio (legacy fallback). Welch on raw hold times.
+    const holdTimeTest = welchTTest(overall.winnerHoldTimes, overall.loserHoldTimes);
+
+    // Method 2 — PGR/PLR proxy. Welch on the per-position realisation rates,
+    // which are 1 / hold time. We filter zero-hold trades to keep the
+    // reciprocal well-defined.
+    const winnerRealisationRates = overall.winnerHoldTimes
+      .filter((h) => h > 0)
+      .map((h) => 1 / h);
+    const loserRealisationRates  = overall.loserHoldTimes
+      .filter((h) => h > 0)
+      .map((h) => 1 / h);
+    const pgrProxy = winnerRealisationRates.length > 0
+      ? winnerRealisationRates.reduce((a, b) => a + b, 0) / winnerRealisationRates.length
+      : 0;
+    const plrProxy = loserRealisationRates.length > 0
+      ? loserRealisationRates.reduce((a, b) => a + b, 0) / loserRealisationRates.length
+      : 0;
+    const dispositionDelta = pgrProxy - plrProxy; // positive ⇒ disposition
+    const pgrTest = welchTTest(winnerRealisationRates, loserRealisationRates);
+
+    // The more significant of the two becomes the primary narrative.
+    const primaryTest = pgrTest.pValue < holdTimeTest.pValue ? pgrTest : holdTimeTest;
+    const test = primaryTest; // alias used by the existing branches below
 
     // Estimate dollar cost of the disposition effect:
     //   extra hold time for losers × average loss rate per second × number of losers
@@ -43,7 +78,15 @@ export const dispositionDetector: InsightDetector = {
     const extraHoldSeconds = Math.max(0, overall.avgLoserHold - overall.avgWinnerHold);
     const estimatedCost = extraHoldSeconds * avgLossPerSecond * overall.loserCount;
 
-    const impactScore = computeImpactScore(estimatedCost, test, 0.7);
+    const impactScore = computeImpactScore(estimatedCost, primaryTest, 0.7);
+
+    // Both methods are reported in the description so the user sees that the
+    // two analyses agree (or where they disagree).
+    const pgrPlrRatio = plrProxy > 0 ? pgrProxy / plrProxy : 0;
+    const methodLines =
+      `Hold-time method: you hold losers ${overall.ratio.toFixed(2)}x longer than winners (${holdTimeTest.description}). ` +
+      `PGR/PLR method: you realize gains ${pgrPlrRatio > 0 ? pgrPlrRatio.toFixed(2) + 'x' : 'comparably'} more readily than losses ` +
+      `(${pgrTest.description}).`;
 
     // Regime breakdown — test each regime independently
     const regimeBuckets = bucketByRegime(qualified);
@@ -84,21 +127,21 @@ export const dispositionDetector: InsightDetector = {
     if (!test.isSignificant) {
       // Not enough evidence — don't claim a disposition effect exists
       title       = 'No Disposition Effect Detected';
-      description = `Your winner and loser hold times are similar (ratio ${ratio.toFixed(2)}x) and the difference is not statistically significant (${test.description}). This is a healthy sign — you're not systematically holding losers longer.`;
+      description = `Your winner and loser hold times are similar (ratio ${ratio.toFixed(2)}x) and the difference is not statistically significant. This is a healthy sign — you're not systematically holding losers longer. ${methodLines}`;
       severity    = 'info';
     } else if (isHealthy) {
       title       = 'Healthy Exit Discipline';
-      description = `You hold losing positions only ${ratio.toFixed(2)}x as long as winning positions — healthy exit discipline confirmed by statistical testing (${test.description}). Average winner: ${formatDuration(overall.avgWinnerHold)}, average loser: ${formatDuration(overall.avgLoserHold)}.`;
+      description = `You hold losing positions only ${ratio.toFixed(2)}x as long as winning positions — healthy exit discipline confirmed by statistical testing. Average winner: ${formatDuration(overall.avgWinnerHold)}, average loser: ${formatDuration(overall.avgLoserHold)}. ${methodLines}`;
       severity    = 'info';
     } else if (isElevated) {
       title       = 'Disposition Effect Detected';
-      description = `You hold losing positions ${ratio.toFixed(1)}x longer than winning positions, and this difference is statistically significant (${test.description}). Average winner: ${formatDuration(overall.avgWinnerHold)}, average loser: ${formatDuration(overall.avgLoserHold)}.${regimeNotes ? ' ' + regimeNotes : ''}`;
+      description = `You hold losing positions ${ratio.toFixed(1)}x longer than winning positions, and this difference is statistically significant. Average winner: ${formatDuration(overall.avgWinnerHold)}, average loser: ${formatDuration(overall.avgLoserHold)}. ${methodLines}${regimeNotes ? ' ' + regimeNotes : ''}`;
       suggestion  = 'Consider setting time-based stops or reviewing positions held longer than your average winner duration. The estimated cost of this pattern is $' + Math.round(estimatedCost).toLocaleString() + ' across all affected trades.';
       severity    = ratio >= CRITICAL_MIN ? 'warning' : 'info';
     } else {
       // Borderline (1.2 ≤ ratio < 1.5) but significant
       title       = 'Borderline Disposition Pattern';
-      description = `You hold losers ${ratio.toFixed(2)}x longer than winners — statistically significant but moderate (${test.description}).${regimeNotes ? ' ' + regimeNotes : ''} Watch for this drifting higher.`;
+      description = `You hold losers ${ratio.toFixed(2)}x longer than winners — statistically significant but moderate. ${methodLines}${regimeNotes ? ' ' + regimeNotes : ''} Watch for this drifting higher.`;
       severity    = 'info';
     }
 
@@ -118,16 +161,26 @@ export const dispositionDetector: InsightDetector = {
         loserCount: overall.loserCount,
         tradeCount: qualified.length,
         estimatedCost: Math.round(estimatedCost * 100) / 100,
+        // PGR/PLR proxy fields
+        pgrProxy:        round4(pgrProxy),
+        plrProxy:        round4(plrProxy),
+        pgrPlrRatio:     round4(pgrPlrRatio),
+        dispositionDelta: round4(dispositionDelta),
+        primaryMethod:   pgrTest.pValue < holdTimeTest.pValue ? 'pgr_plr' : 'hold_time',
       },
       regimeBreakdown,
-      statistics: [test],
+      statistics: [holdTimeTest, pgrTest],
       impactScore,
       category: 'behavior',
-      isSignificant: test.isSignificant,
+      isSignificant: holdTimeTest.isSignificant && pgrTest.isSignificant,
       sampleSize: qualified.length,
     }];
   },
 };
+
+function round4(v: number): number {
+  return Math.round(v * 10000) / 10000;
+}
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 

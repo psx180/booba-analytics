@@ -10,6 +10,21 @@ export async function GET(req: NextRequest) {
   }
 
   const service = createAnalyticsService();
-  const result = await service.aggregate('performance', walletAddress, parseFilters(sp));
-  return NextResponse.json(result);
+  const filters = parseFilters(sp);
+
+  // Compose the full advanced summary so the dashboard only needs one fetch
+  // to populate every stat card. The performance result keeps the legacy
+  // top-level shape (`data`, `breakdowns`) the existing client expects;
+  // additional results are nested under their own keys.
+  const summary = await service.getAdvancedSummary(walletAddress, filters);
+  const performance = summary.performance;
+
+  return NextResponse.json({
+    ...performance,
+    eloResult:              summary.eloResult,
+    entropyResult:          summary.entropyResult,
+    xpnlLuckScore:          summary.xpnlLuckScore,
+    xpnlResult:             summary.xpnl,
+    equityCurveConsistency: summary.equityCurveConsistency,
+  });
 }
