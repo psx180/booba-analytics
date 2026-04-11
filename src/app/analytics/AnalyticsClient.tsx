@@ -9,6 +9,7 @@ import ExitAnalysis from './ExitAnalysis';
 import StrategyBreakdown from './StrategyBreakdown';
 import WhatIfExplorer from './WhatIfExplorer';
 import RegimePerformance from './RegimePerformance';
+import PatternsSection from './PatternsSection';
 
 // ── Insight types (mirror of backend Insight) ──────────────────────────────────
 
@@ -297,6 +298,15 @@ export default function AnalyticsClient({ walletAddress }: { walletAddress: stri
         subtitle="P&L chart, trade distribution, and detailed stats per market regime."
       >
         <RegimePerformance {...chartProps} />
+      </Section>
+
+      {/* ── ML Patterns ────────────────────────────────────────────────── */}
+      <Section
+        title="Patterns (ML)"
+        subtitle="Clusters, anomalies, and serial-dependence discovered by ML over your trade history."
+        defaultOpen={false}
+      >
+        <PatternsSection walletAddress={walletAddress} />
       </Section>
 
       {/* ── Behavioural Insights ───────────────────────────────────────── */}

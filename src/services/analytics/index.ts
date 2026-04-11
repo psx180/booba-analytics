@@ -36,6 +36,7 @@ import { holdTimeOptimizerDetector } from './insights/hold-time-optimizer';
 import { outlierDependencyDetector } from './insights/outlier-dependency';
 import { sizingAnalysisDetector }    from './insights/sizing-analysis';
 import { tiltEpisodesDetector }      from './insights/tilt-episodes';
+import { mlPatternsDetector }        from './insights/ml-patterns';
 
 export const metricComputers: MetricComputer[] = [
   exitQualityComputer,
@@ -64,6 +65,7 @@ export const insightDetectors: InsightDetector[] = [
   outlierDependencyDetector,
   sizingAnalysisDetector,
   tiltEpisodesDetector,
+  mlPatternsDetector,
 ];
 
 const bybitCandleSource = new BybitCandleSource();
