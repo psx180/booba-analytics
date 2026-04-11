@@ -270,6 +270,24 @@ export class AnalyticsService {
         ? (equityCurve.data.consistency as number)
         : 0;
 
+    // Override totalPnl with fill-level sum so it stays constant regardless of
+    // how positions are merged or split. Position.aggregatePnl can diverge from
+    // the fill total due to volume-weighted averaging across merged groups.
+    const fillWhere: Record<string, any> = { walletAddress };
+    if (filters?.asset) fillWhere.asset = filters.asset;
+    if (filters?.regime) fillWhere.regimeAtEntry = filters.regime;
+    if (filters?.dateFrom || filters?.dateTo) {
+      fillWhere.entryTime = {
+        ...(filters.dateFrom ? { gte: filters.dateFrom } : {}),
+        ...(filters.dateTo   ? { lte: filters.dateTo }   : {}),
+      };
+    }
+    const fillSum = await this.db.trade.aggregate({
+      _sum: { pnlRealized: true },
+      where: fillWhere,
+    });
+    performance.data.totalPnl = Math.round((fillSum._sum.pnlRealized ?? 0) * 100) / 100;
+
     const eloResult = computeEloResult(positions);
     const entropyResult = computeEntropyResult(positions);
     const xpnl = computeXpnlResult(positions);

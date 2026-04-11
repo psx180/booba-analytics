@@ -224,6 +224,8 @@ function FloatingToolbar({
   }, []);
 
   const hasLinkedStrategy = selectedUnits.some((u) => u.kind === 'linked_strategy');
+  const assets = new Set(selectedUnits.flatMap((u) => u.asset.split(' / ')));
+  const mixedAssets = assets.size > 1;
 
   return (
     <div className="sticky top-0 z-10 flex items-center gap-3 bg-[#13181f]/95 backdrop-blur-sm border border-[#30363d] rounded-lg px-4 py-2.5 shadow-lg">
@@ -257,8 +259,8 @@ function FloatingToolbar({
         <>
           <button
             onClick={onMerge}
-            disabled={hasLinkedStrategy}
-            title={hasLinkedStrategy ? 'Cannot merge linked strategies' : undefined}
+            disabled={hasLinkedStrategy || mixedAssets}
+            title={hasLinkedStrategy ? 'Cannot merge linked strategies' : mixedAssets ? 'Can only merge same-asset positions' : undefined}
             className="px-3 py-1.5 bg-[#21262d] hover:bg-[#30363d] disabled:opacity-40 text-sm text-[#e6edf3] border border-[#30363d] rounded transition-colors"
           >
             Merge Positions
@@ -706,7 +708,13 @@ function OrdersPanel({ positionId }: { positionId: string }) {
   useEffect(() => {
     fetch(`/api/positions/${positionId}/orders`)
       .then((r) => r.json())
-      .then((d) => setOrders(d.orders ?? []))
+      .then((d) => {
+        const sorted = (d.orders ?? []).slice().sort(
+          (a: OrderGroup, b: OrderGroup) =>
+            new Date(a.firstEntryTime ?? 0).getTime() - new Date(b.firstEntryTime ?? 0).getTime(),
+        );
+        setOrders(sorted);
+      })
       .finally(() => setLoading(false));
   }, [positionId]);
 

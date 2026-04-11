@@ -247,6 +247,7 @@ export default function TradeDetailModal({ positionId, walletAddress, onClose }:
   const [orders, setOrders] = useState<OrderGroup[]>([]);
   const [insights, setInsights] = useState<Insight[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchDone, setFetchDone] = useState(false);
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
 
   // Editable annotation state
@@ -275,6 +276,7 @@ export default function TradeDetailModal({ positionId, walletAddress, onClose }:
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
+    setFetchDone(false);
 
     Promise.all([
       fetch(`/api/positions/${positionId}`, { signal: controller.signal }).then((r) => r.json()),
@@ -284,16 +286,19 @@ export default function TradeDetailModal({ positionId, walletAddress, onClose }:
       .then(([posData, ordersData, insightData]) => {
         const pos: PositionDetail = posData.position;
         setPosition(pos);
-        setThesis(pos.thesis ?? '');
-        setStrategyTag(pos.strategyTag ?? '');
-        setSourceTag(pos.sourceTag ?? '');
-        setConviction(pos.conviction ?? null);
+        setThesis(pos?.thesis ?? '');
+        setStrategyTag(pos?.strategyTag ?? '');
+        setSourceTag(pos?.sourceTag ?? '');
+        setConviction(pos?.conviction ?? null);
         setOrders(ordersData.orders ?? []);
         // Filter insights to those referencing this position
         const all: Insight[] = insightData.insights ?? [];
         setInsights(all.filter((i) => i.affectedPositions?.includes(positionId)));
+        setFetchDone(true);
       })
-      .catch(() => {})
+      .catch((err) => {
+        if (err?.name !== 'AbortError') setFetchDone(true);
+      })
       .finally(() => setLoading(false));
 
     return () => controller.abort();
@@ -408,7 +413,7 @@ export default function TradeDetailModal({ positionId, walletAddress, onClose }:
           </div>
         )}
 
-        {loading ? (
+        {loading || !fetchDone ? (
           <div className="flex-1 flex items-center justify-center text-[#6e7681] text-sm">
             Loading trade details...
           </div>

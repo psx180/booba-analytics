@@ -169,10 +169,10 @@ export const dispositionDetector: InsightDetector = {
         primaryMethod:   pgrTest.pValue < holdTimeTest.pValue ? 'pgr_plr' : 'hold_time',
       },
       regimeBreakdown,
-      statistics: [holdTimeTest, pgrTest],
+      statistics: [primaryTest],
       impactScore,
       category: 'behavior',
-      isSignificant: holdTimeTest.isSignificant && pgrTest.isSignificant,
+      isSignificant: primaryTest.isSignificant,
       sampleSize: qualified.length,
     }];
   },
