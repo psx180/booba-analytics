@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import EquityCurve, { EquityPoint, TradeMeta, REGIME_LABELS } from './EquityCurve';
+import UnderwaterCurve, { UnderwaterPoint } from './UnderwaterCurve';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -31,6 +32,28 @@ interface PerformanceResult {
   xpnlLuckScore?: number;
   xpnlResult?: XpnlSummary;
   equityCurveConsistency?: number;
+  wartResult?: WartResult;
+}
+
+interface WartAxis {
+  score: number;
+  method: string;
+  details: string;
+}
+
+interface WartResult {
+  composite: number;
+  tier: string;
+  axes: {
+    entry: WartAxis;
+    exit: WartAxis;
+    risk: WartAxis;
+    timing: WartAxis;
+    discipline: WartAxis;
+  };
+  weightedScore: number;
+  improvements: string[];
+  tradeCount: number;
 }
 
 interface EloResult {
@@ -70,7 +93,16 @@ interface EquityCurvePoint {
 
 interface EquityCurveResult {
   name: string;
-  data: { tradeCount: number; finalPnl: number };
+  data: {
+    tradeCount: number;
+    finalPnl: number;
+    maxDrawdown?: number;
+    maxDrawdownPct?: number;
+    maxDrawdownDuration?: number;
+    currentDrawdown?: number;
+    currentDrawdownPct?: number;
+    underwaterSeries?: UnderwaterPoint[];
+  };
   series: EquityCurvePoint[];
 }
 
@@ -170,6 +202,16 @@ function consistencyColor(r2: number): string {
   if (r2 >= 0.7) return 'text-green-400';
   if (r2 >= 0.4) return 'text-amber-400';
   return 'text-red-400';
+}
+
+function wartColor(composite: number): string {
+  if (composite >=  1) return 'text-green-400';
+  if (composite >= -0.5) return 'text-amber-400';
+  return 'text-red-400';
+}
+
+function formatWart(c: number): string {
+  return `${c >= 0 ? '+' : ''}${c.toFixed(1)}`;
 }
 
 function trendArrow(trend: 'improving' | 'declining' | 'stable'): string {
@@ -322,6 +364,14 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
   const [equityConsistency, setEquityConsistency] = useState<number | null>(null);
   const [xpnlSummary, setXpnlSummary] = useState<XpnlSummary | null>(null);
   const [showXpnlOverlay, setShowXpnlOverlay] = useState(true);
+  const [wartResult, setWartResult] = useState<WartResult | null>(null);
+  const [underwaterSeries, setUnderwaterSeries] = useState<UnderwaterPoint[]>([]);
+  const [drawdownStats, setDrawdownStats] = useState<{
+    maxDrawdown: number;
+    maxDrawdownPct: number;
+    currentDrawdown: number;
+    currentDrawdownPct: number;
+  } | null>(null);
 
   const fetchData = useCallback(
     async (regime: string | null) => {
@@ -353,6 +403,7 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
         setEntropyResult(summaryData.entropyResult ?? null);
         setEquityConsistency(summaryData.equityCurveConsistency ?? null);
         setXpnlSummary(equityData.xpnl ?? summaryData.xpnlResult ?? null);
+        setWartResult(summaryData.wartResult ?? null);
         setEquityCurve(
           (equityData.series ?? []).map((p) => ({
             date: p.date,
@@ -365,6 +416,17 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
             regimeAtEntry: p.regime,
           })),
         );
+        setUnderwaterSeries(equityData.data?.underwaterSeries ?? []);
+        if (equityData.data?.maxDrawdown != null) {
+          setDrawdownStats({
+            maxDrawdown:        equityData.data.maxDrawdown,
+            maxDrawdownPct:     equityData.data.maxDrawdownPct ?? 0,
+            currentDrawdown:    equityData.data.currentDrawdown ?? 0,
+            currentDrawdownPct: equityData.data.currentDrawdownPct ?? 0,
+          });
+        } else {
+          setDrawdownStats(null);
+        }
         setRegimeBreakdown(breakdownData.breakdowns?.regime ?? {});
         setInsights(insightsData.insights ?? []);
       } finally {
@@ -430,7 +492,7 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
       </div>
 
       {/* ── Stats Bar ─────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-9 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-10 gap-3">
         <StatCard
           label="Total P&L"
           value={
@@ -523,6 +585,19 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
           }
           sub="equity curve R²"
         />
+        <StatCard
+          label="WART"
+          value={
+            wartResult ? (
+              <span className={wartColor(wartResult.composite)}>
+                {formatWart(wartResult.composite)}
+              </span>
+            ) : (
+              <span className="text-[#6e7681]">—</span>
+            )
+          }
+          sub={wartResult ? wartResult.tier : 'composite trader score'}
+        />
       </div>
 
       {/* ── Equity Curve ──────────────────────────────────────────────────── */}
@@ -530,7 +605,7 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
           <div>
             <h2 className="text-sm font-semibold text-white">Equity Curve</h2>
-            {(activeRegime || equityConsistency != null || xpnlSummary) && (
+            {(activeRegime || equityConsistency != null || xpnlSummary || drawdownStats) && (
               <p className="text-xs text-[#6e7681] mt-0.5 flex items-center gap-3 flex-wrap">
                 {activeRegime && (
                   <span>
@@ -555,6 +630,21 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
                     <span className={xpnlSummary.luckScore >= 0 ? 'text-green-400' : 'text-red-400'}>
                       {xpnlSummary.luckScore >= 0 ? '+' : ''}
                       {Math.round(xpnlSummary.luckScore * 100)}%
+                    </span>
+                  </span>
+                )}
+                {drawdownStats && (
+                  <span>
+                    Max DD:{' '}
+                    <span className="text-red-400">
+                      -${Math.abs(drawdownStats.maxDrawdown).toFixed(2)} (
+                      {drawdownStats.maxDrawdownPct.toFixed(1)}%)
+                    </span>
+                    {' · Current: '}
+                    <span className={drawdownStats.currentDrawdown < 0 ? 'text-red-400' : 'text-[#8b949e]'}>
+                      {drawdownStats.currentDrawdown < 0
+                        ? `-$${Math.abs(drawdownStats.currentDrawdown).toFixed(2)} (${drawdownStats.currentDrawdownPct.toFixed(1)}%)`
+                        : '$0.00'}
                     </span>
                   </span>
                 )}
@@ -608,13 +698,23 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
             Loading…
           </div>
         ) : (
-          <EquityCurve
-            equityCurve={equityCurve}
-            tradeMetas={tradeMetas}
-            activeRegimeFilter={activeRegime}
-            xpnlSeries={xpnlSummary?.cumulativeSeries}
-            showXpnl={showXpnlOverlay}
-          />
+          <>
+            <EquityCurve
+              equityCurve={equityCurve}
+              tradeMetas={tradeMetas}
+              activeRegimeFilter={activeRegime}
+              xpnlSeries={xpnlSummary?.cumulativeSeries}
+              showXpnl={showXpnlOverlay}
+            />
+            {underwaterSeries.length > 0 && (
+              <div className="mt-2 pt-2 border-t border-[#21262d]">
+                <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
+                  Underwater
+                </div>
+                <UnderwaterCurve series={underwaterSeries} />
+              </div>
+            )}
+          </>
         )}
 
         {/* Regime legend */}

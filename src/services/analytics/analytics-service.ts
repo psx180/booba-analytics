@@ -30,6 +30,7 @@ import { benjaminiHochberg } from './statistics';
 import { TiltService, createDefaultTiltDetector, createHeuristicTiltDetector } from './tilt';
 import { computeEloResult, type EloResult } from './metrics/elo';
 import { computeXpnlResult, type XpnlResult } from './metrics/xpnl';
+import { computeWartResult, type WartResult } from './metrics/wart';
 import { computeEntropyResult, type EntropyResult } from './insights/entropy-insight';
 import { performanceAggregator } from './aggregations/performance';
 import { equityCurveAggregator } from './aggregations/equity-curve';
@@ -63,6 +64,8 @@ export interface AdvancedSummary {
   xpnlLuckScore: number;
   /** R² of cumulative P&L vs trade index from the equity curve aggregator. */
   equityCurveConsistency: number;
+  /** Composite trader score (WART) decomposed into 5 axes. */
+  wartResult: WartResult;
 }
 
 export class AnalyticsService {
@@ -292,6 +295,21 @@ export class AnalyticsService {
     const entropyResult = computeEntropyResult(positions);
     const xpnl = computeXpnlResult(positions);
 
+    // WART consumes the existing computed dependencies plus the drawdown
+    // fields from the equity curve aggregator. Pass them through so the
+    // axes match exactly what the dashboard sees elsewhere.
+    const wartResult = computeWartResult(positions, {
+      xpnlResult: xpnl,
+      entropyResult,
+      drawdown: {
+        maxDrawdown:         (equityCurve.data?.maxDrawdown ?? 0) as number,
+        maxDrawdownPct:      (equityCurve.data?.maxDrawdownPct ?? 0) as number,
+        maxDrawdownDuration: (equityCurve.data?.maxDrawdownDuration ?? 0) as number,
+        currentDrawdown:     (equityCurve.data?.currentDrawdown ?? 0) as number,
+      },
+      equityCurveTradeCount: (equityCurve.data?.tradeCount ?? positions.length) as number,
+    });
+
     return {
       performance,
       eloResult,
@@ -299,6 +317,7 @@ export class AnalyticsService {
       xpnl,
       xpnlLuckScore: xpnl.luckScore,
       equityCurveConsistency,
+      wartResult,
     };
   }
 

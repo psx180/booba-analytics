@@ -11,6 +11,7 @@ import WhatIfExplorer from './WhatIfExplorer';
 import RegimePerformance from './RegimePerformance';
 import PatternsSection from './PatternsSection';
 import EdgeFinder, { type CombinatorialSearchResult } from './EdgeFinder';
+import WartRadar, { type WartResult } from './WartRadar';
 
 // ── Insight types (mirror of backend Insight) ──────────────────────────────────
 
@@ -172,6 +173,7 @@ export default function AnalyticsClient({ walletAddress }: { walletAddress: stri
   const [filters, setFilters] = useState<AnalyticsFilters>(EMPTY_FILTERS);
   const [assetOptions, setAssetOptions] = useState<string[]>([]);
   const [insights, setInsights] = useState<Insight[]>([]);
+  const [wartResult, setWartResult] = useState<WartResult | null>(null);
 
   const set = useCallback(<K extends keyof AnalyticsFilters>(key: K, value: string) => {
     setFilters((f) => ({ ...f, [key]: value }));
@@ -199,6 +201,16 @@ export default function AnalyticsClient({ walletAddress }: { walletAddress: stri
       .then((d) => setInsights(d.insights ?? []))
       .catch(() => {});
   }, [walletAddress]);
+
+  // Load the WART summary so the trader profile section has data to render.
+  // Re-fetch when filters change so the radar reflects the active slice.
+  useEffect(() => {
+    const params = buildParams(walletAddress, filters);
+    fetch(`/api/analytics/summary?${params}`)
+      .then((r) => r.json())
+      .then((d) => setWartResult(d.wartResult ?? null))
+      .catch(() => {});
+  }, [walletAddress, filters]);
 
   const hasFilters = Object.values(filters).some(Boolean);
   const chartProps = { walletAddress, filters };
@@ -265,6 +277,24 @@ export default function AnalyticsClient({ walletAddress }: { walletAddress: stri
         subtitle="Daily P&L — darker = larger magnitude. Hover a day for details."
       >
         <CalendarHeatmap {...chartProps} />
+      </Section>
+
+      {/* ── Trader Profile (WART) ──────────────────────────────────────── */}
+      <Section
+        title={
+          wartResult
+            ? `Trader Profile · ${wartResult.composite >= 0 ? '+' : ''}${wartResult.composite.toFixed(1)} WART (${wartResult.tier})`
+            : 'Trader Profile (WART)'
+        }
+        subtitle="Wins Above Replacement Trader — composite score across entry, exit, risk, timing, and discipline."
+      >
+        {wartResult ? (
+          <WartRadar wart={wartResult} />
+        ) : (
+          <p className="text-sm text-[#6e7681]">
+            Need at least 50 closed trades to compute a stable WART score.
+          </p>
+        )}
       </Section>
 
       {/* ── Time Analysis ──────────────────────────────────────────────── */}

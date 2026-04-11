@@ -9,11 +9,24 @@
  * R² as a "consistency" score: 1.0 = a perfectly straight equity curve,
  * 0.0 = totally erratic. Used by the dashboard to summarise growth quality
  * with a single number.
+ *
+ * Underwater curve: alongside the main cumulative series we track the
+ * running high-water mark and emit an `underwaterSeries` (always ≤ 0)
+ * showing the gap between current equity and HWM. Max drawdown, current
+ * drawdown, and the longest underwater run (in trades) are exposed in
+ * `data` so the WART risk axis and dashboard can read them without
+ * re-walking the series.
  */
 
 import * as ss from 'simple-statistics';
 import type { Aggregator, Position } from './base';
 import type { AggregationResult } from '../types';
+
+export interface UnderwaterPoint {
+  date: string;
+  underwater: number;
+  underwaterPct: number;
+}
 
 export const equityCurveAggregator: Aggregator = {
   name: 'equity-curve',
@@ -24,16 +37,58 @@ export const equityCurveAggregator: Aggregator = {
       .sort((a, b) => (a.lastExitTime!.getTime()) - (b.lastExitTime!.getTime()));
 
     let cumulative = 0;
-    const series = closed.map((p) => {
+    let hwm = 0;
+    let maxDrawdown = 0;
+    let maxDrawdownPct = 0;
+
+    // Track the longest run of consecutive trades spent strictly underwater
+    // (cumulative < hwm). The current run resets every time we hit a new HWM.
+    let currentRunLen = 0;
+    let maxDrawdownDuration = 0;
+
+    const series: { date: string; value: number; cumulativePnl: number; regime: string; positionId: string }[] = [];
+    const underwaterSeries: UnderwaterPoint[] = [];
+
+    for (const p of closed) {
       cumulative += p.aggregatePnl ?? 0;
-      return {
-        date: p.lastExitTime!.toISOString(),
+      if (cumulative > hwm) hwm = cumulative;
+
+      const underwater = cumulative - hwm; // ≤ 0
+      const denom = Math.max(Math.abs(hwm), 1);
+      const underwaterPct = (underwater / denom) * 100;
+
+      if (underwater < 0) {
+        currentRunLen += 1;
+        if (currentRunLen > maxDrawdownDuration) {
+          maxDrawdownDuration = currentRunLen;
+        }
+      } else {
+        currentRunLen = 0;
+      }
+
+      if (underwater < maxDrawdown) {
+        maxDrawdown = underwater;
+        maxDrawdownPct = underwaterPct;
+      }
+
+      const date = p.lastExitTime!.toISOString();
+      series.push({
+        date,
         value: round(cumulative, 2),
         cumulativePnl: round(cumulative, 2),
         regime: p.regimeAtEntry ?? 'unknown',
         positionId: p.id,
-      };
-    });
+      });
+      underwaterSeries.push({
+        date,
+        underwater: round(underwater, 2),
+        underwaterPct: round(underwaterPct, 2),
+      });
+    }
+
+    const lastUnderwater = underwaterSeries.length > 0
+      ? underwaterSeries[underwaterSeries.length - 1]
+      : { underwater: 0, underwaterPct: 0 };
 
     return {
       name: 'equity-curve',
@@ -41,6 +96,13 @@ export const equityCurveAggregator: Aggregator = {
         tradeCount: closed.length,
         finalPnl: round(cumulative, 2),
         consistency: round(consistencyR2(series), 4),
+        hwm: round(hwm, 2),
+        maxDrawdown: round(maxDrawdown, 2),
+        maxDrawdownPct: round(maxDrawdownPct, 2),
+        maxDrawdownDuration,
+        currentDrawdown: round(lastUnderwater.underwater, 2),
+        currentDrawdownPct: round(lastUnderwater.underwaterPct, 2),
+        underwaterSeries,
       },
       series,
     };

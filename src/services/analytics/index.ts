@@ -42,6 +42,7 @@ import { mlPatternsDetector }        from './insights/ml-patterns';
 import { combinatorialSearchDetector } from './insights/combinatorial-search';
 import { xpnlInsightDetector }       from './insights/xpnl-insight';
 import { entropyInsightDetector }    from './insights/entropy-insight';
+import { wartInsightDetector }       from './insights/wart-insight';
 
 export const metricComputers: MetricComputer[] = [
   exitQualityComputer,
@@ -76,6 +77,7 @@ export const insightDetectors: InsightDetector[] = [
   combinatorialSearchDetector,
   xpnlInsightDetector,
   entropyInsightDetector,
+  wartInsightDetector,
 ];
 
 const bybitCandleSource = new BybitCandleSource();

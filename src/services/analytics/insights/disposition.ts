@@ -182,6 +182,23 @@ function round4(v: number): number {
   return Math.round(v * 10000) / 10000;
 }
 
+// ─── Public helpers (consumed by other analytics modules) ─────────────────
+
+/**
+ * Lightweight disposition ratio for callers that just need the headline
+ * number without running the full insight detector. Returns null when there
+ * aren't enough winners + losers to compute a meaningful ratio.
+ *
+ * Used by the WART exit-quality axis fallback when MFE data isn't available.
+ */
+export function computeDispositionRatio(positions: Position[]): number | null {
+  const qualified = positions.filter(
+    (p) => p.holdTimeSeconds != null && p.aggregatePnl != null,
+  );
+  const stats = computeDisposition(qualified);
+  return stats ? stats.ratio : null;
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 interface DispositionStats {

@@ -26,5 +26,6 @@ export async function GET(req: NextRequest) {
     xpnlLuckScore:          summary.xpnlLuckScore,
     xpnlResult:             summary.xpnl,
     equityCurveConsistency: summary.equityCurveConsistency,
+    wartResult:             summary.wartResult,
   });
 }
