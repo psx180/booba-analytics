@@ -37,6 +37,7 @@ import { outlierDependencyDetector } from './insights/outlier-dependency';
 import { sizingAnalysisDetector }    from './insights/sizing-analysis';
 import { tiltEpisodesDetector }      from './insights/tilt-episodes';
 import { mlPatternsDetector }        from './insights/ml-patterns';
+import { combinatorialSearchDetector } from './insights/combinatorial-search';
 
 export const metricComputers: MetricComputer[] = [
   exitQualityComputer,
@@ -66,6 +67,7 @@ export const insightDetectors: InsightDetector[] = [
   sizingAnalysisDetector,
   tiltEpisodesDetector,
   mlPatternsDetector,
+  combinatorialSearchDetector,
 ];
 
 const bybitCandleSource = new BybitCandleSource();

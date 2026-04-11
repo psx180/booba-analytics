@@ -10,6 +10,7 @@ import StrategyBreakdown from './StrategyBreakdown';
 import WhatIfExplorer from './WhatIfExplorer';
 import RegimePerformance from './RegimePerformance';
 import PatternsSection from './PatternsSection';
+import EdgeFinder, { type CombinatorialSearchResult } from './EdgeFinder';
 
 // ── Insight types (mirror of backend Insight) ──────────────────────────────────
 
@@ -202,9 +203,16 @@ export default function AnalyticsClient({ walletAddress }: { walletAddress: stri
   const hasFilters = Object.values(filters).some(Boolean);
   const chartProps = { walletAddress, filters };
 
+  // Pull the combinatorial-search insight out of the generic insight stream;
+  // it gets its own dedicated Edge Finder section below.
+  const combinatorialInsight = insights.find((i) => i.module === 'combinatorial-search');
+  const combinatorialResult: CombinatorialSearchResult | null =
+    (combinatorialInsight?.data?.combinatorial as CombinatorialSearchResult | undefined) ?? null;
+  const genericInsights = insights.filter((i) => i.module !== 'combinatorial-search');
+
   // Group insights by category in display order
   const insightsByCategory = CATEGORY_ORDER.reduce<Record<string, Insight[]>>((acc, cat) => {
-    const group = insights.filter((i) => i.category === cat);
+    const group = genericInsights.filter((i) => i.category === cat);
     if (group.length > 0) acc[cat] = group;
     return acc;
   }, {});
@@ -309,11 +317,23 @@ export default function AnalyticsClient({ walletAddress }: { walletAddress: stri
         <PatternsSection walletAddress={walletAddress} />
       </Section>
 
+      {/* ── Edge Finder (combinatorial significance search) ────────────── */}
+      <Section
+        title={
+          combinatorialResult
+            ? `Edge Finder: ${combinatorialResult.totalTestsRun} combinations tested, ${combinatorialResult.totalSurvivingBH} significant`
+            : 'Edge Finder'
+        }
+        subtitle="Exhaustive slice-by-slice search across all dimension combinations, with Benjamini-Hochberg FDR correction at 10%."
+      >
+        <EdgeFinder result={combinatorialResult} />
+      </Section>
+
       {/* ── Behavioural Insights ───────────────────────────────────────── */}
-      {insights.length > 0 && (
+      {genericInsights.length > 0 && (
         <Section
           title="Behavioural Insights"
-          subtitle={`${insights.length} pattern${insights.length > 1 ? 's' : ''} detected · ${insights.filter((i) => i.isSignificant).length} statistically significant`}
+          subtitle={`${genericInsights.length} pattern${genericInsights.length > 1 ? 's' : ''} detected · ${genericInsights.filter((i) => i.isSignificant).length} statistically significant`}
         >
           <div className="space-y-6">
             {Object.entries(insightsByCategory).map(([category, group]) => (

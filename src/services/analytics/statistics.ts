@@ -184,6 +184,45 @@ export function computeImpactScore(
 }
 
 /**
+ * Benjamini-Hochberg FDR correction over a flat array of p-values.
+ *
+ * Returns a parallel boolean array marking which inputs survive correction
+ * (in original input order). Use this when a detector runs its own internal
+ * multiple-comparison correction over many slice-level tests before handing
+ * a single insight back to the cross-detector BH pass.
+ *
+ * The whole-Insight version below ({@link benjaminiHochberg}) is the
+ * canonical pipeline-level correction; this helper exists so detectors can
+ * apply BH to raw p-values without first wrapping them in Insight stubs.
+ */
+export function benjaminiHochbergPValues(
+  pValues: number[],
+  fdrRate = 0.10,
+): boolean[] {
+  const m = pValues.length;
+  if (m === 0) return [];
+
+  // Pair each p-value with its original index, then sort ascending by p
+  const indexed = pValues.map((p, i) => ({ p, i }));
+  indexed.sort((a, b) => a.p - b.p);
+
+  // Largest 1-indexed rank k where p_(k) ≤ (k/m) × fdrRate
+  let cutoffIndex = -1;
+  for (let i = m - 1; i >= 0; i--) {
+    if (indexed[i].p <= ((i + 1) / m) * fdrRate) {
+      cutoffIndex = i;
+      break;
+    }
+  }
+
+  const surviving = new Array<boolean>(m).fill(false);
+  for (let i = 0; i <= cutoffIndex; i++) {
+    surviving[indexed[i].i] = true;
+  }
+  return surviving;
+}
+
+/**
  * Benjamini-Hochberg FDR correction across all insight detectors.
  *
  * Collects every StatisticalTest from every insight, ranks by p-value, and
