@@ -34,6 +34,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import { usePrivy } from '@privy-io/react-auth';
 import { JournalProvider } from './JournalContext';
+import { LiveProvider } from './LiveContext';
 import NavBar from './NavBar';
 import { isDevBypass, DEV_WALLET } from './privy-env';
 
@@ -106,8 +107,10 @@ function AuthedShell({
 }) {
   return (
     <JournalProvider walletAddress={walletAddress}>
-      <NavBar />
-      <main className="max-w-[1400px] mx-auto px-4 py-6">{children}</main>
+      <LiveProvider>
+        <NavBar />
+        <main className="max-w-[1400px] mx-auto px-4 py-6">{children}</main>
+      </LiveProvider>
     </JournalProvider>
   );
 }

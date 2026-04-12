@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { usePrivy, useLogout } from '@privy-io/react-auth';
 import { useJournal } from './JournalContext';
+import { useLive } from './LiveContext';
 import { isDevBypass } from './privy-env';
 import JournalSelector from './JournalSelector';
 
@@ -55,12 +56,40 @@ export default function NavBar() {
               stays nearest the tabs; wallet badge is the rightmost element
               so it never moves when the journal name length changes. */}
           <div className="ml-auto flex items-center gap-3">
+            <LiveIndicator />
             <JournalSelector />
             <WalletBadge />
           </div>
         </div>
       </div>
     </nav>
+  );
+}
+
+// ── Live indicator ──────────────────────────────────────────────────────────
+
+/**
+ * Green pulsing dot + "LIVE" label when the server has an active
+ * Pacifica websocket for this wallet. Dim grey dot + "OFFLINE" otherwise.
+ * Sources its state from LiveContext which is mounted once in AppShell,
+ * so navigating between pages doesn't tear down the upstream connection.
+ */
+function LiveIndicator() {
+  const { connected } = useLive();
+  return (
+    <span
+      className={`flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-widest ${
+        connected ? 'text-emerald-400' : 'text-[#6e7681]'
+      }`}
+      title={connected ? 'Connected to Pacifica' : 'Live data unavailable'}
+    >
+      <span
+        className={`w-1.5 h-1.5 rounded-full ${
+          connected ? 'bg-emerald-400 animate-pulse' : 'bg-[#30363d]'
+        }`}
+      />
+      {connected ? 'LIVE' : 'OFFLINE'}
+    </span>
   );
 }
 

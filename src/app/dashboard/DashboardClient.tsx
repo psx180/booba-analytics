@@ -1,14 +1,18 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import EquityCurve, { EquityPoint, TradeMeta, REGIME_LABELS } from './EquityCurve';
 import UnderwaterCurve, { UnderwaterPoint } from './UnderwaterCurve';
+import OpenPositions from './OpenPositions';
+import LiveToast, { type Toast } from './LiveToast';
 import { useJournal } from '../JournalContext';
+import { useLive } from '../LiveContext';
 import { useAuthFetch } from '@/lib/api-client';
 import BoobaAvatar from '@/app/components/booba/BoobaAvatar';
 import BoobaChat from '@/app/components/booba/BoobaChat';
 import { computeHealthScore } from '@/app/components/booba/computeHealthScore';
 import { getContextualMessage } from '@/app/components/booba/getContextualMessage';
+import TradeAnnotationPopup, { type PopupPosition } from '@/app/components/trade-popup/TradeAnnotationPopup';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -224,6 +228,22 @@ function formatWart(c: number): string {
   return `${c >= 0 ? '+' : ''}${c.toFixed(1)}`;
 }
 
+/**
+ * Synthesises a "drawdown %" from the current unrealized P&L on open
+ * positions so Booba's health score reflects open-trade pain before any
+ * realized loss shows up in the equity curve. Returns negative when
+ * positions are underwater, null when there's no unrealized data yet.
+ */
+function liveUnrealizedDrawdownPct(
+  rows: { unrealizedPnl: number; entryPrice: number; amount: number }[],
+): number | undefined {
+  if (!rows.length) return undefined;
+  const totalNotional = rows.reduce((s, r) => s + r.entryPrice * r.amount, 0);
+  if (totalNotional === 0) return undefined;
+  const totalPnl = rows.reduce((s, r) => s + r.unrealizedPnl, 0);
+  return (totalPnl / totalNotional) * 100;
+}
+
 function trendArrow(trend: 'improving' | 'declining' | 'stable'): string {
   if (trend === 'improving') return '↑';
   if (trend === 'declining') return '↓';
@@ -280,6 +300,22 @@ export default function DashboardClient() {
     currentDrawdown: number;
     currentDrawdownPct: number;
   } | null>(null);
+
+  // ── Live websocket state ──
+  const { openPositions, initialPositions, lastTrade, lastClosedTrade, connected } = useLive();
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [livePopup, setLivePopup] = useState<PopupPosition | null>(null);
+  const [liveHealthBoost, setLiveHealthBoost] = useState(0);
+  const lastTradeSeenRef = useRef<number>(0);
+  const lastClosedSeenRef = useRef<number>(0);
+
+  const pushToast = useCallback((message: string, kind: Toast['kind'] = 'info') => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    setToasts((prev) => [...prev, { id, message, kind }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 5_000);
+  }, []);
 
   // doFetch — raw network fetch + state apply. isBackground=true skips the loading spinner.
   const doFetch = useCallback(
@@ -400,6 +436,97 @@ export default function DashboardClient() {
     if (!journalId) return;
     fetchData(activeRegime);
   }, [fetchData, activeRegime, journalId]);
+
+  // ── Live: react to new fills ───────────────────────────────────────────────
+  // On isNewPosition=true → fetch the full Position, open TradeAnnotationPopup
+  // so the user can tag thesis/strategy while it's fresh. On scale-in fills
+  // → toast only, since the position already carries context.
+  useEffect(() => {
+    if (!lastTrade) return;
+    if (lastTrade.receivedAt <= lastTradeSeenRef.current) return;
+    lastTradeSeenRef.current = lastTrade.receivedAt;
+
+    const direction = lastTrade.side.toUpperCase();
+    const priceStr = `$${lastTrade.price.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+
+    if (lastTrade.isNewPosition) {
+      pushToast(`New trade: ${lastTrade.symbol} ${direction} at ${priceStr}`, 'success');
+
+      // Booba reacts to a fresh entry with a brief uplift.
+      setLiveHealthBoost((prev) => prev + 8);
+
+      // Fetch full position so the popup has strategy/regime metadata.
+      authFetch(`/api/positions/${lastTrade.positionId}`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (!data?.position) return;
+          const p = data.position;
+          setLivePopup({
+            id: p.id,
+            asset: p.asset,
+            direction: p.direction,
+            pnl: p.aggregatePnl ?? null,
+            averageEntryPrice: p.averageEntryPrice ?? null,
+            averageExitPrice: p.averageExitPrice ?? null,
+            totalSize: p.totalSize ?? null,
+            holdTimeSeconds: p.holdTimeSeconds ?? null,
+            regimeAtEntry: p.regimeAtEntry ?? null,
+            thesis: p.thesis ?? null,
+            conviction: p.conviction ?? null,
+            emotion: p.emotion ?? null,
+            strategyId: p.strategyId ?? null,
+            sourceTag: p.sourceTag ?? null,
+            invalidationPrice: p.invalidationPrice ?? null,
+            targetPrice: p.targetPrice ?? null,
+            mistakes: p.mistakes ?? null,
+          });
+        })
+        .catch((err) => console.warn('[live] failed to load new position detail', err));
+    } else {
+      pushToast(
+        `Added to ${lastTrade.symbol} ${direction} position (${lastTrade.amount.toFixed(4)} @ ${priceStr})`,
+        'info',
+      );
+    }
+  }, [lastTrade, authFetch, pushToast]);
+
+  // ── Live: react to closed positions ────────────────────────────────────────
+  // Toast + trigger a background refresh of dashboard data so the equity
+  // curve and P&L stats update without the user reloading.
+  useEffect(() => {
+    if (!lastClosedTrade) return;
+    if (lastClosedTrade.receivedAt <= lastClosedSeenRef.current) return;
+    lastClosedSeenRef.current = lastClosedTrade.receivedAt;
+
+    const pnl = lastClosedTrade.pnl;
+    const pnlStr = `${pnl >= 0 ? '+' : '-'}$${Math.abs(pnl).toFixed(2)}`;
+    pushToast(
+      `Closed ${lastClosedTrade.symbol} ${lastClosedTrade.side.toUpperCase()}: ${pnlStr}`,
+      pnl >= 0 ? 'success' : 'warn',
+    );
+    // Booba mood: winning close → boost; losing close → nervous tick.
+    setLiveHealthBoost((prev) => (pnl >= 0 ? prev + 15 : prev - 10));
+
+    // Invalidate cache for current journal so a refresh grabs fresh data.
+    dashboardCache.forEach((_, key) => {
+      if (key.startsWith(`${journalId}|`)) dashboardCache.delete(key);
+    });
+    if (journalId) fetchData(activeRegime);
+  }, [lastClosedTrade, pushToast, journalId, activeRegime, fetchData]);
+
+  // ── Live: decay the transient Booba mood bump ─────────────────────────────
+  // The boost/penalty added by new/closed trades fades back to 0 over ~20s
+  // so Booba doesn't stay euphoric or nervous forever.
+  useEffect(() => {
+    if (liveHealthBoost === 0) return;
+    const t = setTimeout(() => {
+      setLiveHealthBoost((prev) => {
+        if (Math.abs(prev) < 1) return 0;
+        return prev * 0.7;
+      });
+    }, 3_000);
+    return () => clearTimeout(t);
+  }, [liveHealthBoost]);
 
   const handleRegimeToggle = (regime: string) => {
     const next = activeRegime === regime ? null : regime;
@@ -629,6 +756,13 @@ export default function DashboardClient() {
         />
       </div>
 
+      {/* ── Open Positions (live) ─────────────────────────────────────────── */}
+      <OpenPositions
+        openPositions={openPositions}
+        initialPositions={initialPositions}
+        connected={connected}
+      />
+
       {/* ── Equity Curve ──────────────────────────────────────────────────── */}
       <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
@@ -762,15 +896,24 @@ export default function DashboardClient() {
       {/* ── Booba Avatar + Chat ──────────────────────────────────────────── */}
       <BoobaChat isOpen={chatOpen} onClose={() => setChatOpen(false)} />
       <BoobaAvatar
-        healthScore={computeHealthScore({
+        healthScore={Math.max(0, Math.min(100, computeHealthScore({
           wartComposite: wartResult?.composite,
           tiltScore: performance ? Math.round((performance.avgTiltScore ?? 0) * 100) : undefined,
           eloTrend: eloResult?.recentTrend,
           recentWinRate: performance?.winRate,
-          currentDrawdownPct: drawdownStats && drawdownStats.currentDrawdown < 0
-            ? -Math.abs(drawdownStats.currentDrawdownPct)
-            : undefined,
-        })}
+          currentDrawdownPct:
+            // Blend historical drawdown with live unrealized drawdown so
+            // a negative unrealized P&L below -5% of notional drags Booba
+            // into nervous territory even before the trade closes.
+            (() => {
+              const live = liveUnrealizedDrawdownPct(openPositions);
+              const historic = drawdownStats && drawdownStats.currentDrawdown < 0
+                ? -Math.abs(drawdownStats.currentDrawdownPct)
+                : undefined;
+              if (live != null && historic != null) return Math.min(live, historic);
+              return live ?? historic;
+            })(),
+        })) + Math.round(liveHealthBoost))}
         insight={chatOpen ? null : getContextualMessage('dashboard', {
           untaggedPositionCount,
           lastComputedAt,
@@ -793,6 +936,25 @@ export default function DashboardClient() {
         onChatToggle={() => setChatOpen((o) => !o)}
         chatOpen={chatOpen}
       />
+
+      {/* ── Live notifications ───────────────────────────────────────────── */}
+      <LiveToast toasts={toasts} />
+      {livePopup && (
+        <TradeAnnotationPopup
+          position={livePopup}
+          onClose={() => setLivePopup(null)}
+          onSaved={(msg) => {
+            pushToast(msg, 'success');
+            setLivePopup(null);
+            // Refresh the dashboard so the newly-tagged position's
+            // metadata shows up across the UI.
+            dashboardCache.forEach((_, key) => {
+              if (key.startsWith(`${journalId}|`)) dashboardCache.delete(key);
+            });
+            if (journalId) fetchData(activeRegime);
+          }}
+        />
+      )}
     </div>
   );
 }

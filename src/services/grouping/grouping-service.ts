@@ -26,7 +26,9 @@ import type {
   ClassificationResult,
   StrategyType,
   LinkedStrategyData,
+  ParsedRawData,
 } from './types';
+import { parseRawData } from './types';
 import { FillToOrderLevel } from './levels/fill-to-order';
 import { OrderToPositionLevel } from './levels/order-to-position';
 import { PositionLinkingLevel } from './levels/position-linking';
@@ -593,6 +595,137 @@ export class GroupingService {
     }
   }
 
+  // ─── Incremental (live) grouping ───────────────────────────────────────
+  //
+  // For real-time fills coming off the Pacifica websocket we can't afford
+  // to rebuild every position in the database on every tick. groupNewFill
+  // attaches a single freshly-inserted fill to an existing open position
+  // on the same asset+direction, or creates a new position if none exists.
+  // The returned metadata tells the live relay whether to fire a
+  // `new_trade` (isNewPosition) or `position_closed` (wasClosed) SSE event.
+
+  async groupNewFill(
+    walletAddress: string,
+    fillId: string,
+  ): Promise<{ positionId: string; isNewPosition: boolean; wasClosed: boolean } | null> {
+    const fill = await prisma.trade.findUnique({ where: { id: fillId } });
+    if (!fill || fill.walletAddress !== walletAddress) return null;
+
+    const raw = parseFillRaw(fill.rawData);
+    const orderId = raw.order_id;
+    const clientOrderId = raw.client_order_id;
+
+    // 1. Find an existing open position on same asset+direction (most recent first).
+    const existing = await prisma.position.findFirst({
+      where: {
+        walletAddress,
+        asset: fill.asset,
+        direction: fill.direction,
+        status: 'open',
+      },
+      orderBy: { firstEntryTime: 'desc' },
+      include: { orderGroups: { include: { trades: true } } },
+    });
+
+    let positionId: string;
+    let isNewPosition: boolean;
+
+    if (existing) {
+      positionId = existing.id;
+      isNewPosition = false;
+
+      // Look for an orderGroup in the position that shares this fill's
+      // order_id or client_order_id — Pacifica partial fills all carry
+      // the same order_id so they collapse into one orderGroup.
+      let targetOg: string | null = null;
+      for (const og of existing.orderGroups) {
+        for (const t of og.trades) {
+          const r = parseFillRaw(t.rawData);
+          if (orderId != null && r.order_id === orderId) {
+            targetOg = og.id;
+            break;
+          }
+          if (clientOrderId && r.client_order_id === clientOrderId) {
+            targetOg = og.id;
+            break;
+          }
+        }
+        if (targetOg) break;
+      }
+
+      if (!targetOg) {
+        const created = await prisma.orderGroup.create({
+          data: {
+            walletAddress,
+            asset: fill.asset,
+            direction: fill.direction,
+            status: 'closed',
+            ruleSource: 'live-incremental',
+            tradeType: 'single',
+            confidence: 0.9,
+            positionId,
+          },
+        });
+        targetOg = created.id;
+      }
+
+      await prisma.trade.update({
+        where: { id: fill.id },
+        data: { orderGroupId: targetOg },
+      });
+
+      await this.recomputeOrderGroup(targetOg);
+      await this.recomputePosition(positionId);
+    } else {
+      isNewPosition = true;
+
+      const journal = await ensureDefaultJournal(walletAddress);
+
+      const position = await prisma.position.create({
+        data: {
+          walletAddress,
+          journalId: journal.id,
+          asset: fill.asset,
+          direction: fill.direction,
+          status: 'open',
+          tradeType: 'directional',
+          confidence: 0.85,
+        },
+      });
+      positionId = position.id;
+
+      const og = await prisma.orderGroup.create({
+        data: {
+          walletAddress,
+          asset: fill.asset,
+          direction: fill.direction,
+          status: 'closed',
+          ruleSource: 'live-incremental',
+          tradeType: 'single',
+          confidence: 0.9,
+          positionId,
+        },
+      });
+
+      await prisma.trade.update({
+        where: { id: fill.id },
+        data: { orderGroupId: og.id },
+      });
+
+      await this.recomputeOrderGroup(og.id);
+      await this.recomputePosition(positionId);
+
+      // Apply auto-filters in case a journal rule matches this new position.
+      await this.applyAutoFilters(walletAddress);
+    }
+
+    // Re-read position to see if recompute flipped it to closed.
+    const after = await prisma.position.findUnique({ where: { id: positionId } });
+    const wasClosed = after?.status === 'closed';
+
+    return { positionId, isNewPosition, wasClosed };
+  }
+
   // ─── Recompute aggregates ───────────────────────────────────────────────
 
   private async recomputeOrderGroup(orderGroupId: string) {
@@ -708,4 +841,9 @@ function weightedAvg(items: { price: number; size: number }[]): number {
   const totalSize = items.reduce((s, i) => s + i.size, 0);
   if (totalSize === 0) return 0;
   return items.reduce((s, i) => s + i.price * i.size, 0) / totalSize;
+}
+
+function parseFillRaw(raw: string | null): ParsedRawData {
+  if (!raw) return {};
+  try { return JSON.parse(raw) as ParsedRawData; } catch { return {}; }
 }
