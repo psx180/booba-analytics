@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <circle cx="50" cy="50" r="48" fill="#1e293b" stroke="#f97316" stroke-width="2"/>
+  <!-- Worried eyebrows -->
+  <path d="M 28 35 Q 35 32 42 36" stroke="#94a3b8" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <path d="M 58 36 Q 65 32 72 35" stroke="#94a3b8" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <!-- Nervous eyes -->
+  <ellipse cx="35" cy="45" rx="6" ry="6" fill="#e2e8f0"/>
+  <ellipse cx="65" cy="45" rx="6" ry="6" fill="#e2e8f0"/>
+  <circle cx="35" cy="46" r="3.5" fill="#1e40af"/>
+  <circle cx="65" cy="46" r="3.5" fill="#1e40af"/>
+  <circle cx="36" cy="44" r="1.5" fill="#fff"/>
+  <circle cx="66" cy="44" r="1.5" fill="#fff"/>
+  <!-- Sweat drop -->
+  <path d="M 74 40 Q 77 35 80 40 Q 80 45 74 40" fill="#60a5fa" opacity="0.8"/>
+  <!-- Wavy nervous mouth -->
+  <path d="M 36 65 Q 41 61 46 65 Q 51 69 56 65 Q 61 61 64 65" stroke="#94a3b8" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+</svg>
