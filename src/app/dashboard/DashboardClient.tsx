@@ -125,6 +125,36 @@ interface Insight {
   isSignificant?: boolean;
 }
 
+// ── Module-level dashboard cache ─────────────────────────────────────────────
+// Persists across React component mounts within the same browser session.
+// Key: `${journalId}|${regime ?? ''}` — isolated per journal and regime filter.
+
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+interface DashboardCacheEntry {
+  timestamp: number;
+  performance: PerformanceData | null;
+  equityCurve: EquityPoint[];
+  tradeMetas: TradeMeta[];
+  insights: Insight[];
+  lastComputedAt: string | null;
+  eloResult: EloResult | null;
+  entropyResult: EntropyResult | null;
+  equityConsistency: number | null;
+  xpnlSummary: XpnlSummary | null;
+  wartResult: WartResult | null;
+  untaggedPositionCount: number;
+  underwaterSeries: UnderwaterPoint[];
+  drawdownStats: {
+    maxDrawdown: number;
+    maxDrawdownPct: number;
+    currentDrawdown: number;
+    currentDrawdownPct: number;
+  } | null;
+}
+
+const dashboardCache = new Map<string, DashboardCacheEntry>();
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const REGIME_BADGE: Record<string, { label: string; bg: string; text: string }> = {
@@ -251,12 +281,11 @@ export default function DashboardClient() {
     currentDrawdownPct: number;
   } | null>(null);
 
-  const fetchData = useCallback(
-    async (regime: string | null) => {
-      setLoading(true);
+  // doFetch — raw network fetch + state apply. isBackground=true skips the loading spinner.
+  const doFetch = useCallback(
+    async (regime: string | null, isBackground = false) => {
+      const cacheKey = `${journalId}|${regime ?? ''}`;
       try {
-        // buildParams returns journalId already; we just tack on per-call
-        // extras (regime, groupBy, withXpnl). Wallet comes from the auth token.
         const params = buildParams(regime ? { regime } : undefined);
         const equityParams = buildParams({
           ...(regime ? { regime } : {}),
@@ -278,43 +307,90 @@ export default function DashboardClient() {
           untaggedRes.json() as Promise<{ count: number }>,
         ]);
 
-        setPerformance(summaryData.data ?? null);
-        setEloResult(summaryData.eloResult ?? null);
-        setEntropyResult(summaryData.entropyResult ?? null);
-        setEquityConsistency(summaryData.equityCurveConsistency ?? null);
-        setXpnlSummary(equityData.xpnl ?? summaryData.xpnlResult ?? null);
-        setWartResult(summaryData.wartResult ?? null);
-        setEquityCurve(
-          (equityData.series ?? []).map((p) => ({
+        const entry: DashboardCacheEntry = {
+          timestamp: Date.now(),
+          performance: summaryData.data ?? null,
+          eloResult: summaryData.eloResult ?? null,
+          entropyResult: summaryData.entropyResult ?? null,
+          equityConsistency: summaryData.equityCurveConsistency ?? null,
+          xpnlSummary: equityData.xpnl ?? summaryData.xpnlResult ?? null,
+          wartResult: summaryData.wartResult ?? null,
+          equityCurve: (equityData.series ?? []).map((p) => ({
             date: p.date,
             cumulativePnl: p.cumulativePnl,
           })),
-        );
-        setTradeMetas(
-          (equityData.series ?? []).map((p) => ({
+          tradeMetas: (equityData.series ?? []).map((p) => ({
             date: p.date,
             regimeAtEntry: p.regime,
           })),
-        );
-        setUnderwaterSeries(equityData.data?.underwaterSeries ?? []);
-        if (equityData.data?.maxDrawdown != null) {
-          setDrawdownStats({
-            maxDrawdown:        equityData.data.maxDrawdown,
-            maxDrawdownPct:     equityData.data.maxDrawdownPct ?? 0,
-            currentDrawdown:    equityData.data.currentDrawdown ?? 0,
-            currentDrawdownPct: equityData.data.currentDrawdownPct ?? 0,
-          });
-        } else {
-          setDrawdownStats(null);
-        }
-        setInsights(insightsData.insights ?? []);
-        setLastComputedAt(insightsData.lastComputedAt ?? null);
-        setUntaggedPositionCount(untaggedData.count ?? 0);
+          underwaterSeries: equityData.data?.underwaterSeries ?? [],
+          drawdownStats: equityData.data?.maxDrawdown != null
+            ? {
+                maxDrawdown:        equityData.data.maxDrawdown,
+                maxDrawdownPct:     equityData.data.maxDrawdownPct ?? 0,
+                currentDrawdown:    equityData.data.currentDrawdown ?? 0,
+                currentDrawdownPct: equityData.data.currentDrawdownPct ?? 0,
+              }
+            : null,
+          insights: insightsData.insights ?? [],
+          lastComputedAt: insightsData.lastComputedAt ?? null,
+          untaggedPositionCount: untaggedData.count ?? 0,
+        };
+
+        dashboardCache.set(cacheKey, entry);
+
+        setPerformance(entry.performance);
+        setEloResult(entry.eloResult);
+        setEntropyResult(entry.entropyResult);
+        setEquityConsistency(entry.equityConsistency);
+        setXpnlSummary(entry.xpnlSummary);
+        setWartResult(entry.wartResult);
+        setEquityCurve(entry.equityCurve);
+        setTradeMetas(entry.tradeMetas);
+        setUnderwaterSeries(entry.underwaterSeries);
+        setDrawdownStats(entry.drawdownStats);
+        setInsights(entry.insights);
+        setLastComputedAt(entry.lastComputedAt);
+        setUntaggedPositionCount(entry.untaggedPositionCount);
       } finally {
-        setLoading(false);
+        if (!isBackground) setLoading(false);
       }
     },
-    [buildParams, authFetch],
+    [journalId, buildParams, authFetch],
+  );
+
+  // fetchData — cache-aware wrapper around doFetch.
+  // On cache hit: populates state immediately, then refreshes in the background.
+  // On cache miss: shows loading spinner, fetches, caches result.
+  const fetchData = useCallback(
+    async (regime: string | null) => {
+      const cacheKey = `${journalId}|${regime ?? ''}`;
+      const cached = dashboardCache.get(cacheKey);
+
+      if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+        setPerformance(cached.performance);
+        setEloResult(cached.eloResult);
+        setEntropyResult(cached.entropyResult);
+        setEquityConsistency(cached.equityConsistency);
+        setXpnlSummary(cached.xpnlSummary);
+        setWartResult(cached.wartResult);
+        setEquityCurve(cached.equityCurve);
+        setTradeMetas(cached.tradeMetas);
+        setUnderwaterSeries(cached.underwaterSeries);
+        setDrawdownStats(cached.drawdownStats);
+        setInsights(cached.insights);
+        setLastComputedAt(cached.lastComputedAt);
+        setUntaggedPositionCount(cached.untaggedPositionCount);
+        setLoading(false);
+        // Background refresh — no spinner, silently updates state when done
+        doFetch(regime, true).catch(console.error);
+        return;
+      }
+
+      setLoading(true);
+      await doFetch(regime, false);
+    },
+    [journalId, doFetch],
   );
 
   useEffect(() => {
@@ -375,11 +451,14 @@ export default function DashboardClient() {
     }
   };
 
-  // After a successful import, refreshing data re-loads the dashboard
-  // which will now show charts instead of the onboarding screen.
+  // After a successful import, clear the cache so the dashboard always fetches
+  // fresh data (the import just added new trades, so cached data is stale).
   const handleFinishOnboarding = () => {
     setImportDone(false);
     setImportSummary(null);
+    dashboardCache.forEach((_, key) => {
+      if (key.startsWith(`${journalId}|`)) dashboardCache.delete(key);
+    });
     fetchData(null);
   };
 
