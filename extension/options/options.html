@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Booba Settings</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <div class="options">
+
+    <header class="options__header">
+      <img src="../assets/booba-calm.svg" alt="Booba" class="options__logo" />
+      <div>
+        <h1 class="options__title">Booba Settings</h1>
+        <p class="options__subtitle">Trading Copilot for Pacifica</p>
+      </div>
+    </header>
+
+    <form id="options-form" class="options__form">
+
+      <div class="options__field">
+        <label class="options__label" for="web-app-url">Web App URL</label>
+        <input
+          type="url"
+          id="web-app-url"
+          class="options__input"
+          placeholder="http://localhost:3000"
+          value="http://localhost:3000"
+        />
+        <p class="options__hint">The base URL of your Booba web app (e.g. https://app.booba.xyz)</p>
+      </div>
+
+      <div class="options__field">
+        <div class="options__toggle-row">
+          <label class="options__label" for="show-booba">Show Booba on Pacifica</label>
+          <label class="options__switch">
+            <input type="checkbox" id="show-booba" checked />
+            <span class="options__switch-slider"></span>
+          </label>
+        </div>
+        <p class="options__hint">Display the floating Booba avatar on app.pacifica.fi</p>
+      </div>
+
+      <div class="options__field">
+        <label class="options__label">Booba Size</label>
+        <div class="options__radio-group">
+          <label class="options__radio">
+            <input type="radio" name="booba-size" value="40" /> Small (40px)
+          </label>
+          <label class="options__radio">
+            <input type="radio" name="booba-size" value="50" checked /> Medium (50px)
+          </label>
+          <label class="options__radio">
+            <input type="radio" name="booba-size" value="60" /> Large (60px)
+          </label>
+        </div>
+      </div>
+
+      <div class="options__field">
+        <label class="options__label">Position</label>
+        <div class="options__radio-group">
+          <label class="options__radio">
+            <input type="radio" name="position" value="bottom-right" checked /> Bottom-right
+          </label>
+          <label class="options__radio">
+            <input type="radio" name="position" value="bottom-left" /> Bottom-left
+          </label>
+        </div>
+      </div>
+
+      <div class="options__actions">
+        <button type="submit" class="options__btn options__btn--primary">Save Settings</button>
+        <span id="save-status" class="options__save-status" hidden>Saved!</span>
+      </div>
+
+    </form>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>

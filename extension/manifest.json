@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Booba — Trading Copilot for Pacifica",
+  "version": "0.1.0",
+  "description": "AI-powered trading journal and copilot for Pacifica DEX",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": ["https://app.pacifica.fi/*", "https://*.pacifica.fi/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://app.pacifica.fi/*", "https://*.pacifica.fi/*"],
+      "js": ["content/content.js", "content/booba-float.js"],
+      "css": ["content/content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "assets/icon-16.png",
+      "48": "assets/icon-48.png",
+      "128": "assets/icon-128.png"
+    }
+  },
+  "options_page": "options/options.html",
+  "icons": {
+    "16": "assets/icon-16.png",
+    "48": "assets/icon-48.png",
+    "128": "assets/icon-128.png"
+  }
+}
