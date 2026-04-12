@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { resolveJournalFilterId } from '@/lib/journals';
 import { parseFilters } from '../_filters';
+import { withAuth } from '@/lib/api-auth';
 
 /**
  * GET /api/analytics/positions
@@ -14,11 +15,8 @@ import { parseFilters } from '../_filters';
  * When ?journalId= is omitted we fall back to the wallet's default journal.
  */
 export async function GET(req: NextRequest) {
+  return withAuth(req, async (walletAddress) => {
   const sp = req.nextUrl.searchParams;
-  const walletAddress = sp.get('walletAddress');
-  if (!walletAddress) {
-    return NextResponse.json({ error: 'walletAddress required' }, { status: 400 });
-  }
 
   const journalRes = await resolveJournalFilterId(walletAddress, sp.get('journalId'));
   if (!journalRes.valid) {
@@ -62,4 +60,5 @@ export async function GET(req: NextRequest) {
   });
 
   return NextResponse.json({ positions, count: positions.length });
+  });
 }

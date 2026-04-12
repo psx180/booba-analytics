@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import EquityCurve, { EquityPoint, TradeMeta, REGIME_LABELS } from './EquityCurve';
 import UnderwaterCurve, { UnderwaterPoint } from './UnderwaterCurve';
 import { useJournal } from '../JournalContext';
+import { useAuthFetch } from '@/lib/api-client';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -349,11 +350,13 @@ function RegimeRow({ regime, stats }: { regime: string; stats: PerformanceData }
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
-export default function DashboardClient({ walletAddress }: { walletAddress: string }) {
-  // Active journal id flows in from JournalContext. Every API call appends
-  // it via buildParams so the dashboard renders journal-scoped analytics.
-  // Switching journal triggers fetchData (journalId is in the dep list).
+export default function DashboardClient() {
+  // Active wallet + journal id flow in from JournalContext (the wallet is
+  // sourced from Privy or the dev bypass — never from URL params). Every
+  // API call appends them via buildParams so the dashboard renders
+  // journal-scoped analytics. Switching journal triggers fetchData.
   const { journalId, buildParams } = useJournal();
+  const authFetch = useAuthFetch();
   const [performance, setPerformance] = useState<PerformanceData | null>(null);
   const [equityCurve, setEquityCurve] = useState<EquityPoint[]>([]);
   const [tradeMetas, setTradeMetas] = useState<TradeMeta[]>([]);
@@ -363,6 +366,11 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
   const [loading, setLoading] = useState(true);
   const [computing, setComputing] = useState(false);
   const [computeResult, setComputeResult] = useState<string | null>(null);
+  // Onboarding state — tracks the first-time import flow.
+  const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState<string | null>(null);
+  const [importDone, setImportDone] = useState(false);
+  const [importSummary, setImportSummary] = useState<string | null>(null);
   // Advanced analytics
   const [eloResult, setEloResult] = useState<EloResult | null>(null);
   const [entropyResult, setEntropyResult] = useState<EntropyResult | null>(null);
@@ -382,8 +390,8 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
     async (regime: string | null) => {
       setLoading(true);
       try {
-        // buildParams returns walletAddress + journalId already; we just
-        // tack on per-call extras (regime, groupBy, withXpnl).
+        // buildParams returns journalId already; we just tack on per-call
+        // extras (regime, groupBy, withXpnl). Wallet comes from the auth token.
         const params = buildParams(regime ? { regime } : undefined);
         const breakdownParams = buildParams({ groupBy: 'regime' });
         const equityParams = buildParams({
@@ -393,10 +401,10 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
         const insightsParams = buildParams();
 
         const [summaryRes, equityRes, breakdownRes, insightsRes] = await Promise.all([
-          fetch(`/api/analytics/summary?${params}`),
-          fetch(`/api/analytics/equity-curve?${equityParams}`),
-          fetch(`/api/analytics/breakdown?${breakdownParams}`),
-          fetch(`/api/analytics/insights?${insightsParams}`),
+          authFetch(`/api/analytics/summary?${params}`),
+          authFetch(`/api/analytics/equity-curve?${equityParams}`),
+          authFetch(`/api/analytics/breakdown?${breakdownParams}`),
+          authFetch(`/api/analytics/insights?${insightsParams}`),
         ]);
 
         const [summaryData, equityData, breakdownData, insightsData] = await Promise.all([
@@ -441,7 +449,7 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
         setLoading(false);
       }
     },
-    [walletAddress, buildParams],
+    [buildParams, authFetch],
   );
 
   useEffect(() => {
@@ -461,12 +469,12 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
     setComputing(true);
     setComputeResult(null);
     try {
-      const res = await fetch('/api/analytics/metrics/compute', {
+      const res = await authFetch('/api/analytics/metrics/compute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         // journalId scopes both metric writes and insight detection to the
         // active journal — sibling journals stay untouched.
-        body: JSON.stringify({ walletAddress, journalId }),
+        body: JSON.stringify({ journalId }),
       });
       const data = await res.json();
       const metricsCount = data.metrics?.computed ?? 0;
@@ -482,9 +490,110 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
 
   const hasData = performance && performance.tradeCount > 0;
 
+  // ── Onboarding import handler ───────────────────────────────────────────
+  const handleImport = async () => {
+    setImporting(true);
+    setImportProgress('Fetching trades from Pacifica…');
+    setImportDone(false);
+    setImportSummary(null);
+    try {
+      const res = await authFetch('/api/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ regimes: true }),
+      });
+      const data = await res.json();
+      const summary = data.summary;
+      const steps = data.steps;
+
+      const totalFills = summary?.totalFills ?? 0;
+      const totalPositions = summary?.totalPositions ?? 0;
+
+      // Build a human-readable summary from the steps
+      const parts: string[] = [];
+      if (totalFills > 0) parts.push(`Fetched ${totalFills} fills from Pacifica`);
+      if (steps?.trades?.upserted > 0) parts.push(`Imported ${steps.trades.upserted} trades`);
+      if (totalPositions > 0) parts.push(`Grouped into ${totalPositions} positions`);
+      if (steps?.regimes?.tagged > 0) parts.push(`Tagged ${steps.regimes.tagged} trades with market regime`);
+
+      setImportSummary(
+        parts.length > 0
+          ? parts.join('. ') + '.'
+          : summary?.message ?? 'Import complete.',
+      );
+      setImportDone(true);
+      setImportProgress(null);
+    } catch {
+      setImportSummary('Import failed — check server logs.');
+      setImportDone(true);
+      setImportProgress(null);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  // After a successful import, refreshing data re-loads the dashboard
+  // which will now show charts instead of the onboarding screen.
+  const handleFinishOnboarding = () => {
+    setImportDone(false);
+    setImportSummary(null);
+    fetchData(null);
+  };
+
   const regimeRows = Object.entries(regimeBreakdown)
     .filter(([, stats]) => stats.tradeCount > 0)
     .sort(([a], [b]) => a.localeCompare(b));
+
+  // ── Onboarding screen (first-time user, no data) ──────────────────────
+  if (!loading && !hasData && !importDone) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
+        <h1 className="text-3xl font-bold text-white tracking-wider mb-2">Welcome to Booba!</h1>
+        <p className="text-sm text-[#8b949e] max-w-md mb-8">
+          Let's import your Pacifica trading history. We'll fetch your fills, group them into positions, and tag market regimes automatically.
+        </p>
+
+        {importProgress && (
+          <div className="mb-6 flex items-center gap-3 text-sm text-[#8b949e]">
+            <span className="inline-block w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+            {importProgress}
+          </div>
+        )}
+
+        {!importing && (
+          <button
+            onClick={handleImport}
+            className="px-6 py-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium text-sm transition-colors"
+          >
+            Import Trades
+          </button>
+        )}
+
+        <p className="text-xs text-[#6e7681] mt-6 max-w-xs">
+          This may take up to 30 seconds depending on your trade history. Read-only — Booba only reads your public trade data.
+        </p>
+      </div>
+    );
+  }
+
+  // ── Import complete screen ────────────────────────────────────────────
+  if (importDone && importSummary) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
+        <div className="w-12 h-12 rounded-full bg-emerald-900/30 flex items-center justify-center mb-4">
+          <span className="text-emerald-400 text-xl">&#10003;</span>
+        </div>
+        <h2 className="text-xl font-semibold text-white mb-2">Import Complete</h2>
+        <p className="text-sm text-[#8b949e] max-w-md mb-8">{importSummary}</p>
+        <button
+          onClick={handleFinishOnboarding}
+          className="px-6 py-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium text-sm transition-colors"
+        >
+          Go to Dashboard
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

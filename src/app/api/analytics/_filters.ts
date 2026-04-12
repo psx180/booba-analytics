@@ -39,11 +39,3 @@ export function parseFilters(sp: URLSearchParams): Filters {
 
   return filters;
 }
-
-export function requireWallet(sp: URLSearchParams): string | Response {
-  const walletAddress = sp.get('walletAddress');
-  if (!walletAddress) {
-    return Response.json({ error: 'walletAddress required' }, { status: 400 });
-  }
-  return walletAddress;
-}

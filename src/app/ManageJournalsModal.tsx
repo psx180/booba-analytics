@@ -17,6 +17,7 @@
 
 import { useState, useEffect } from 'react';
 import { useJournal } from './JournalContext';
+import { useAuthFetch } from '@/lib/api-client';
 
 const REGIMES = [
   { value: 'trending_low_vol',  label: 'Trending' },
@@ -41,7 +42,8 @@ interface AssignFilter {
 }
 
 export default function ManageJournalsModal({ onClose }: { onClose: () => void }) {
-  const { walletAddress, journals, refresh, setJournalId } = useJournal();
+  const { journals, refresh, setJournalId } = useJournal();
+  const authFetch = useAuthFetch();
 
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
@@ -63,11 +65,10 @@ export default function ManageJournalsModal({ onClose }: { onClose: () => void }
     setWorking(true);
     resetMessages();
     try {
-      const res = await fetch('/api/journals', {
+      const res = await authFetch('/api/journals', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          walletAddress,
           name: newName.trim(),
           description: newDescription.trim() || null,
         }),
@@ -97,7 +98,7 @@ export default function ManageJournalsModal({ onClose }: { onClose: () => void }
     setWorking(true);
     resetMessages();
     try {
-      const res = await fetch(`/api/journals/${id}`, {
+      const res = await authFetch(`/api/journals/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: editName.trim() }),
@@ -121,7 +122,7 @@ export default function ManageJournalsModal({ onClose }: { onClose: () => void }
     setWorking(true);
     resetMessages();
     try {
-      const res = await fetch(`/api/journals/${id}`, { method: 'DELETE' });
+      const res = await authFetch(`/api/journals/${id}`, { method: 'DELETE' });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data?.error ?? 'Delete failed');
@@ -139,7 +140,7 @@ export default function ManageJournalsModal({ onClose }: { onClose: () => void }
     setWorking(true);
     resetMessages();
     try {
-      const res = await fetch(`/api/journals/${id}/assign`, {
+      const res = await authFetch(`/api/journals/${id}/assign`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ filter }),
@@ -332,7 +333,6 @@ export default function ManageJournalsModal({ onClose }: { onClose: () => void }
                 {/* Assign sub-form */}
                 {assignFor === j.id && (
                   <AssignTradesForm
-                    walletAddress={walletAddress}
                     onCancel={() => setAssignFor(null)}
                     onSubmit={(f) => handleAssign(j.id, f)}
                     working={working}
@@ -367,16 +367,15 @@ interface FilterOptions {
 }
 
 function AssignTradesForm({
-  walletAddress,
   onCancel,
   onSubmit,
   working,
 }: {
-  walletAddress: string;
   onCancel: () => void;
   onSubmit: (filter: AssignFilter) => void;
   working: boolean;
 }) {
+  const authFetch = useAuthFetch();
   const [asset, setAsset] = useState('');
   const [subaccount, setSubaccount] = useState('');
   const [tradeType, setTradeType] = useState('');
@@ -388,13 +387,13 @@ function AssignTradesForm({
   });
 
   useEffect(() => {
-    fetch(`/api/journals/filter-options?walletAddress=${encodeURIComponent(walletAddress)}`)
+    authFetch('/api/journals/filter-options')
       .then((r) => r.json())
       .then((data) => {
         if (data && !data.error) setOptions(data);
       })
       .catch(() => {});
-  }, [walletAddress]);
+  }, [authFetch]);
 
   const submit = () => {
     const filter: AssignFilter = {};

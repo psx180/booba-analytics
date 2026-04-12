@@ -9,3 +9,5 @@ dev.db
 *.md
 .next
 
+.env.local
+

@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from 'react';
 import type { AnalyticsFilters } from './types';
 import { EMPTY_FILTERS, ALL_REGIMES, REGIME_LABELS, TRADE_TYPES, buildParams } from './types';
 import { useJournal } from '../JournalContext';
+import { useAuthFetch } from '@/lib/api-client';
 import CalendarHeatmap from './CalendarHeatmap';
 import TimeAnalysis from './TimeAnalysis';
 import ExitAnalysis from './ExitAnalysis';
@@ -170,10 +171,13 @@ function Section({
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-export default function AnalyticsClient({ walletAddress }: { walletAddress: string }) {
-  // Active journal scope. Re-fetch every section when journalId changes so
-  // switching journals refreshes the entire analytics page in one pass.
+export default function AnalyticsClient() {
+  // Active wallet + journal scope from JournalContext (wallet sourced from
+  // Privy or dev bypass — see AppShell). Re-fetch every section when
+  // journalId changes so switching journals refreshes the entire analytics
+  // page in one pass.
   const { journalId } = useJournal();
+  const authFetch = useAuthFetch();
 
   const [filters, setFilters] = useState<AnalyticsFilters>(EMPTY_FILTERS);
   const [assetOptions, setAssetOptions] = useState<string[]>([]);
@@ -187,8 +191,8 @@ export default function AnalyticsClient({ walletAddress }: { walletAddress: stri
   // Populate asset options from trade-units (same wallet + journal)
   useEffect(() => {
     if (!journalId) return;
-    const p = new URLSearchParams({ walletAddress, journalId, pageSize: '500' });
-    fetch(`/api/trade-units?${p}`)
+    const p = new URLSearchParams({ journalId, pageSize: '500' });
+    authFetch(`/api/trade-units?${p}`)
       .then((r) => r.json())
       .then((d) => {
         const assets = [
@@ -199,35 +203,34 @@ export default function AnalyticsClient({ walletAddress }: { walletAddress: stri
         setAssetOptions(assets);
       })
       .catch(() => {});
-  }, [walletAddress, journalId]);
+  }, [journalId, authFetch]);
 
   // Load insights when journal or wallet changes
   useEffect(() => {
     if (!journalId) return;
-    const p = new URLSearchParams({ walletAddress, journalId });
-    fetch(`/api/analytics/insights?${p}`)
+    const p = new URLSearchParams({ journalId });
+    authFetch(`/api/analytics/insights?${p}`)
       .then((r) => r.json())
       .then((d) => setInsights(d.insights ?? []))
       .catch(() => {});
-  }, [walletAddress, journalId]);
+  }, [journalId, authFetch]);
 
   // Load the WART summary so the trader profile section has data to render.
   // Re-fetch when filters or journal change so the radar reflects the
   // currently active slice.
   useEffect(() => {
     if (!journalId) return;
-    const params = buildParams(walletAddress, filters);
-    params.set('journalId', journalId);
-    fetch(`/api/analytics/summary?${params}`)
+    const params = buildParams(filters, journalId);
+    authFetch(`/api/analytics/summary?${params}`)
       .then((r) => r.json())
       .then((d) => setWartResult(d.wartResult ?? null))
       .catch(() => {});
-  }, [walletAddress, filters, journalId]);
+  }, [filters, journalId, authFetch]);
 
   const hasFilters = Object.values(filters).some(Boolean);
   // Pass journalId down to every chart subcomponent so they can include it
   // in their own fetches without each one having to re-pull the context.
-  const chartProps = { walletAddress, filters, journalId: journalId ?? undefined };
+  const chartProps = { filters, journalId: journalId ?? undefined };
 
   // Pull the combinatorial-search insight out of the generic insight stream;
   // it gets its own dedicated Edge Finder section below.
@@ -358,7 +361,7 @@ export default function AnalyticsClient({ walletAddress }: { walletAddress: stri
         subtitle="Clusters, anomalies, and serial-dependence discovered by ML over your trade history."
         defaultOpen={false}
       >
-        <PatternsSection walletAddress={walletAddress} />
+        <PatternsSection />
       </Section>
 
       {/* ── Edge Finder (combinatorial significance search) ────────────── */}

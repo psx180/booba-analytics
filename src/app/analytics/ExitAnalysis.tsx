@@ -7,6 +7,7 @@ import {
 } from 'recharts';
 import type { AnalyticsChartProps, PositionData } from './types';
 import { buildParams, TOOLTIP_STYLE } from './types';
+import { useAuthFetch } from '@/lib/api-client';
 
 const EFF_BUCKETS = [
   { label: '<0%',     min: -Infinity, max: 0 },
@@ -76,17 +77,18 @@ const axisProps = {
   tickLine: false,
 };
 
-export default function ExitAnalysis({ walletAddress, filters, journalId }: AnalyticsChartProps) {
+export default function ExitAnalysis({ filters, journalId }: AnalyticsChartProps) {
+  const authFetch = useAuthFetch();
   const [positions, setPositions] = useState<PositionData[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/analytics/positions?${buildParams(walletAddress, filters, journalId)}`)
+    authFetch(`/api/analytics/positions?${buildParams(filters, journalId)}`)
       .then((r) => r.json())
       .then((d) => setPositions(d.positions ?? []))
       .finally(() => setLoading(false));
-  }, [walletAddress, filters, journalId]);
+  }, [filters, journalId, authFetch]);
 
   if (loading) {
     return (

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAnalyticsService } from '@/services/analytics';
 import { resolveJournalFilterId } from '@/lib/journals';
 import { parseFilters } from '../_filters';
+import { withAuth } from '@/lib/api-auth';
 
 const VALID_DIMENSIONS = new Set([
   'regime',
@@ -17,11 +18,8 @@ const VALID_DIMENSIONS = new Set([
 ]);
 
 export async function GET(req: NextRequest) {
+  return withAuth(req, async (walletAddress) => {
   const sp = req.nextUrl.searchParams;
-  const walletAddress = sp.get('walletAddress');
-  if (!walletAddress) {
-    return NextResponse.json({ error: 'walletAddress required' }, { status: 400 });
-  }
 
   const groupBy = sp.get('groupBy') ?? 'regime';
   if (!VALID_DIMENSIONS.has(groupBy)) {
@@ -46,4 +44,5 @@ export async function GET(req: NextRequest) {
     { groupBy },
   );
   return NextResponse.json(result);
+  });
 }

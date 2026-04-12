@@ -1,14 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { Prisma } from '../../../../generated/prisma/client';
+import { withAuth } from '@/lib/api-auth';
 
 export async function GET(req: NextRequest) {
+  return withAuth(req, async (walletAddress) => {
   const sp = req.nextUrl.searchParams;
-
-  const walletAddress = sp.get('walletAddress');
-  if (!walletAddress) {
-    return NextResponse.json({ error: 'walletAddress required' }, { status: 400 });
-  }
 
   // Filters
   const regime = sp.get('regime');
@@ -64,5 +61,6 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     trades,
     pagination: { total, page, pageSize, totalPages: Math.ceil(total / pageSize) },
+  });
   });
 }

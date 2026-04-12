@@ -7,6 +7,7 @@ import {
 } from 'recharts';
 import type { AnalyticsChartProps, PerformanceStats } from './types';
 import { buildParams, TOOLTIP_STYLE } from './types';
+import { useAuthFetch } from '@/lib/api-client';
 
 type Breakdown = Record<string, PerformanceStats>;
 
@@ -75,14 +76,15 @@ function generateSummary(hourData: ReturnType<typeof buildHourData>, dowData: Re
   return parts.join(' ');
 }
 
-export default function TimeAnalysis({ walletAddress, filters, journalId }: AnalyticsChartProps) {
+export default function TimeAnalysis({ filters, journalId }: AnalyticsChartProps) {
+  const authFetch = useAuthFetch();
   const [hourBreakdown, setHourBreakdown] = useState<Breakdown>({});
   const [dowBreakdown, setDowBreakdown] = useState<Breakdown>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    const base = buildParams(walletAddress, filters, journalId);
+    const base = buildParams(filters, journalId);
 
     const hourP = new URLSearchParams(base);
     hourP.set('groupBy', 'entryHour');
@@ -90,15 +92,15 @@ export default function TimeAnalysis({ walletAddress, filters, journalId }: Anal
     dowP.set('groupBy', 'entryDayOfWeek');
 
     Promise.all([
-      fetch(`/api/analytics/breakdown?${hourP}`).then((r) => r.json()),
-      fetch(`/api/analytics/breakdown?${dowP}`).then((r) => r.json()),
+      authFetch(`/api/analytics/breakdown?${hourP}`).then((r) => r.json()),
+      authFetch(`/api/analytics/breakdown?${dowP}`).then((r) => r.json()),
     ])
       .then(([hourRes, dowRes]) => {
         setHourBreakdown(hourRes.breakdowns?.entryHour ?? {});
         setDowBreakdown(dowRes.breakdowns?.entryDayOfWeek ?? {});
       })
       .finally(() => setLoading(false));
-  }, [walletAddress, filters, journalId]);
+  }, [filters, journalId, authFetch]);
 
   if (loading) {
     return (

@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import type { AnalyticsChartProps, PositionData, PerformanceStats } from './types';
 import { buildParams, computeStats, REGIME_LABELS } from './types';
+import { useAuthFetch } from '@/lib/api-client';
 
 interface Scenario {
   id: string;
@@ -83,18 +84,19 @@ function DeltaCell({ actual, whatIf, field, isPercent, higherBetter = true }: {
   );
 }
 
-export default function WhatIfExplorer({ walletAddress, filters, journalId }: AnalyticsChartProps) {
+export default function WhatIfExplorer({ filters, journalId }: AnalyticsChartProps) {
+  const authFetch = useAuthFetch();
   const [positions, setPositions] = useState<PositionData[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/analytics/positions?${buildParams(walletAddress, filters, journalId)}`)
+    authFetch(`/api/analytics/positions?${buildParams(filters, journalId)}`)
       .then((r) => r.json())
       .then((d) => setPositions(d.positions ?? []))
       .finally(() => setLoading(false));
-  }, [walletAddress, filters, journalId]);
+  }, [filters, journalId, authFetch]);
 
   const actual = useMemo(() => computeStats(positions), [positions]);
 

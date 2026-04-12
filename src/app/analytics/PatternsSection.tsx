@@ -23,6 +23,7 @@ import {
 import TradeDetailModal from '../trades/TradeDetailModal';
 import { TOOLTIP_STYLE } from './types';
 import { useJournal } from '../JournalContext';
+import { useAuthFetch } from '@/lib/api-client';
 
 // ── Types (mirror server output) ──────────────────────────────────────────
 
@@ -124,9 +125,10 @@ const CLUSTER_COLORS = [
 
 // ── Main component ────────────────────────────────────────────────────────
 
-export default function PatternsSection({ walletAddress }: { walletAddress: string }) {
+export default function PatternsSection() {
   // ML cache is stored per-journal — re-fetch when the active journal switches.
   const { journalId } = useJournal();
+  const authFetch = useAuthFetch();
   const [data, setData] = useState<MlAnalyticsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [openPositionId, setOpenPositionId] = useState<string | null>(null);
@@ -134,13 +136,13 @@ export default function PatternsSection({ walletAddress }: { walletAddress: stri
   useEffect(() => {
     if (!journalId) return;
     setLoading(true);
-    const p = new URLSearchParams({ walletAddress, journalId });
-    fetch(`/api/analytics/ml?${p}`)
+    const p = new URLSearchParams({ journalId });
+    authFetch(`/api/analytics/ml?${p}`)
       .then((r) => r.json())
       .then((d) => setData(d))
       .catch(() => setData(null))
       .finally(() => setLoading(false));
-  }, [walletAddress, journalId]);
+  }, [journalId, authFetch]);
 
   const handleCloseModal = useCallback(() => setOpenPositionId(null), []);
 
@@ -172,7 +174,6 @@ export default function PatternsSection({ walletAddress }: { walletAddress: stri
       {openPositionId && (
         <TradeDetailModal
           positionId={openPositionId}
-          walletAddress={walletAddress}
           onClose={handleCloseModal}
         />
       )}

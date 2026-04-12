@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAnalyticsService, type Filters } from '@/services/analytics';
 import { resolveJournalFilterId } from '@/lib/journals';
 import { parseFilters } from '../_filters';
+import { withAuth } from '@/lib/api-auth';
 
 /**
  * What-if aggregation.
@@ -15,11 +16,8 @@ import { parseFilters } from '../_filters';
  */
 
 export async function GET(req: NextRequest) {
+  return withAuth(req, async (walletAddress) => {
   const sp = req.nextUrl.searchParams;
-  const walletAddress = sp.get('walletAddress');
-  if (!walletAddress) {
-    return NextResponse.json({ error: 'walletAddress required' }, { status: 400 });
-  }
 
   const hypoticalParams = sp.getAll('hypotheticalFilter');
   if (hypoticalParams.length === 0) {
@@ -46,6 +44,7 @@ export async function GET(req: NextRequest) {
     { hypotheticalFilter },
   );
   return NextResponse.json(result);
+  });
 }
 
 function parseHypothetical(params: string[]): Filters {

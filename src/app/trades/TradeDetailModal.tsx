@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
+import { useAuthFetch } from '@/lib/api-client';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -146,15 +147,16 @@ function typeBadgeClass(type: string | null) {
 // ── Fills sub-panel ────────────────────────────────────────────────────────────
 
 function FillsSubPanel({ orderGroupId }: { orderGroupId: string }) {
+  const authFetch = useAuthFetch();
   const [fills, setFills] = useState<Fill[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`/api/orders/${orderGroupId}/fills`)
+    authFetch(`/api/orders/${orderGroupId}/fills`)
       .then((r) => r.json())
       .then((d) => setFills(d.fills ?? []))
       .finally(() => setLoading(false));
-  }, [orderGroupId]);
+  }, [orderGroupId, authFetch]);
 
   if (loading) {
     return <div className="px-4 py-1 text-xs text-[#6e7681]">Loading fills...</div>;
@@ -229,7 +231,6 @@ function ConvictionStars({
 
 interface TradeDetailModalProps {
   positionId: string;
-  walletAddress: string;
   onClose: () => void;
 }
 
@@ -242,7 +243,8 @@ interface CandidatePosition {
   lastExitTime: string | null;
 }
 
-export default function TradeDetailModal({ positionId, walletAddress, onClose }: TradeDetailModalProps) {
+export default function TradeDetailModal({ positionId, onClose }: TradeDetailModalProps) {
+  const authFetch = useAuthFetch();
   const [position, setPosition] = useState<PositionDetail | null>(null);
   const [orders, setOrders] = useState<OrderGroup[]>([]);
   const [insights, setInsights] = useState<Insight[]>([]);
@@ -279,9 +281,9 @@ export default function TradeDetailModal({ positionId, walletAddress, onClose }:
     setFetchDone(false);
 
     Promise.all([
-      fetch(`/api/positions/${positionId}`, { signal: controller.signal }).then((r) => r.json()),
-      fetch(`/api/positions/${positionId}/orders`, { signal: controller.signal }).then((r) => r.json()),
-      fetch(`/api/analytics/insights?walletAddress=${walletAddress}`, { signal: controller.signal }).then((r) => r.json()),
+      authFetch(`/api/positions/${positionId}`, { signal: controller.signal }).then((r) => r.json()),
+      authFetch(`/api/positions/${positionId}/orders`, { signal: controller.signal }).then((r) => r.json()),
+      authFetch('/api/analytics/insights', { signal: controller.signal }).then((r) => r.json()),
     ])
       .then(([posData, ordersData, insightData]) => {
         const pos: PositionDetail = posData.position;
@@ -302,14 +304,14 @@ export default function TradeDetailModal({ positionId, walletAddress, onClose }:
       .finally(() => setLoading(false));
 
     return () => controller.abort();
-  }, [positionId, walletAddress]);
+  }, [positionId, authFetch]);
 
   const loadCandidates = useCallback(async () => {
     if (!position) return;
     setLoadingCandidates(true);
     try {
-      const res = await fetch(
-        `/api/trade-units?walletAddress=${encodeURIComponent(walletAddress)}&asset=${encodeURIComponent(position.asset)}&pageSize=100`,
+      const res = await authFetch(
+        `/api/trade-units?asset=${encodeURIComponent(position.asset)}&pageSize=100`,
       );
       const data = await res.json();
       const list: CandidatePosition[] = (data.tradeUnits ?? [])
@@ -326,11 +328,11 @@ export default function TradeDetailModal({ positionId, walletAddress, onClose }:
     } finally {
       setLoadingCandidates(false);
     }
-  }, [position, walletAddress, positionId]);
+  }, [position, positionId, authFetch]);
 
   const handleMoveOrder = useCallback(async (orderGroupId: string, targetPositionId: string) => {
     try {
-      await fetch(`/api/orders/${orderGroupId}/move`, {
+      await authFetch(`/api/orders/${orderGroupId}/move`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ targetPositionId }),
@@ -339,8 +341,8 @@ export default function TradeDetailModal({ positionId, walletAddress, onClose }:
 
       // Check if source position still exists
       const [posRes, ordersRes] = await Promise.all([
-        fetch(`/api/positions/${positionId}`),
-        fetch(`/api/positions/${positionId}/orders`),
+        authFetch(`/api/positions/${positionId}`),
+        authFetch(`/api/positions/${positionId}/orders`),
       ]);
       const posData = await posRes.json();
       if (posData.error || !posData.position) {
@@ -363,7 +365,7 @@ export default function TradeDetailModal({ positionId, walletAddress, onClose }:
   }>) => {
     setSaving(true);
     try {
-      await fetch(`/api/positions/${positionId}`, {
+      await authFetch(`/api/positions/${positionId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(patch),
@@ -371,7 +373,7 @@ export default function TradeDetailModal({ positionId, walletAddress, onClose }:
     } finally {
       setSaving(false);
     }
-  }, [positionId]);
+  }, [positionId, authFetch]);
 
   const handleOverlayClick = (e: React.MouseEvent) => {
     if (e.target === overlayRef.current) onClose();

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { resolveJournalFilterId } from '@/lib/journals';
+import { withAuth } from '@/lib/api-auth';
 
 const ALL_REGIMES = [
   'trending_low_vol',
@@ -11,19 +12,16 @@ const ALL_REGIMES = [
 ] as const;
 
 export async function GET(req: NextRequest) {
-  const sp = req.nextUrl.searchParams;
+  return withAuth(req, async (walletAddress) => {
+    const sp = req.nextUrl.searchParams;
 
-  const walletAddress = sp.get('walletAddress');
-  if (!walletAddress) {
-    return NextResponse.json({ error: 'walletAddress required' }, { status: 400 });
-  }
+    const journalRes = await resolveJournalFilterId(walletAddress, sp.get('journalId'));
+    if (!journalRes.valid) {
+      return NextResponse.json({ error: 'Journal not found for this wallet' }, { status: 404 });
+    }
 
-  const journalRes = await resolveJournalFilterId(walletAddress, sp.get('journalId'));
-  if (!journalRes.valid) {
-    return NextResponse.json({ error: 'Journal not found for this wallet' }, { status: 404 });
-  }
-
-  return computeFromPositions(walletAddress, journalRes.id);
+    return computeFromPositions(walletAddress, journalRes.id);
+  });
 }
 
 async function computeFromPositions(walletAddress: string, journalId: string | null) {
@@ -104,5 +102,5 @@ function formatResult(byRegime: Record<string, RegimeBucket>) {
       : stats.grossWins > 0 ? 999 : 0,
   }));
 
-  return Response.json({ regimes: result });
+  return NextResponse.json({ regimes: result });
 }

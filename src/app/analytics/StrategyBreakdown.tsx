@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import type { AnalyticsChartProps, PositionData } from './types';
 import { buildParams, ALL_REGIMES, REGIME_LABELS, REGIME_COLORS, computeStats } from './types';
+import { useAuthFetch } from '@/lib/api-client';
 
 function fmtHoldTime(s: number): string {
   if (s < 60) return `${s}s`;
@@ -45,17 +46,18 @@ function StatCell({ v, isGood, neutral }: { v: React.ReactNode; isGood?: boolean
   return <td className={`py-2.5 pr-4 text-sm ${cls}`}>{v}</td>;
 }
 
-export default function StrategyBreakdown({ walletAddress, filters, journalId }: AnalyticsChartProps) {
+export default function StrategyBreakdown({ filters, journalId }: AnalyticsChartProps) {
+  const authFetch = useAuthFetch();
   const [positions, setPositions] = useState<PositionData[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/analytics/positions?${buildParams(walletAddress, filters, journalId)}`)
+    authFetch(`/api/analytics/positions?${buildParams(filters, journalId)}`)
       .then((r) => r.json())
       .then((d) => setPositions(d.positions ?? []))
       .finally(() => setLoading(false));
-  }, [walletAddress, filters, journalId]);
+  }, [filters, journalId, authFetch]);
 
   const overall = useMemo(() => computeStats(positions), [positions]);
 

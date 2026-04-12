@@ -1,16 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GroupingService } from '@/services/grouping';
+import { withAuth } from '@/lib/api-auth';
 
 export async function POST(req: NextRequest) {
-  const body = await req.json();
-  const walletAddress = body.walletAddress;
+  return withAuth(req, async (walletAddress) => {
+    const service = new GroupingService();
+    const summary = await service.groupAllFills(walletAddress);
 
-  if (!walletAddress) {
-    return NextResponse.json({ error: 'walletAddress required' }, { status: 400 });
-  }
-
-  const service = new GroupingService();
-  const summary = await service.groupAllFills(walletAddress);
-
-  return NextResponse.json(summary);
+    return NextResponse.json(summary);
+  });
 }

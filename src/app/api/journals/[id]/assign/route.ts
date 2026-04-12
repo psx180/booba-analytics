@@ -23,6 +23,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { withAuth, requireOwnedJournal } from '@/lib/api-auth';
 
 interface AssignFilter {
   asset?: string;
@@ -37,14 +38,13 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  return withAuth(req, async (walletAddress) => {
   const { id } = await params;
   const body = await req.json().catch(() => ({}));
   const filter: AssignFilter = body?.filter ?? {};
 
-  const journal = await prisma.journal.findUnique({ where: { id } });
-  if (!journal) {
-    return NextResponse.json({ error: 'Journal not found' }, { status: 404 });
-  }
+  const owned = await requireOwnedJournal(walletAddress, id);
+  if (!owned.ok) return owned.response;
 
   // No filter = no-op rather than "assign all positions to this journal";
   // the user can use the move-journal endpoint with explicit ids if they
@@ -60,7 +60,7 @@ export async function POST(
     return NextResponse.json({ error: 'filter must specify at least one dimension' }, { status: 400 });
   }
 
-  const where: Record<string, unknown> = { walletAddress: journal.walletAddress };
+  const where: Record<string, unknown> = { walletAddress };
 
   if (filter.asset) where.asset = filter.asset;
   if (filter.tradeType) where.tradeType = filter.tradeType;
@@ -89,4 +89,5 @@ export async function POST(
   });
 
   return NextResponse.json({ assigned: result.count, journalId: id });
+  });
 }

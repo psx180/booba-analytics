@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { Prisma } from '../../../../../generated/prisma/client';
+import { withAuth } from '@/lib/api-auth';
 
 /**
  * GET /api/journals/filter-options?walletAddress=X
@@ -12,10 +13,7 @@ import { Prisma } from '../../../../../generated/prisma/client';
  * Uses $queryRaw for reliable DISTINCT behaviour on SQLite.
  */
 export async function GET(req: NextRequest) {
-  const walletAddress = req.nextUrl.searchParams.get('walletAddress');
-  if (!walletAddress) {
-    return NextResponse.json({ error: 'walletAddress required' }, { status: 400 });
-  }
+  return withAuth(req, async (walletAddress) => {
 
   const [assetRows, tradeTypeRows, regimeRows, subaccountRows] = await Promise.all([
     prisma.$queryRaw<{ asset: string }[]>(
@@ -46,5 +44,6 @@ export async function GET(req: NextRequest) {
     tradeTypes:  tradeTypeRows.map((r) => r.tradeType).filter(Boolean),
     regimes:     regimeRows.map((r) => r.regimeAtEntry).filter(Boolean),
     subaccounts: subaccountRows.map((r) => r.subaccount).filter(Boolean),
+  });
   });
 }

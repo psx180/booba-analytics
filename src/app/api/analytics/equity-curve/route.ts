@@ -4,13 +4,11 @@ import { computeXpnlResult } from '@/services/analytics/metrics/xpnl';
 import { prisma } from '@/lib/prisma';
 import { resolveJournalFilterId } from '@/lib/journals';
 import { parseFilters } from '../_filters';
+import { withAuth } from '@/lib/api-auth';
 
 export async function GET(req: NextRequest) {
+  return withAuth(req, async (walletAddress) => {
   const sp = req.nextUrl.searchParams;
-  const walletAddress = sp.get('walletAddress');
-  if (!walletAddress) {
-    return NextResponse.json({ error: 'walletAddress required' }, { status: 400 });
-  }
 
   const service = createAnalyticsService();
   const filters = parseFilters(sp);
@@ -45,4 +43,5 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json(result);
+  });
 }

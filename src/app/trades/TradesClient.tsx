@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
 import TradeDetailModal from './TradeDetailModal';
 import { useJournal } from '../JournalContext';
+import { useAuthFetch } from '@/lib/api-client';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -541,12 +542,13 @@ function SplitDialog({
   onConfirm: (splitTime: string) => void;
   onCancel: () => void;
 }) {
+  const authFetch = useAuthFetch();
   const [orders, setOrders] = useState<OrderGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [splitGap, setSplitGap] = useState<number | null>(null);
 
   useEffect(() => {
-    fetch(`/api/positions/${positionId}/orders`)
+    authFetch(`/api/positions/${positionId}/orders`)
       .then((r) => r.json())
       .then((d) => {
         const sorted = (d.orders ?? []).slice().sort(
@@ -556,7 +558,7 @@ function SplitDialog({
         setOrders(sorted);
       })
       .finally(() => setLoading(false));
-  }, [positionId]);
+  }, [positionId, authFetch]);
 
   const handleSplit = () => {
     if (splitGap == null || splitGap >= orders.length - 1) return;
@@ -755,15 +757,16 @@ function SortTh({
 // ── Fills panel ───────────────────────────────────────────────────────────────
 
 function FillsPanel({ orderGroupId }: { orderGroupId: string }) {
+  const authFetch = useAuthFetch();
   const [fills, setFills] = useState<Fill[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`/api/orders/${orderGroupId}/fills`)
+    authFetch(`/api/orders/${orderGroupId}/fills`)
       .then((r) => r.json())
       .then((d) => setFills(d.fills ?? []))
       .finally(() => setLoading(false));
-  }, [orderGroupId]);
+  }, [orderGroupId, authFetch]);
 
   if (loading) return <div className="px-12 py-2 text-xs text-[#6e7681]">Loading fills...</div>;
 
@@ -810,12 +813,13 @@ function FillsPanel({ orderGroupId }: { orderGroupId: string }) {
 // ── Orders panel ──────────────────────────────────────────────────────────────
 
 function OrdersPanel({ positionId }: { positionId: string }) {
+  const authFetch = useAuthFetch();
   const [orders, setOrders] = useState<OrderGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`/api/positions/${positionId}/orders`)
+    authFetch(`/api/positions/${positionId}/orders`)
       .then((r) => r.json())
       .then((d) => {
         const sorted = (d.orders ?? []).slice().sort(
@@ -825,7 +829,7 @@ function OrdersPanel({ positionId }: { positionId: string }) {
         setOrders(sorted);
       })
       .finally(() => setLoading(false));
-  }, [positionId]);
+  }, [positionId, authFetch]);
 
   if (loading) return <div className="px-8 py-3 text-xs text-[#6e7681]">Loading orders...</div>;
 
@@ -915,11 +919,14 @@ interface Filters {
 
 const EMPTY_FILTERS: Filters = { tradeType: '', asset: '', status: '' };
 
-export default function TradesClient({ walletAddress }: { walletAddress: string }) {
-  // Active journal scope. Every API call routes through buildParams so the
-  // table, summary stats, grouping output, and analytics fetches all stay
-  // bound to the same journal.
+export default function TradesClient() {
+  // Active wallet + journal scope, both sourced from JournalContext. Every
+  // API call routes through buildParams so the table, summary stats,
+  // grouping output, and analytics fetches all stay bound to the same
+  // journal — and the wallet itself is the Privy-authenticated one (or
+  // the dev wallet in dev-bypass mode).
   const { journalId, journals, buildParams, refresh: refreshJournals } = useJournal();
+  const authFetch = useAuthFetch();
   const [tradeUnits, setTradeUnits] = useState<TradeUnit[]>([]);
   const [pagination, setPagination] = useState<Pagination | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -959,8 +966,8 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
       const summaryParams = buildParams();
 
       const [unitsRes, summaryRes] = await Promise.all([
-        fetch(`/api/trade-units?${p}`),
-        fetch(`/api/analytics/summary?${summaryParams}`),
+        authFetch(`/api/trade-units?${p}`),
+        authFetch(`/api/analytics/summary?${summaryParams}`),
       ]);
       const [unitsData, summaryData] = await Promise.all([
         unitsRes.json(),
@@ -982,7 +989,7 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
     } finally {
       setLoading(false);
     }
-  }, [walletAddress, sortBy, sortDir, page, filters, buildParams]);
+  }, [sortBy, sortDir, page, filters, buildParams, authFetch]);
 
   useEffect(() => {
     if (!journalId) return;
@@ -999,10 +1006,10 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
     setGroupingRunning(true);
     setGroupingSummary(null);
     try {
-      const res = await fetch('/api/grouping/run', {
+      const res = await authFetch('/api/grouping/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ walletAddress }),
+        body: JSON.stringify({}),
       });
       const data = await res.json();
       setGroupingSummary(data);
@@ -1051,7 +1058,7 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
   const handleMerge = useCallback(async () => {
     const ids = [...selectedIds];
     try {
-      const res = await fetch('/api/positions/merge', {
+      const res = await authFetch('/api/positions/merge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ positionIds: ids }),
@@ -1065,7 +1072,7 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
 
       const { undoData } = data;
       showToast(`Merged ${ids.length} positions.`, async () => {
-        await fetch('/api/positions/merge/undo', {
+        await authFetch('/api/positions/merge/undo', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ undoData }),
@@ -1082,7 +1089,7 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
     const ids = [...selectedIds].filter((id) => tradeUnits.find((u) => u.id === id)?.kind === 'position');
     if (ids.length < 2) return;
     try {
-      const res = await fetch('/api/positions/link', {
+      const res = await authFetch('/api/positions/link', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ positionIds: ids, strategyType }),
@@ -1097,7 +1104,7 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
         `Linked ${ids.length} positions as ${strategyType.replace(/_/g, ' ')}.`,
         linkedId
           ? async () => {
-              await fetch(`/api/linked-strategies/${linkedId}`, { method: 'DELETE' });
+              await authFetch(`/api/linked-strategies/${linkedId}`, { method: 'DELETE' });
               setAnalyticsStale(true);
               await fetchData();
             }
@@ -1111,7 +1118,7 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
   const handleSplit = useCallback(async (splitTime: string) => {
     const positionId = splitPositionId!;
     try {
-      const res = await fetch('/api/positions/split', {
+      const res = await authFetch('/api/positions/split', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ positionId, splitTime }),
@@ -1126,7 +1133,7 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
 
       showToast('Split into 2 positions.', async () => {
         if (pos1 && pos2) {
-          await fetch('/api/positions/merge', {
+          await authFetch('/api/positions/merge', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ positionIds: [pos1.id, pos2.id] }),
@@ -1142,7 +1149,7 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
 
   const handleReclassify = useCallback(async (positionId: string, tradeType: string) => {
     try {
-      await fetch(`/api/positions/${positionId}`, {
+      await authFetch(`/api/positions/${positionId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tradeType }),
@@ -1154,44 +1161,44 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
     } catch (err) {
       console.error('Reclassify failed', err);
     }
-  }, [clearSelection, fetchData, flashRows]);
+  }, [clearSelection, fetchData, flashRows, authFetch]);
 
   const handleDelete = useCallback(async (positionId: string) => {
     if (!confirm('Delete this position? Its orders will become ungrouped.')) return;
     try {
-      await fetch(`/api/positions/${positionId}`, { method: 'DELETE' });
+      await authFetch(`/api/positions/${positionId}`, { method: 'DELETE' });
       setAnalyticsStale(true);
       await fetchData();
     } catch (err) {
       console.error('Delete failed', err);
     }
-  }, [fetchData]);
+  }, [fetchData, authFetch]);
 
   const handleUnlink = useCallback(async (strategyId: string) => {
     if (!confirm('Remove strategy link? Individual positions will remain.')) return;
     try {
-      await fetch(`/api/linked-strategies/${strategyId}`, { method: 'DELETE' });
+      await authFetch(`/api/linked-strategies/${strategyId}`, { method: 'DELETE' });
       setAnalyticsStale(true);
       await fetchData();
     } catch (err) {
       console.error('Unlink failed', err);
     }
-  }, [fetchData]);
+  }, [fetchData, authFetch]);
 
   const handleComputeAnalytics = useCallback(async () => {
     setComputingAnalytics(true);
     try {
-      await fetch('/api/analytics/metrics/compute', {
+      await authFetch('/api/analytics/metrics/compute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ walletAddress, journalId }),
+        body: JSON.stringify({ journalId }),
       });
       setAnalyticsStale(false);
       await fetchData();
     } finally {
       setComputingAnalytics(false);
     }
-  }, [walletAddress, journalId, fetchData]);
+  }, [journalId, fetchData, authFetch]);
 
   // ── Move position(s) to a different journal ───────────────────────────────
   // Used by both the per-row three-dot menu (single id) and the floating
@@ -1201,7 +1208,7 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
     async (positionIds: string[], targetJournalId: string) => {
       if (positionIds.length === 0) return;
       try {
-        const res = await fetch('/api/positions/move-journal', {
+        const res = await authFetch('/api/positions/move-journal', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ positionIds, targetJournalId }),
@@ -1247,7 +1254,6 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
       {detailPositionId && (
         <TradeDetailModal
           positionId={detailPositionId}
-          walletAddress={walletAddress}
           onClose={() => setDetailPositionId(null)}
         />
       )}

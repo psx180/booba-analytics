@@ -17,7 +17,6 @@ export const EMPTY_FILTERS: AnalyticsFilters = {
 };
 
 export interface AnalyticsChartProps {
-  walletAddress: string;
   filters: AnalyticsFilters;
   /**
    * Active journal id from JournalContext. Optional in the type so legacy
@@ -28,11 +27,10 @@ export interface AnalyticsChartProps {
 }
 
 export function buildParams(
-  walletAddress: string,
   filters: AnalyticsFilters,
   journalId?: string,
 ): URLSearchParams {
-  const p = new URLSearchParams({ walletAddress });
+  const p = new URLSearchParams();
   if (journalId) p.set('journalId', journalId);
   if (filters.regime) p.set('regime', filters.regime);
   if (filters.tradeType) p.set('tradeType', filters.tradeType);

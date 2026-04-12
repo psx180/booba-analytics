@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { withAuth, requireOwnedPosition } from '@/lib/api-auth';
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  return withAuth(req, async (walletAddress) => {
   const { id } = await params;
+
+  const owned = await requireOwnedPosition(walletAddress, id);
+  if (!owned.ok) return owned.response;
 
   const position = await prisma.position.findUnique({
     where: { id },
@@ -67,4 +72,5 @@ export async function GET(
   });
 
   return NextResponse.json({ orders: augmented });
+  });
 }

@@ -1,14 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GroupingService } from '@/services/grouping';
+import { withAuth, requireOwnedLinkedStrategy } from '@/lib/api-auth';
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const { id } = await params;
+  return withAuth(req, async (walletAddress) => {
+    const { id } = await params;
 
-  const service = new GroupingService();
-  await service.unlinkStrategy(id);
+    const owned = await requireOwnedLinkedStrategy(walletAddress, id);
+    if (!owned.ok) return owned.response;
 
-  return NextResponse.json({ success: true });
+    const service = new GroupingService();
+    await service.unlinkStrategy(id);
+
+    return NextResponse.json({ success: true });
+  });
 }

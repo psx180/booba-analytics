@@ -24,6 +24,7 @@ import {
   useMemo,
   useState,
 } from 'react';
+import { useAuthFetch } from '@/lib/api-client';
 
 export interface JournalSummary {
   id: string;
@@ -47,8 +48,8 @@ export interface JournalContextValue {
   /** Re-fetch the journal list. Call after create/delete/rename/assign. */
   refresh: () => Promise<void>;
   /**
-   * Helper that returns a fresh URLSearchParams seeded with walletAddress
-   * and the current journalId — saves every API caller from re-stringing it.
+   * Helper that returns a fresh URLSearchParams seeded with the current
+   * journalId — saves every API caller from re-stringing it.
    * Pass extra params via the `extra` arg to merge them in.
    */
   buildParams: (extra?: Record<string, string | number | boolean | undefined | null>) => URLSearchParams;
@@ -67,6 +68,7 @@ export function JournalProvider({
   walletAddress: string;
   children: React.ReactNode;
 }) {
+  const authFetch = useAuthFetch();
   const [journals, setJournals] = useState<JournalSummary[]>([]);
   const [journalId, setJournalIdState] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -74,7 +76,7 @@ export function JournalProvider({
   const fetchJournals = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/journals?walletAddress=${walletAddress}`);
+      const res = await authFetch('/api/journals');
       const data = await res.json();
       const list: JournalSummary[] = data.journals ?? [];
       setJournals(list);
@@ -99,7 +101,7 @@ export function JournalProvider({
     } finally {
       setLoading(false);
     }
-  }, [walletAddress]);
+  }, [walletAddress, authFetch]);
 
   useEffect(() => {
     void fetchJournals();
@@ -119,7 +121,7 @@ export function JournalProvider({
 
   const buildParams = useCallback(
     (extra?: Record<string, string | number | boolean | undefined | null>) => {
-      const p = new URLSearchParams({ walletAddress });
+      const p = new URLSearchParams();
       if (journalId) p.set('journalId', journalId);
       if (extra) {
         for (const [k, v] of Object.entries(extra)) {
@@ -129,7 +131,7 @@ export function JournalProvider({
       }
       return p;
     },
-    [walletAddress, journalId],
+    [journalId],
   );
 
   const value = useMemo<JournalContextValue>(

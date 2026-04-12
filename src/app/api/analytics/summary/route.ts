@@ -2,13 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAnalyticsService } from '@/services/analytics';
 import { resolveJournalFilterId } from '@/lib/journals';
 import { parseFilters } from '../_filters';
+import { withAuth } from '@/lib/api-auth';
 
 export async function GET(req: NextRequest) {
+  return withAuth(req, async (walletAddress) => {
   const sp = req.nextUrl.searchParams;
-  const walletAddress = sp.get('walletAddress');
-  if (!walletAddress) {
-    return NextResponse.json({ error: 'walletAddress required' }, { status: 400 });
-  }
 
   const service = createAnalyticsService();
   const filters = parseFilters(sp);
@@ -34,5 +32,6 @@ export async function GET(req: NextRequest) {
     xpnlResult:             summary.xpnl,
     equityCurveConsistency: summary.equityCurveConsistency,
     wartResult:             summary.wartResult,
+  });
   });
 }

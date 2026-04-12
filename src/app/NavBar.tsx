@@ -1,7 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import { usePrivy, useLogout } from '@privy-io/react-auth';
+import { useJournal } from './JournalContext';
+import { isDevBypass } from './privy-env';
 import JournalSelector from './JournalSelector';
 
 const tabs = [
@@ -11,6 +14,11 @@ const tabs = [
   { href: '#', label: 'Auctions', disabled: true },
   { href: '#', label: 'Settings', disabled: true },
 ];
+
+function truncate(addr: string): string {
+  if (addr.length <= 10) return addr;
+  return `${addr.slice(0, 4)}…${addr.slice(-4)}`;
+}
 
 export default function NavBar() {
   const pathname = usePathname();
@@ -43,13 +51,69 @@ export default function NavBar() {
               </Link>
             );
           })}
-          {/* Journal selector lives at the right edge so it stays out of
-              the way of the nav links but is always visible on every page. */}
-          <div className="ml-auto">
+          {/* Right edge: journal selector + wallet badge. JournalSelector
+              stays nearest the tabs; wallet badge is the rightmost element
+              so it never moves when the journal name length changes. */}
+          <div className="ml-auto flex items-center gap-3">
             <JournalSelector />
+            <WalletBadge />
           </div>
         </div>
       </div>
     </nav>
+  );
+}
+
+// ── Wallet badge ────────────────────────────────────────────────────────────
+
+/**
+ * Shows the connected wallet (truncated 4+4) and a disconnect button. In
+ * dev-bypass mode the disconnect button is hidden — there's no Privy
+ * session to log out of, and "logging out" of the dev wallet would just
+ * log right back in via AppShell.
+ */
+function WalletBadge() {
+  const { walletAddress } = useJournal();
+
+  if (isDevBypass()) {
+    return (
+      <span
+        className="flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium bg-[#21262d] border border-[#30363d] text-[#e6edf3]"
+        title={`Dev wallet: ${walletAddress}`}
+      >
+        <span className="text-[#6e7681] uppercase tracking-widest text-[9px]">Dev</span>
+        <span className="text-white font-mono">{truncate(walletAddress)}</span>
+      </span>
+    );
+  }
+
+  return <PrivyWalletBadge walletAddress={walletAddress} />;
+}
+
+function PrivyWalletBadge({ walletAddress }: { walletAddress: string }) {
+  const router = useRouter();
+  const { ready } = usePrivy();
+  const { logout } = useLogout({
+    onSuccess: () => router.replace('/connect'),
+  });
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <span
+        className="flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium bg-[#21262d] border border-[#30363d] text-[#e6edf3]"
+        title={walletAddress}
+      >
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" aria-hidden />
+        <span className="text-white font-mono">{truncate(walletAddress)}</span>
+      </span>
+      <button
+        onClick={logout}
+        disabled={!ready}
+        className="px-2 py-1.5 rounded text-xs text-[#8b949e] hover:text-white border border-[#30363d] bg-[#21262d] hover:bg-[#30363d] transition-colors disabled:opacity-40"
+        title="Disconnect wallet"
+      >
+        Disconnect
+      </button>
+    </div>
   );
 }

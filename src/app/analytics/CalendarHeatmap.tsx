@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import type { AnalyticsChartProps, PerformanceStats } from './types';
 import { buildParams } from './types';
+import { useAuthFetch } from '@/lib/api-client';
 
 type DayBreakdown = PerformanceStats;
 type DayMap = Record<string, DayBreakdown>;
@@ -58,20 +59,21 @@ interface TooltipState {
   y: number;
 }
 
-export default function CalendarHeatmap({ walletAddress, filters, journalId }: AnalyticsChartProps) {
+export default function CalendarHeatmap({ filters, journalId }: AnalyticsChartProps) {
+  const authFetch = useAuthFetch();
   const [dayMap, setDayMap] = useState<DayMap>({});
   const [loading, setLoading] = useState(true);
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
 
   useEffect(() => {
     setLoading(true);
-    const p = buildParams(walletAddress, filters, journalId);
+    const p = buildParams(filters, journalId);
     p.set('groupBy', 'date');
-    fetch(`/api/analytics/breakdown?${p}`)
+    authFetch(`/api/analytics/breakdown?${p}`)
       .then((r) => r.json())
       .then((d) => setDayMap(d.breakdowns?.date ?? {}))
       .finally(() => setLoading(false));
-  }, [walletAddress, filters, journalId]);
+  }, [filters, journalId, authFetch]);
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);

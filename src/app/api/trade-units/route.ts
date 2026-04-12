@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { resolveJournalFilterId } from '@/lib/journals';
+import { withAuth } from '@/lib/api-auth';
 
 /**
  * GET /api/trade-units
@@ -14,12 +15,8 @@ import { resolveJournalFilterId } from '@/lib/journals';
  * "follow" the journal containing at least one of their legs.
  */
 export async function GET(req: NextRequest) {
+  return withAuth(req, async (walletAddress) => {
   const sp = req.nextUrl.searchParams;
-
-  const walletAddress = sp.get('walletAddress');
-  if (!walletAddress) {
-    return NextResponse.json({ error: 'walletAddress required' }, { status: 400 });
-  }
 
   const journalRes = await resolveJournalFilterId(walletAddress, sp.get('journalId'));
   if (!journalRes.valid) {
@@ -193,5 +190,6 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     tradeUnits: paged,
     pagination: { total, page, pageSize, totalPages: Math.ceil(total / pageSize) },
+  });
   });
 }

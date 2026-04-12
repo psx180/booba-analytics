@@ -7,6 +7,7 @@ import {
 } from 'recharts';
 import type { AnalyticsChartProps, PerformanceStats } from './types';
 import { buildParams, REGIME_LABELS, REGIME_COLORS, REGIME_BADGE, TOOLTIP_STYLE } from './types';
+import { useAuthFetch } from '@/lib/api-client';
 
 type RegimeBreakdown = Record<string, PerformanceStats>;
 
@@ -43,19 +44,20 @@ const axisProps = {
   tickLine: false,
 };
 
-export default function RegimePerformance({ walletAddress, filters, journalId }: AnalyticsChartProps) {
+export default function RegimePerformance({ filters, journalId }: AnalyticsChartProps) {
+  const authFetch = useAuthFetch();
   const [breakdown, setBreakdown] = useState<RegimeBreakdown>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    const p = buildParams(walletAddress, filters, journalId);
+    const p = buildParams(filters, journalId);
     p.set('groupBy', 'regime');
-    fetch(`/api/analytics/breakdown?${p}`)
+    authFetch(`/api/analytics/breakdown?${p}`)
       .then((r) => r.json())
       .then((d) => setBreakdown(d.breakdowns?.regime ?? {}))
       .finally(() => setLoading(false));
-  }, [walletAddress, filters, journalId]);
+  }, [filters, journalId, authFetch]);
 
   if (loading) {
     return (

@@ -17,6 +17,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { resolveJournalFilterId } from '@/lib/journals';
+import { withAuth } from '@/lib/api-auth';
 import type { ClusteringResult } from '@/services/analytics/ml/clustering';
 import type { AnomalyResult } from '@/services/analytics/ml/anomaly';
 import type { MarkovResult } from '@/services/analytics/ml/markov';
@@ -36,11 +37,8 @@ const ML_MODULES = [
 ] as const;
 
 export async function GET(req: NextRequest) {
+  return withAuth(req, async (walletAddress) => {
   const sp = req.nextUrl.searchParams;
-  const walletAddress = sp.get('walletAddress');
-  if (!walletAddress) {
-    return NextResponse.json({ error: 'walletAddress required' }, { status: 400 });
-  }
 
   // ML results are cached per journal — observations were generated against
   // a specific journal's positions, so reading them with a different journal
@@ -95,4 +93,5 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json(result);
+  });
 }
