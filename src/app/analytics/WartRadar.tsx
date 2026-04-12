@@ -33,6 +33,8 @@ export interface WartResult {
 
 interface Props {
   wart: WartResult;
+  /** Render a compact radar-only view (~250px, no improvements list). */
+  compact?: boolean;
 }
 
 const AXIS_LABELS: Record<keyof WartResult['axes'], string> = {
@@ -70,7 +72,7 @@ const RadarTooltip = ({ active, payload }: any) => {
   );
 };
 
-export default function WartRadar({ wart }: Props) {
+export default function WartRadar({ wart, compact = false }: Props) {
   const data = (Object.keys(wart.axes) as (keyof WartResult['axes'])[]).map((key) => ({
     axis:    AXIS_LABELS[key],
     score:   wart.axes[key].score,
@@ -79,6 +81,32 @@ export default function WartRadar({ wart }: Props) {
 
   const stroke = radarStroke(wart.composite);
   const fill = stroke;
+
+  if (compact) {
+    return (
+      <div className="flex flex-col items-center">
+        <div className="w-full h-[220px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <RadarChart data={data} outerRadius="75%">
+              <PolarGrid stroke="#30363d" />
+              <PolarAngleAxis dataKey="axis" tick={{ fill: '#8b949e', fontSize: 10 }} />
+              <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
+              <Radar
+                name="WART"
+                dataKey="score"
+                stroke={stroke}
+                strokeWidth={2}
+                fill={fill}
+                fillOpacity={0.25}
+                isAnimationActive={false}
+              />
+              <Tooltip content={<RadarTooltip />} />
+            </RadarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6 items-start">

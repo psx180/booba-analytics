@@ -112,22 +112,6 @@ interface EquityCurveResult {
   series: EquityCurvePoint[];
 }
 
-interface BreakdownResult {
-  name: string;
-  data: { groupBy: string; groupCount: number };
-  breakdowns: Record<string, Record<string, PerformanceData>>;
-}
-
-interface StatisticalTest {
-  testName: string;
-  pValue: number;
-  effectSize: number;
-  sampleSizeA: number;
-  sampleSizeB: number;
-  isSignificant: boolean;
-  description: string;
-}
-
 interface Insight {
   module: string;
   title: string;
@@ -136,13 +120,9 @@ interface Insight {
   confidence: number;
   suggestion?: string;
   data: Record<string, any>;
-  regimeBreakdown?: Record<string, any>;
-  // Statistical fields
-  statistics?: StatisticalTest[];
   impactScore?: number;
   category?: string;
   isSignificant?: boolean;
-  sampleSize?: number;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -162,12 +142,6 @@ const FILTER_REGIMES = [
   { key: 'ranging_high_vol',  label: 'Ranging ↑Vol' },
   { key: 'transitional',      label: 'Transitional' },
 ];
-
-const SEVERITY_STYLE: Record<Insight['severity'], { border: string; badge: string; badgeText: string }> = {
-  info:     { border: 'border-blue-500/30',  badge: 'bg-blue-500/15',   badgeText: 'text-blue-300'   },
-  warning:  { border: 'border-amber-500/40', badge: 'bg-amber-500/15',  badgeText: 'text-amber-300'  },
-  critical: { border: 'border-red-500/40',   badge: 'bg-red-500/15',    badgeText: 'text-red-300'    },
-};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -238,119 +212,6 @@ function StatCard({ label, value, sub }: { label: string; value: React.ReactNode
   );
 }
 
-const CATEGORY_LABEL: Record<string, string> = {
-  exit:      'Exit',
-  entry:     'Entry',
-  behavior:  'Behavior',
-  strategy:  'Strategy',
-  risk:      'Risk',
-  timing:    'Timing',
-  pacifica:  'Pacifica',
-};
-
-// ── Insight Card ─────────────────────────────────────────────────────────────
-
-function InsightCard({ insight }: { insight: Insight }) {
-  const style       = SEVERITY_STYLE[insight.severity];
-  const isSignif    = insight.isSignificant ?? false;
-  const primaryTest = insight.statistics?.[0];
-  const pValue      = primaryTest?.pValue;
-  const pStr        = pValue != null
-    ? (pValue < 0.001 ? 'p<0.001' : `p=${pValue.toFixed(3)}`)
-    : null;
-  // Guard: only show green badge when the displayed p-value also supports significance.
-  // Prevents "Significant · p=0.391" when one backing test passed but statistics[0] didn't.
-  const showSignificant = isSignif && (pValue == null || pValue < 0.05);
-
-  return (
-    <div
-      className={`bg-[#161b22] border rounded-lg p-4 transition-opacity ${style.border} ${
-        isSignif ? '' : 'opacity-60'
-      }`}
-    >
-      {/* Header row */}
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="text-sm font-semibold text-white">{insight.title}</div>
-          {insight.category && (
-            <span className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-widest font-medium bg-[#21262d] text-[#6e7681]">
-              {CATEGORY_LABEL[insight.category] ?? insight.category}
-            </span>
-          )}
-        </div>
-        <span
-          className={`shrink-0 px-2 py-0.5 rounded text-[10px] uppercase tracking-widest font-medium ${style.badge} ${style.badgeText}`}
-        >
-          {insight.severity}
-        </span>
-      </div>
-
-      {/* Significance + sample size badges */}
-      <div className="flex items-center gap-2 mb-2 flex-wrap">
-        {showSignificant ? (
-          <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-green-900/30 text-green-400">
-            Significant{pStr ? ` · ${pStr}` : ''}
-          </span>
-        ) : (
-          <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-amber-900/20 text-amber-500">
-            Preliminary{pStr ? ` · ${pStr}` : ''}
-          </span>
-        )}
-        {insight.sampleSize != null && (
-          <span className="text-[10px] text-[#6e7681]">Based on {insight.sampleSize} trades</span>
-        )}
-      </div>
-
-      <p className="text-sm text-[#8b949e] leading-relaxed">{insight.description}</p>
-
-      {insight.suggestion && (
-        <p className="text-xs text-[#6e7681] leading-relaxed mt-2 pt-2 border-t border-[#21262d]">
-          <span className="text-[#8b949e] font-medium">Suggestion: </span>
-          {insight.suggestion}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function EmptyInsightCard({ title, body }: { title: string; body: string }) {
-  return (
-    <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
-      <div className="text-xs font-semibold text-[#8b949e] mb-2 uppercase tracking-wider">
-        {title}
-      </div>
-      <p className="text-sm text-[#6e7681] leading-relaxed">{body}</p>
-    </div>
-  );
-}
-
-// ── Regime breakdown row ──────────────────────────────────────────────────────
-
-function RegimeRow({ regime, stats }: { regime: string; stats: PerformanceData }) {
-  if (stats.tradeCount === 0) return null;
-  const badge = REGIME_BADGE[regime];
-  return (
-    <tr className="border-t border-[#21262d] text-sm">
-      <td className="py-2 pr-4">
-        {badge ? (
-          <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${badge.bg} ${badge.text}`}>
-            {badge.label}
-          </span>
-        ) : (
-          <span className="text-[#6e7681]">{regime}</span>
-        )}
-      </td>
-      <td className="py-2 pr-4 text-[#8b949e]">{stats.tradeCount}</td>
-      <td className={`py-2 pr-4 font-medium ${pnlColor(stats.totalPnl)}`}>
-        {formatPnl(stats.totalPnl)}
-      </td>
-      <td className="py-2 pr-4 text-[#8b949e]">{formatPercent(stats.winRate)}</td>
-      <td className={`py-2 ${pnlColor(stats.expectancy)}`}>
-        {formatPnl(stats.expectancy)}
-      </td>
-    </tr>
-  );
-}
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
@@ -365,12 +226,10 @@ export default function DashboardClient() {
   const [performance, setPerformance] = useState<PerformanceData | null>(null);
   const [equityCurve, setEquityCurve] = useState<EquityPoint[]>([]);
   const [tradeMetas, setTradeMetas] = useState<TradeMeta[]>([]);
-  const [regimeBreakdown, setRegimeBreakdown] = useState<Record<string, PerformanceData>>({});
   const [insights, setInsights] = useState<Insight[]>([]);
   const [activeRegime, setActiveRegime] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [computing, setComputing] = useState(false);
-  const [computeResult, setComputeResult] = useState<string | null>(null);
+  const [lastComputedAt, setLastComputedAt] = useState<string | null>(null);
   // Onboarding state — tracks the first-time import flow.
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] = useState<string | null>(null);
@@ -399,26 +258,23 @@ export default function DashboardClient() {
         // buildParams returns journalId already; we just tack on per-call
         // extras (regime, groupBy, withXpnl). Wallet comes from the auth token.
         const params = buildParams(regime ? { regime } : undefined);
-        const breakdownParams = buildParams({ groupBy: 'regime' });
         const equityParams = buildParams({
           ...(regime ? { regime } : {}),
           withXpnl: 'true',
         });
         const insightsParams = buildParams();
 
-        const [summaryRes, equityRes, breakdownRes, insightsRes, untaggedRes] = await Promise.all([
+        const [summaryRes, equityRes, insightsRes, untaggedRes] = await Promise.all([
           authFetch(`/api/analytics/summary?${params}`),
           authFetch(`/api/analytics/equity-curve?${equityParams}`),
-          authFetch(`/api/analytics/breakdown?${breakdownParams}`),
           authFetch(`/api/analytics/insights?${insightsParams}`),
           authFetch('/api/positions/untagged-count'),
         ]);
 
-        const [summaryData, equityData, breakdownData, insightsData, untaggedData] = await Promise.all([
+        const [summaryData, equityData, insightsData, untaggedData] = await Promise.all([
           summaryRes.json() as Promise<PerformanceResult>,
           equityRes.json() as Promise<EquityCurveResult & { xpnl?: XpnlSummary }>,
-          breakdownRes.json() as Promise<BreakdownResult>,
-          insightsRes.json() as Promise<{ insights: Insight[] }>,
+          insightsRes.json() as Promise<{ insights: Insight[]; lastComputedAt?: string | null }>,
           untaggedRes.json() as Promise<{ count: number }>,
         ]);
 
@@ -451,8 +307,8 @@ export default function DashboardClient() {
         } else {
           setDrawdownStats(null);
         }
-        setRegimeBreakdown(breakdownData.breakdowns?.regime ?? {});
         setInsights(insightsData.insights ?? []);
+        setLastComputedAt(insightsData.lastComputedAt ?? null);
         setUntaggedPositionCount(untaggedData.count ?? 0);
       } finally {
         setLoading(false);
@@ -474,28 +330,6 @@ export default function DashboardClient() {
     setActiveRegime(next);
   };
 
-  const handleCompute = async () => {
-    setComputing(true);
-    setComputeResult(null);
-    try {
-      const res = await authFetch('/api/analytics/metrics/compute', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        // journalId scopes both metric writes and insight detection to the
-        // active journal — sibling journals stay untouched.
-        body: JSON.stringify({ journalId }),
-      });
-      const data = await res.json();
-      const metricsCount = data.metrics?.computed ?? 0;
-      const insightsCount = data.insights?.produced ?? 0;
-      setComputeResult(`Computed metrics for ${metricsCount} positions. Found ${insightsCount} insights.`);
-      await fetchData(activeRegime);
-    } catch {
-      setComputeResult('Compute failed — see server logs.');
-    } finally {
-      setComputing(false);
-    }
-  };
 
   const hasData = performance && performance.tradeCount > 0;
 
@@ -548,10 +382,6 @@ export default function DashboardClient() {
     setImportSummary(null);
     fetchData(null);
   };
-
-  const regimeRows = Object.entries(regimeBreakdown)
-    .filter(([, stats]) => stats.tradeCount > 0)
-    .sort(([a], [b]) => a.localeCompare(b));
 
   // ── Onboarding screen (first-time user, no data) ──────────────────────
   if (!loading && !hasData && !importDone) {
@@ -606,21 +436,9 @@ export default function DashboardClient() {
 
   return (
     <div className="space-y-6">
-      {/* ── Header / Compute button ──────────────────────────────────────── */}
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-lg font-semibold text-white">Dashboard</h1>
-          {computeResult && (
-            <p className="text-xs text-[#8b949e] mt-1">{computeResult}</p>
-          )}
-        </div>
-        <button
-          onClick={handleCompute}
-          disabled={computing}
-          className="px-3 py-1.5 rounded text-xs font-medium bg-[#21262d] hover:bg-[#30363d] text-[#8b949e] hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {computing ? 'Computing…' : 'Compute Analytics'}
-        </button>
+      {/* ── Header ───────────────────────────────────────────────────────── */}
+      <div>
+        <h1 className="text-lg font-semibold text-white">Dashboard</h1>
       </div>
 
       {/* ── Stats Bar ─────────────────────────────────────────────────────── */}
@@ -862,70 +680,6 @@ export default function DashboardClient() {
         )}
       </div>
 
-      {/* ── Insight Cards ─────────────────────────────────────────────────── */}
-      {insights.length > 0 ? (
-        <>
-          {insights.some((i) => i.isSignificant) ? null : (
-            <p className="text-xs text-[#6e7681] -mb-1">
-              We're analyzing your trading patterns. Most insights require 20+ trades with sufficient variety to detect reliable patterns. Keep trading and check back.
-            </p>
-          )}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {insights.slice(0, 5).map((insight, i) => (
-              <InsightCard key={`${insight.module}-${i}`} insight={insight} />
-            ))}
-          </div>
-          {insights.length > 5 && (
-            <div className="text-right">
-              <a
-                href="/analytics"
-                className="text-xs text-[#6e7681] hover:text-white transition-colors"
-              >
-                View all {insights.length} insights →
-              </a>
-            </div>
-          )}
-        </>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <EmptyInsightCard
-            title="No Insights Yet"
-            body="Click Compute Analytics to run the behavioral detectors. Booba needs at least 20 closed positions with MFE/MAE data before insights will appear."
-          />
-          <EmptyInsightCard
-            title="Regime Insight"
-            body="Regime-conditional performance insights will appear here once there's enough data across regimes."
-          />
-          <EmptyInsightCard
-            title="Strategy Insight"
-            body="Strategy degradation alerts will appear here once a baseline has been established."
-          />
-        </div>
-      )}
-
-      {/* ── Regime Breakdown Table ─────────────────────────────────────────── */}
-      {hasData && regimeRows.length > 0 && (
-        <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
-          <h2 className="text-sm font-semibold text-white mb-3">Performance by Regime</h2>
-          <table className="w-full text-left">
-            <thead>
-              <tr className="text-[10px] uppercase tracking-widest text-[#6e7681]">
-                <th className="pb-2 pr-4">Regime</th>
-                <th className="pb-2 pr-4">Trades</th>
-                <th className="pb-2 pr-4">P&L</th>
-                <th className="pb-2 pr-4">Win Rate</th>
-                <th className="pb-2">Expectancy</th>
-              </tr>
-            </thead>
-            <tbody>
-              {regimeRows.map(([regime, stats]) => (
-                <RegimeRow key={regime} regime={regime} stats={stats} />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
       {/* ── Booba Avatar + Chat ──────────────────────────────────────────── */}
       <BoobaChat isOpen={chatOpen} onClose={() => setChatOpen(false)} />
       <BoobaAvatar
@@ -940,6 +694,7 @@ export default function DashboardClient() {
         })}
         insight={chatOpen ? null : getContextualMessage('dashboard', {
           untaggedPositionCount,
+          lastComputedAt,
           wartResult: wartResult ?? undefined,
           tiltEpisodeCount: performance?.tiltEpisodeCount ?? undefined,
           eloResult: eloResult ?? undefined,

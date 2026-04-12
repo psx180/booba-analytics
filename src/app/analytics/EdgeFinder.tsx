@@ -155,8 +155,8 @@ export default function EdgeFinder({ result }: { result: CombinatorialSearchResu
   if (!result) {
     return (
       <div className="text-xs text-[#6e7681]">
-        No edge-finder results yet. Click <span className="text-[#8b949e]">Compute Analytics</span> to
-        run the search. Requires at least 50 closed trades.
+        No edge-finder results yet — analytics run automatically after trades are imported.
+        Requires at least 50 closed trades.
       </div>
     );
   }

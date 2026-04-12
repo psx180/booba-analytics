@@ -165,6 +165,7 @@ export function computeXpnlResult(positions: Position[]): XpnlResult {
 
 export const xpnlComputer: MetricComputer = {
   name: 'xpnl',
+  tier: 'fast',
   requiredFields: ['aggregatePnl', 'firstEntryTime'],
 
   // Per-position fallback is a no-op — xPnL only makes sense in batch.

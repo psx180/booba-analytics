@@ -4,6 +4,7 @@ import { GroupingService } from '@/services/grouping';
 import { POSITION_TYPES } from '@/services/grouping/types';
 import type { PositionType } from '@/services/grouping/types';
 import { withAuth, requireOwnedPosition } from '@/lib/api-auth';
+import { runCompute } from '@/services/compute-policy';
 
 export async function DELETE(
   req: NextRequest,
@@ -83,6 +84,10 @@ export async function PATCH(
         where: { id },
         data: updateData,
       });
+      // Fire and forget — annotations changed, re-run fast compute
+      runCompute(walletAddress, 'mutation', updated.journalId ?? undefined).catch((err) =>
+        console.error('[compute-policy] Background fast compute failed:', err),
+      );
       return NextResponse.json(updated);
     }
 

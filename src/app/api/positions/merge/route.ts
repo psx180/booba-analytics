@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GroupingService } from '@/services/grouping';
 import { withAuth, requireOwnedPositions } from '@/lib/api-auth';
+import { runCompute } from '@/services/compute-policy';
 
 export async function POST(req: NextRequest) {
   return withAuth(req, async (walletAddress) => {
@@ -16,6 +17,11 @@ export async function POST(req: NextRequest) {
 
     const service = new GroupingService();
     const { merged, undoData } = await service.mergePositions(positionIds);
+
+    // Fire and forget — don't await
+    runCompute(walletAddress, 'mutation', merged?.journalId ?? undefined).catch((err) =>
+      console.error('[compute-policy] Background fast compute failed:', err),
+    );
 
     return NextResponse.json({ merged, undoData });
   });

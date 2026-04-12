@@ -51,6 +51,11 @@ export interface MetricComputer {
   /** Position fields this computer reads (for validation / documentation). */
   requiredFields: string[];
   /**
+   * Compute tier. 'fast' = DB-resident data only (2-5s). 'slow' = requires
+   * external API calls such as candle fetching (30s+). Defaults to 'fast'.
+   */
+  tier?: 'fast' | 'slow';
+  /**
    * Compute metric key-value pairs from a single position.
    * Pure function — same input always produces same output.
    * Keys in the returned object must match Position schema field names

@@ -3,6 +3,7 @@ import { createAnalyticsService } from '@/services/analytics';
 import { resolveJournalFilterId } from '@/lib/journals';
 import { parseFilters } from '../_filters';
 import { withAuth } from '@/lib/api-auth';
+import { prisma } from '@/lib/prisma';
 
 export async function GET(req: NextRequest) {
   return withAuth(req, async (walletAddress) => {
@@ -21,17 +22,28 @@ export async function GET(req: NextRequest) {
   // to populate every stat card. The performance result keeps the legacy
   // top-level shape (`data`, `breakdowns`) the existing client expects;
   // additional results are nested under their own keys.
-  const summary = await service.getAdvancedSummary(walletAddress, filters);
+  const [summary, missingExitCount] = await Promise.all([
+    service.getAdvancedSummary(walletAddress, filters),
+    (prisma as any).position.count({
+      where: {
+        walletAddress,
+        status: 'closed',
+        mfePnl: null,
+        ...(journalRes.id ? { journalId: journalRes.id } : {}),
+      },
+    }),
+  ]);
   const performance = summary.performance;
 
   return NextResponse.json({
     ...performance,
-    eloResult:              summary.eloResult,
-    entropyResult:          summary.entropyResult,
-    xpnlLuckScore:          summary.xpnlLuckScore,
-    xpnlResult:             summary.xpnl,
-    equityCurveConsistency: summary.equityCurveConsistency,
-    wartResult:             summary.wartResult,
+    eloResult:               summary.eloResult,
+    entropyResult:           summary.entropyResult,
+    xpnlLuckScore:           summary.xpnlLuckScore,
+    xpnlResult:              summary.xpnl,
+    equityCurveConsistency:  summary.equityCurveConsistency,
+    wartResult:              summary.wartResult,
+    missingExitMetricsCount: missingExitCount as number,
   });
   });
 }

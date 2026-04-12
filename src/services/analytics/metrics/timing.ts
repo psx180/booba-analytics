@@ -15,6 +15,7 @@ const SWING_MAX_SEC = 7 * 24 * 60 * 60;
 
 export const timingComputer: MetricComputer = {
   name: 'timing',
+  tier: 'fast',
   requiredFields: ['firstEntryTime', 'holdTimeSeconds'],
 
   compute(position: Position): Record<string, number | string | null> {

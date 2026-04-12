@@ -153,7 +153,7 @@ export default function PatternsSection() {
   if (!data || (!data.clustering && !data.anomalies && !data.markov)) {
     return (
       <div className="text-xs text-[#6e7681]">
-        No ML pattern data yet. Click <span className="text-[#8b949e]">Compute Analytics</span> to run pattern discovery.
+        No ML pattern data yet — analytics run automatically after trades are imported.
         Requires at least 50 closed trades.
       </div>
     );

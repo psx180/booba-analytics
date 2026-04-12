@@ -1,5 +1,7 @@
 export interface BoobaAnalyticsData {
   untaggedPositionCount?: number;
+  /** ISO timestamp of the last analytics compute run. Used for stale-data nudge. */
+  lastComputedAt?: string | null;
   wartResult?: {
     composite: number;
     axes?: {
@@ -33,54 +35,93 @@ export function getContextualMessage(
   data: BoobaAnalyticsData,
 ): string | null {
   if (page === 'dashboard') {
-    // 0. Untagged trades — highest priority, actionable nudge
-    const untagged = data.untaggedPositionCount ?? 0;
-    if (untagged > 0) {
-      return `${untagged} new trade${untagged === 1 ? '' : 's'} have no thesis. Want to add context?`;
+    // Build two pools: analytics messages and the untagged nudge.
+    const analyticsMsgs: string[] = [];
+
+    // Stale analytics nudge
+    if (data.lastComputedAt) {
+      const ageMs = Date.now() - new Date(data.lastComputedAt).getTime();
+      const ageHours = ageMs / (1000 * 60 * 60);
+      if (ageHours > 1) {
+        const label =
+          ageHours < 2    ? 'an hour ago'
+          : ageHours < 24 ? `${Math.floor(ageHours)} hours ago`
+          : `${Math.floor(ageHours / 24)} day${Math.floor(ageHours / 24) === 1 ? '' : 's'} ago`;
+        analyticsMsgs.push(`Your analytics are from ${label}. Want me to refresh?`);
+      }
     }
 
-    // 1. WART declining (composite below 0)
+    // WART declining
     if (data.wartResult && data.wartResult.composite < 0) {
-      return 'Your WART score dropped this week. Risk management is your weakest axis.';
+      analyticsMsgs.push('Your WART score dropped this week. Risk management is your weakest axis.');
     }
 
-    // 2. Tilt episodes detected
+    // Tilt episodes
     const tiltEpisodes = data.tiltEpisodeCount ?? 0;
     if (tiltEpisodes > 0) {
-      return `I detected ${tiltEpisodes} tilt episode${tiltEpisodes === 1 ? '' : 's'}. Your behavior changes after losses.`;
+      analyticsMsgs.push(
+        `I detected ${tiltEpisodes} tilt episode${tiltEpisodes === 1 ? '' : 's'}. Your behavior changes after losses.`,
+      );
     }
 
-    // 3. Elo at new peak
+    // Elo at new peak
     if (
       data.eloResult &&
       data.eloResult.currentElo >= data.eloResult.peakElo &&
       data.eloResult.recentTrend === 'improving'
     ) {
-      return `New Elo peak! You're trading at ${data.eloResult.tier} level.`;
+      analyticsMsgs.push(`New Elo peak! You're trading at ${data.eloResult.tier} level.`);
     }
 
-    // 4. Discipline score low
+    // Discipline low
     if (data.entropyResult && data.entropyResult.compositeScore < 30) {
-      return "Your trading entropy is high — you might be scattered across too many setups.";
+      analyticsMsgs.push("Your trading entropy is high — you might be scattered across too many setups.");
     }
 
-    // 5. Significant Markov finding
+    // Significant Markov finding
     const markovInsight = data.insights?.find(
       (i) => i.module.toLowerCase().includes('markov') && i.isSignificant,
     );
     if (markovInsight) {
-      return "After a loss, you lose again 65% of the time. That's above baseline.";
+      analyticsMsgs.push("After a loss, you lose again 65% of the time. That's above baseline.");
     }
 
-    // 6. Luck score negative
+    // Luck score negative
     if (data.xpnlLuckScore !== undefined && data.xpnlLuckScore < -0.3) {
-      return "Your actual P&L is below expected — you might be running unlucky.";
+      analyticsMsgs.push("Your actual P&L is below expected — you might be running unlucky.");
     }
 
-    // 7. WART positive — positive reinforcement
+    // WART positive — positive reinforcement
     if (data.wartResult && data.wartResult.composite > 1) {
-      return "Looking at your patterns...";
+      analyticsMsgs.push("Looking at your patterns...");
     }
+
+    // Top significant insight
+    const topInsight = data.insights
+      ?.filter((i) => i.isSignificant && i.impactScore != null)
+      .sort((a, b) => (b.impactScore ?? 0) - (a.impactScore ?? 0))[0];
+    if (topInsight) {
+      analyticsMsgs.push(topInsight.description);
+    }
+
+    const untagged = data.untaggedPositionCount ?? 0;
+    const untaggedMsg =
+      untagged > 0
+        ? `${untagged} new trade${untagged === 1 ? '' : 's'} have no thesis. Want to add context?`
+        : null;
+
+    // Selection logic — rotate rather than always showing the same message
+    if (analyticsMsgs.length > 0 && untaggedMsg) {
+      // Both pools available: show untagged 30% of the time, analytics 70%
+      if (Math.random() < 0.3) return untaggedMsg;
+      return analyticsMsgs[Math.floor(Math.random() * analyticsMsgs.length)];
+    }
+
+    if (analyticsMsgs.length > 0) {
+      return analyticsMsgs[Math.floor(Math.random() * analyticsMsgs.length)];
+    }
+
+    if (untaggedMsg) return untaggedMsg;
 
     return null;
   }
@@ -90,15 +131,11 @@ export function getContextualMessage(
   }
 
   if (page === 'analytics') {
-    // Surface the top insight by impact score
     const topInsight = data.insights
       ?.filter((i) => i.isSignificant && i.impactScore != null)
       .sort((a, b) => (b.impactScore ?? 0) - (a.impactScore ?? 0))[0];
 
-    if (topInsight) {
-      return topInsight.description;
-    }
-
+    if (topInsight) return topInsight.description;
     return null;
   }
 

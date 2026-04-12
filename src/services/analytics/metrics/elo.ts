@@ -162,6 +162,7 @@ export function computeEloMap(positions: Position[]): Map<string, number> {
 
 export const eloComputer: MetricComputer = {
   name: 'elo',
+  tier: 'fast',
   requiredFields: ['aggregatePnl', 'firstEntryTime', 'regimeAtEntry', 'asset'],
 
   // Per-position fallback is a no-op — Elo only makes sense in batch.

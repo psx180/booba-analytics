@@ -402,7 +402,7 @@ export async function getInsights(
   journalId?: string,
 ): Promise<InsightSummary[]> {
   const analytics = createAnalyticsService();
-  const insights = await analytics.getStoredInsights(wallet, journalId);
+  const { insights } = await analytics.getStoredInsights(wallet, journalId);
   return insights.map((i) => ({
     module: i.module,
     title: i.title,

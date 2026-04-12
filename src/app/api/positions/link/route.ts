@@ -3,6 +3,7 @@ import { GroupingService } from '@/services/grouping';
 import { STRATEGY_TYPES } from '@/services/grouping/types';
 import type { StrategyType } from '@/services/grouping/types';
 import { withAuth, requireOwnedPositions } from '@/lib/api-auth';
+import { runCompute } from '@/services/compute-policy';
 
 export async function POST(req: NextRequest) {
   return withAuth(req, async (walletAddress) => {
@@ -25,6 +26,11 @@ export async function POST(req: NextRequest) {
 
     const service = new GroupingService();
     const linked = await service.linkPositions(positionIds, strategyType as StrategyType);
+
+    // Fire and forget — don't await
+    runCompute(walletAddress, 'mutation').catch((err) =>
+      console.error('[compute-policy] Background fast compute failed:', err),
+    );
 
     return NextResponse.json(linked);
   });

@@ -102,7 +102,7 @@ export default function ExitAnalysis({ filters, journalId }: AnalyticsChartProps
   if (withMfe.length === 0) {
     return (
       <div className="h-48 flex items-center justify-center text-[#6e7681] text-sm">
-        No MFE/MAE data yet. Click "Compute Analytics" on the dashboard to compute exit metrics.
+        No MFE/MAE data yet. Analytics run automatically — use 'Run deep analysis?' in the Exits tab if data is missing.
       </div>
     );
   }

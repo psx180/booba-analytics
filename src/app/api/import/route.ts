@@ -96,7 +96,17 @@ export async function POST(req: NextRequest) {
     const groupingSummary = await groupingService.groupAllFills(walletAddress);
     steps.grouping = groupingSummary;
 
-    // 7. Regime tagging (optional)
+    // 7. Full analytics compute (fast + slow) — awaited since user is already waiting
+    try {
+      const { runCompute } = await import('@/services/compute-policy');
+      const computeResult = await runCompute(walletAddress, 'import', journal.id);
+      steps.compute = computeResult;
+    } catch {
+      steps.compute = { error: 'Analytics compute failed — skipped' };
+    }
+
+    // 8. Regime tagging — now redundant for BTC proxy (runCompute slow tier handles it),
+    // but kept as optional override so the route stays backwards-compatible.
     if (withRegimes) {
       try {
         const { AdxAtrDetector, BinanceCandleSource, RegimeService } = await import('@/services/regime');

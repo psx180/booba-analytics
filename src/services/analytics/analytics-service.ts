@@ -80,6 +80,7 @@ export class AnalyticsService {
   async computeMetrics(
     walletAddress: string,
     journalId?: string,
+    tier?: 'fast' | 'slow',
   ): Promise<MetricComputeSummary> {
     // Journal scoping: only compute metrics for positions in the requested
     // journal. When omitted, falls back to wallet-wide for back-compat with
@@ -92,8 +93,15 @@ export class AnalyticsService {
 
     console.log(
       `[analytics] computeMetrics: ${positions.length} closed positions for ${walletAddress}` +
-      (journalId ? ` (journal=${journalId})` : ''),
+      (journalId ? ` (journal=${journalId})` : '') +
+      (tier ? ` (tier=${tier})` : ''),
     );
+
+    // When a tier is specified, only run metrics matching that tier.
+    // Untagged metrics default to 'fast'.
+    const metricsToRun = tier
+      ? this.metrics.filter((m) => (m.tier ?? 'fast') === tier)
+      : this.metrics;
 
     // Run any batch metric computers up front. The result is a per-metric map
     // from positionId → metric updates that the per-position loop merges into
@@ -102,7 +110,7 @@ export class AnalyticsService {
     // I/O (exit-quality fetches candles per asset). computeAll may return
     // either a Map or a Promise<Map>, so we await both cases.
     const batchResults = new Map<string, Map<string, Record<string, number | string | null>>>();
-    for (const metric of this.metrics) {
+    for (const metric of metricsToRun) {
       if (typeof metric.computeAll !== 'function') continue;
       try {
         const result = await metric.computeAll(positions);
@@ -119,7 +127,7 @@ export class AnalyticsService {
     for (const position of positions) {
       const updates: Record<string, any> = {};
 
-      for (const metric of this.metrics) {
+      for (const metric of metricsToRun) {
         const batchMap = batchResults.get(metric.name);
         if (batchMap) {
           // Batch metric — pull this position's precomputed values out of the map.
@@ -153,11 +161,12 @@ export class AnalyticsService {
 
     // ─── Tilt detection pass ─────────────────────────────────────────
     // Runs after standard metrics so tilt scores reflect the latest
-    // computed state. The default detector persists its output; the
-    // heuristic scorer is also run (dev comparison only — no persistence).
-    // Both passes are journal-scoped so episodes don't leak between
-    // independent journals.
+    // computed state. Skip when tier='slow' — tilt is fast-tier work
+    // already covered by the fast-tier run.
     let tiltSummary: { totalEpisodes: number; positionsAffected: number } | undefined;
+    if (tier === 'slow') {
+      return { computed, skipped, positionsSeen: positions.length };
+    }
     try {
       const tiltResult = await this.tiltService.analyzeAndPersist(walletAddress, journalId);
       tiltSummary = tiltResult.summary;
@@ -395,7 +404,7 @@ export class AnalyticsService {
   async getStoredInsights(
     walletAddress: string,
     journalId?: string,
-  ): Promise<Insight[]> {
+  ): Promise<{ insights: Insight[]; lastComputedAt: Date | null }> {
     const where: any = { walletAddress, isActive: true };
     if (journalId) where.journalId = journalId;
     const rows = await this.db.boobaObservation.findMany({
@@ -404,7 +413,9 @@ export class AnalyticsService {
     });
 
     const insights: Insight[] = [];
+    let lastComputedAt: Date | null = null;
     for (const row of rows) {
+      if (!lastComputedAt) lastComputedAt = row.createdAt;
       try {
         insights.push(JSON.parse(row.observationText));
       } catch {
@@ -416,7 +427,7 @@ export class AnalyticsService {
       if (a.isSignificant !== b.isSignificant) return a.isSignificant ? -1 : 1;
       return (b.impactScore ?? 0) - (a.impactScore ?? 0);
     });
-    return insights;
+    return { insights, lastComputedAt };
   }
 
   // ─── Internal helpers ───────────────────────────────────────────────────

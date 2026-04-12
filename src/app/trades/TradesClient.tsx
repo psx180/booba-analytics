@@ -962,9 +962,6 @@ export default function TradesClient() {
   const [detailPositionId, setDetailPositionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [assetOptions, setAssetOptions] = useState<string[]>([]);
-  const [groupingRunning, setGroupingRunning] = useState(false);
-  const [groupingSummary, setGroupingSummary] = useState<Record<string, unknown> | null>(null);
-
   // Group editing state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -972,9 +969,7 @@ export default function TradesClient() {
   const [mergeConfirm, setMergeConfirm] = useState(false);
   const [splitPositionId, setSplitPositionId] = useState<string | null>(null);
   const [reclassifyUnit, setReclassifyUnit] = useState<TradeUnit | null>(null);
-  const [analyticsStale, setAnalyticsStale] = useState(false);
   const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
-  const [computingAnalytics, setComputingAnalytics] = useState(false);
   const [annotatePositionId, setAnnotatePositionId] = useState<string | null>(null);
   const [annotateQueue, setAnnotateQueue] = useState<string[]>([]);
   const [boobaInsight, setBoobaInsight] = useState<string | null>(null);
@@ -1035,23 +1030,6 @@ export default function TradesClient() {
     else { setSortBy(field); setSortDir('desc'); }
   };
 
-  const runGrouping = async () => {
-    setGroupingRunning(true);
-    setGroupingSummary(null);
-    try {
-      const res = await authFetch('/api/grouping/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-      const data = await res.json();
-      setGroupingSummary(data);
-      setAnalyticsStale(false);
-      await fetchData();
-    } finally {
-      setGroupingRunning(false);
-    }
-  };
 
   // ── Toast helpers ───────────────────────────────────────────────────────────
 
@@ -1099,7 +1077,6 @@ export default function TradesClient() {
       const data = await res.json();
       clearSelection();
       setMergeConfirm(false);
-      setAnalyticsStale(true);
       if (data.merged?.id) flashRows([data.merged.id]);
       await fetchData();
 
@@ -1110,7 +1087,6 @@ export default function TradesClient() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ undoData }),
         });
-        setAnalyticsStale(true);
         await fetchData();
       });
     } catch (err) {
@@ -1129,7 +1105,6 @@ export default function TradesClient() {
       });
       const data = await res.json();
       clearSelection();
-      setAnalyticsStale(true);
       await fetchData();
 
       const linkedId = data.id;
@@ -1138,7 +1113,6 @@ export default function TradesClient() {
         linkedId
           ? async () => {
               await authFetch(`/api/linked-strategies/${linkedId}`, { method: 'DELETE' });
-              setAnalyticsStale(true);
               await fetchData();
             }
           : undefined,
@@ -1159,7 +1133,6 @@ export default function TradesClient() {
       const data = await res.json();
       setSplitPositionId(null);
       clearSelection();
-      setAnalyticsStale(true);
       const [pos1, pos2] = data.positions ?? [];
       if (pos1) flashRows([pos1.id, pos2?.id].filter(Boolean));
       await fetchData();
@@ -1171,7 +1144,6 @@ export default function TradesClient() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ positionIds: [pos1.id, pos2.id] }),
           });
-          setAnalyticsStale(true);
           await fetchData();
         }
       });
@@ -1200,7 +1172,6 @@ export default function TradesClient() {
     if (!confirm('Delete this position? Its orders will become ungrouped.')) return;
     try {
       await authFetch(`/api/positions/${positionId}`, { method: 'DELETE' });
-      setAnalyticsStale(true);
       await fetchData();
     } catch (err) {
       console.error('Delete failed', err);
@@ -1211,27 +1182,12 @@ export default function TradesClient() {
     if (!confirm('Remove strategy link? Individual positions will remain.')) return;
     try {
       await authFetch(`/api/linked-strategies/${strategyId}`, { method: 'DELETE' });
-      setAnalyticsStale(true);
       await fetchData();
     } catch (err) {
       console.error('Unlink failed', err);
     }
   }, [fetchData, authFetch]);
 
-  const handleComputeAnalytics = useCallback(async () => {
-    setComputingAnalytics(true);
-    try {
-      await authFetch('/api/analytics/metrics/compute', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ journalId }),
-      });
-      setAnalyticsStale(false);
-      await fetchData();
-    } finally {
-      setComputingAnalytics(false);
-    }
-  }, [journalId, fetchData, authFetch]);
 
   // ── Annotation popup helpers ────────────────────────────────────────────────
 
@@ -1286,7 +1242,6 @@ export default function TradesClient() {
         // shows (it aggregates everything), so only mark analytics stale when
         // viewing a specific sub-journal whose visible positions just changed.
         const activeIsDefault = journals.find((j) => j.id === journalId)?.isDefault ?? true;
-        if (!activeIsDefault) setAnalyticsStale(true);
         const target = journals.find((j) => j.id === targetJournalId);
         showToast(
           `Moved ${data.moved} position${data.moved === 1 ? '' : 's'} to "${target?.name ?? 'journal'}".`,
@@ -1444,22 +1399,6 @@ export default function TradesClient() {
         ))}
       </div>
 
-      {/* ── Stale Analytics Banner ─────────────────────────────────── */}
-      {analyticsStale && (
-        <div className="flex items-center justify-between bg-amber-900/20 border border-amber-500/30 rounded-lg px-4 py-2.5">
-          <span className="text-sm text-amber-300">
-            Grouping changed. Click &apos;Compute Analytics&apos; to update insights.
-          </span>
-          <button
-            onClick={handleComputeAnalytics}
-            disabled={computingAnalytics}
-            className="text-xs px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:bg-amber-900 text-white rounded transition-colors shrink-0 ml-4"
-          >
-            {computingAnalytics ? 'Computing...' : 'Compute Analytics'}
-          </button>
-        </div>
-      )}
-
       {/* ── Untagged Trades Banner ─────────────────────────────────── */}
       {!loading && untaggedCount > 0 && (
         <div className="flex items-center justify-between bg-yellow-900/20 border border-yellow-500/30 rounded-lg px-4 py-2.5">
@@ -1475,50 +1414,6 @@ export default function TradesClient() {
           </button>
         </div>
       )}
-
-      {/* ── Run Grouping ───────────────────────────────────────────── */}
-      <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-sm font-semibold text-white">Trade Grouping</h2>
-            <p className="text-xs text-[#6e7681] mt-0.5">
-              Fills → Orders → Positions. Link positions into strategies manually.
-            </p>
-          </div>
-          <button
-            onClick={runGrouping}
-            disabled={groupingRunning}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:text-blue-400 text-white text-sm font-medium rounded transition-colors"
-          >
-            {groupingRunning ? 'Running...' : 'Run Grouping'}
-          </button>
-        </div>
-
-        {groupingSummary && (
-          <div className="mt-3 pt-3 border-t border-[#21262d] text-xs text-[#8b949e] space-y-1">
-            <div>
-              <span className="text-white font-medium">{groupingSummary.totalFills as number}</span> fills →{' '}
-              <span className="text-white font-medium">{groupingSummary.totalOrders as number}</span> orders →{' '}
-              <span className="text-white font-medium">{groupingSummary.totalPositions as number}</span> positions.{' '}
-              {(groupingSummary.totalLinkedStrategies as number) > 0 && (
-                <span>
-                  <span className="text-white font-medium">{groupingSummary.totalLinkedStrategies as number}</span> linked strategies.{' '}
-                </span>
-              )}
-              <span className="text-amber-400">{groupingSummary.needsReview as number}</span> need review.
-            </div>
-            {Boolean(groupingSummary.positionsByType) && Object.keys(groupingSummary.positionsByType as object).length > 0 && (
-              <div className="flex flex-wrap gap-3">
-                {Object.entries(groupingSummary.positionsByType as Record<string, unknown>).map(([type, count]) => (
-                  <span key={type} className="text-[#6e7681]">
-                    {type.replace(/_/g, ' ')}: <span className="text-[#8b949e]">{count as number}</span>
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
 
       {/* ── Filter Bar ─────────────────────────────────────────────── */}
       <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">

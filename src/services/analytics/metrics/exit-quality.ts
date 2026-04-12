@@ -164,6 +164,7 @@ export function createExitQualityComputer(
 ): MetricComputer {
   return {
     name: 'exit-quality',
+    tier: 'slow' as const,
     requiredFields: [
       'status',
       'direction',

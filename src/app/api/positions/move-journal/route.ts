@@ -15,6 +15,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { withAuth, requireOwnedPositions, requireOwnedJournal } from '@/lib/api-auth';
+import { runCompute } from '@/services/compute-policy';
 
 export async function POST(req: NextRequest) {
   return withAuth(req, async (walletAddress) => {
@@ -39,6 +40,11 @@ export async function POST(req: NextRequest) {
       where: { id: { in: positionIds } },
       data: { journalId: targetJournalId },
     });
+
+    // Fire and forget — positions moved between journals, re-run fast compute on target
+    runCompute(walletAddress, 'mutation', targetJournalId).catch((err) =>
+      console.error('[compute-policy] Background fast compute failed:', err),
+    );
 
     return NextResponse.json({ moved: result.count, targetJournalId });
   });

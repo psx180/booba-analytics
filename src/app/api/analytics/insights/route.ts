@@ -22,8 +22,11 @@ export async function GET(req: NextRequest) {
     }
 
     const service = createAnalyticsService();
-    const insights = await service.getStoredInsights(walletAddress, journalRes.id ?? undefined);
-    return NextResponse.json({ insights });
+    const result = await service.getStoredInsights(walletAddress, journalRes.id ?? undefined);
+    return NextResponse.json({
+      insights: result.insights,
+      lastComputedAt: result.lastComputedAt?.toISOString() ?? null,
+    });
   });
 }
 
