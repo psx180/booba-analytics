@@ -75,14 +75,14 @@ function generateSummary(hourData: ReturnType<typeof buildHourData>, dowData: Re
   return parts.join(' ');
 }
 
-export default function TimeAnalysis({ walletAddress, filters }: AnalyticsChartProps) {
+export default function TimeAnalysis({ walletAddress, filters, journalId }: AnalyticsChartProps) {
   const [hourBreakdown, setHourBreakdown] = useState<Breakdown>({});
   const [dowBreakdown, setDowBreakdown] = useState<Breakdown>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    const base = buildParams(walletAddress, filters);
+    const base = buildParams(walletAddress, filters, journalId);
 
     const hourP = new URLSearchParams(base);
     hourP.set('groupBy', 'entryHour');
@@ -98,7 +98,7 @@ export default function TimeAnalysis({ walletAddress, filters }: AnalyticsChartP
         setDowBreakdown(dowRes.breakdowns?.entryDayOfWeek ?? {});
       })
       .finally(() => setLoading(false));
-  }, [walletAddress, filters]);
+  }, [walletAddress, filters, journalId]);
 
   if (loading) {
     return (

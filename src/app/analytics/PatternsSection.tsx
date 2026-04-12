@@ -22,6 +22,7 @@ import {
 } from 'recharts';
 import TradeDetailModal from '../trades/TradeDetailModal';
 import { TOOLTIP_STYLE } from './types';
+import { useJournal } from '../JournalContext';
 
 // ── Types (mirror server output) ──────────────────────────────────────────
 
@@ -124,18 +125,22 @@ const CLUSTER_COLORS = [
 // ── Main component ────────────────────────────────────────────────────────
 
 export default function PatternsSection({ walletAddress }: { walletAddress: string }) {
+  // ML cache is stored per-journal — re-fetch when the active journal switches.
+  const { journalId } = useJournal();
   const [data, setData] = useState<MlAnalyticsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [openPositionId, setOpenPositionId] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!journalId) return;
     setLoading(true);
-    fetch(`/api/analytics/ml?walletAddress=${walletAddress}`)
+    const p = new URLSearchParams({ walletAddress, journalId });
+    fetch(`/api/analytics/ml?${p}`)
       .then((r) => r.json())
       .then((d) => setData(d))
       .catch(() => setData(null))
       .finally(() => setLoading(false));
-  }, [walletAddress]);
+  }, [walletAddress, journalId]);
 
   const handleCloseModal = useCallback(() => setOpenPositionId(null), []);
 

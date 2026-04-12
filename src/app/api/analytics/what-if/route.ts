@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAnalyticsService, type Filters } from '@/services/analytics';
+import { resolveJournalId } from '@/lib/journals';
 import { parseFilters } from '../_filters';
 
 /**
@@ -30,11 +31,18 @@ export async function GET(req: NextRequest) {
 
   const hypotheticalFilter = parseHypothetical(hypoticalParams);
 
+  const journalId = await resolveJournalId(walletAddress, sp.get('journalId'));
+  if (!journalId) {
+    return NextResponse.json({ error: 'Journal not found for this wallet' }, { status: 404 });
+  }
+  const filters = parseFilters(sp);
+  filters.journalId = journalId;
+
   const service = createAnalyticsService();
   const result = await service.aggregate(
     'what-if',
     walletAddress,
-    parseFilters(sp),
+    filters,
     { hypotheticalFilter },
   );
   return NextResponse.json(result);

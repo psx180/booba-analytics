@@ -76,17 +76,17 @@ const axisProps = {
   tickLine: false,
 };
 
-export default function ExitAnalysis({ walletAddress, filters }: AnalyticsChartProps) {
+export default function ExitAnalysis({ walletAddress, filters, journalId }: AnalyticsChartProps) {
   const [positions, setPositions] = useState<PositionData[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/analytics/positions?${buildParams(walletAddress, filters)}`)
+    fetch(`/api/analytics/positions?${buildParams(walletAddress, filters, journalId)}`)
       .then((r) => r.json())
       .then((d) => setPositions(d.positions ?? []))
       .finally(() => setLoading(false));
-  }, [walletAddress, filters]);
+  }, [walletAddress, filters, journalId]);
 
   if (loading) {
     return (

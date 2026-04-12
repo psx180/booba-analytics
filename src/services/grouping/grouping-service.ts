@@ -16,6 +16,7 @@
  */
 
 import { prisma } from '../../lib/prisma';
+import { ensureDefaultJournal } from '../../lib/journals';
 import type {
   Fill,
   OrderGroupData,
@@ -136,6 +137,35 @@ export class GroupingService {
     positions: PositionData[],
     walletAddress: string,
   ): Promise<void> {
+    // ─── Snapshot existing journal assignments ──────────────────────────
+    // Regrouping deletes and rebuilds positions, so we'd lose every
+    // journalId without snapshotting first. The mapping we need is
+    // fillId → journalId — fills survive across regrouping (their
+    // orderGroupId gets nulled and re-linked, but the row itself stays),
+    // so we can rebuild new positions' journal assignments by majority
+    // vote over their constituent fills.
+    const existingPositions = await prisma.position.findMany({
+      where: { walletAddress },
+      select: {
+        id: true,
+        journalId: true,
+        orderGroups: { select: { trades: { select: { id: true } } } },
+      },
+    });
+    const fillToJournal = new Map<string, string>();
+    for (const p of existingPositions) {
+      if (!p.journalId) continue;
+      for (const og of p.orderGroups) {
+        for (const t of og.trades) {
+          fillToJournal.set(t.id, p.journalId);
+        }
+      }
+    }
+
+    // Default journal — guaranteed to exist after this call. New positions
+    // with no prior journal assignment go here.
+    const defaultJournal = await ensureDefaultJournal(walletAddress);
+
     // Clear existing order groups and positions (not linked strategies — those are manual)
     // First unlink fills from order groups
     await prisma.trade.updateMany({
@@ -151,11 +181,40 @@ export class GroupingService {
     // Also delete unlinked positions
     await prisma.position.deleteMany({ where: { walletAddress } });
 
+    // Track new positions for the auto-filter pass at the end.
+    const createdPositionIds: string[] = [];
+
     // Create positions, then order groups, then link fills
     for (const position of positions) {
+      // Resolve this new position's journal by majority vote across its
+      // constituent fills' prior assignments. Tie-breaker is "first non-
+      // null we saw" — keeps things deterministic for the common case
+      // where every fill in a position carried the same journalId.
+      const fillIdsInPosition: string[] = [];
+      for (const order of position.orders) {
+        for (const f of order.fills) fillIdsInPosition.push(f.id);
+      }
+      const journalVotes = new Map<string, number>();
+      for (const fid of fillIdsInPosition) {
+        const j = fillToJournal.get(fid);
+        if (!j) continue;
+        journalVotes.set(j, (journalVotes.get(j) ?? 0) + 1);
+      }
+      let chosenJournalId: string = defaultJournal.id;
+      if (journalVotes.size > 0) {
+        let bestCount = -1;
+        for (const [j, count] of journalVotes) {
+          if (count > bestCount) {
+            bestCount = count;
+            chosenJournalId = j;
+          }
+        }
+      }
+
       const dbPosition = await prisma.position.create({
         data: {
           walletAddress,
+          journalId: chosenJournalId,
           asset: position.asset,
           direction: position.direction,
           status: position.status,
@@ -174,6 +233,7 @@ export class GroupingService {
           lastExitTime: position.lastExitTime,
         },
       });
+      createdPositionIds.push(dbPosition.id);
 
       for (const order of position.orders) {
         const dbOrder = await prisma.orderGroup.create({
@@ -203,6 +263,84 @@ export class GroupingService {
           where: { id: { in: fillIds } },
           data: { orderGroupId: dbOrder.id },
         });
+      }
+    }
+
+    // Re-affirm linkedStrategy positions' journal assignments. They
+    // weren't deleted in the wipe above (linked strategies are manual
+    // user constructs), so their journalId from before regrouping is
+    // already correct — nothing to do here.
+
+    // ─── Auto-filter rules ───────────────────────────────────────────
+    // For every journal in this wallet that defines a `filters` JSON
+    // blob, find positions matching the filter and reassign them. This
+    // is what makes "BTC Only" auto-collect new BTC positions on every
+    // import without the user having to remember to assign them.
+    await this.applyAutoFilters(walletAddress);
+  }
+
+  /**
+   * Walk every journal that has a `filters` JSON blob set on it and move
+   * matching positions into that journal. Runs after persist() so it sees
+   * the freshly-created positions. Multiple journals matching the same
+   * position cause the *last journal walked* to win, which keeps behaviour
+   * deterministic per-import (journals are walked in createdAt order).
+   */
+  private async applyAutoFilters(walletAddress: string): Promise<void> {
+    const journalsWithRules = await prisma.journal.findMany({
+      where: { walletAddress, filters: { not: null } },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (journalsWithRules.length === 0) return;
+
+    for (const journal of journalsWithRules) {
+      let rules: Record<string, unknown> = {};
+      try {
+        rules = JSON.parse(journal.filters ?? '{}');
+      } catch {
+        // Malformed filter JSON — skip this journal rather than crashing
+        // the whole import pipeline.
+        console.warn(
+          `[grouping] journal ${journal.id} has unparseable filters; skipping auto-assign`,
+        );
+        continue;
+      }
+
+      const where: Record<string, unknown> = { walletAddress };
+      if (typeof rules.asset === 'string') where.asset = rules.asset;
+      if (typeof rules.tradeType === 'string') where.tradeType = rules.tradeType;
+      if (typeof rules.regime === 'string') where.regimeAtEntry = rules.regime;
+      if (typeof rules.subaccount === 'string') {
+        where.orderGroups = {
+          some: {
+            trades: { some: { subaccount: rules.subaccount } },
+          },
+        };
+      }
+      if (typeof rules.dateFrom === 'string' || typeof rules.dateTo === 'string') {
+        const range: Record<string, Date> = {};
+        if (typeof rules.dateFrom === 'string') range.gte = new Date(rules.dateFrom);
+        if (typeof rules.dateTo === 'string') range.lte = new Date(rules.dateTo);
+        where.firstEntryTime = range;
+      }
+
+      // No-op if the journal's filter blob exists but is empty (e.g. {}).
+      const hasAny =
+        'asset' in where ||
+        'tradeType' in where ||
+        'regimeAtEntry' in where ||
+        'orderGroups' in where ||
+        'firstEntryTime' in where;
+      if (!hasAny) continue;
+
+      const result = await prisma.position.updateMany({
+        where: where as any,
+        data: { journalId: journal.id },
+      });
+      if (result.count > 0) {
+        console.log(
+          `[grouping] journal "${journal.name}" auto-assigned ${result.count} position(s)`,
+        );
       }
     }
   }

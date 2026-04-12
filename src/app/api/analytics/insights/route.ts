@@ -1,19 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAnalyticsService } from '@/services/analytics';
+import { resolveJournalId } from '@/lib/journals';
 
 /**
  * GET  — return stored insights (from booba_observations).
  * POST — re-run all insight detectors, persist, return the fresh results.
+ *
+ * Both routes accept an optional journalId. When omitted, they fall back to
+ * the wallet's default journal — and the persisted observations get tagged
+ * with that journal id, so siblings stay isolated.
  */
 
 export async function GET(req: NextRequest) {
-  const walletAddress = req.nextUrl.searchParams.get('walletAddress');
+  const sp = req.nextUrl.searchParams;
+  const walletAddress = sp.get('walletAddress');
   if (!walletAddress) {
     return NextResponse.json({ error: 'walletAddress required' }, { status: 400 });
   }
 
+  const journalId = await resolveJournalId(walletAddress, sp.get('journalId'));
+  if (!journalId) {
+    return NextResponse.json({ error: 'Journal not found for this wallet' }, { status: 404 });
+  }
+
   const service = createAnalyticsService();
-  const insights = await service.getStoredInsights(walletAddress);
+  const insights = await service.getStoredInsights(walletAddress, journalId);
   return NextResponse.json({ insights });
 }
 
@@ -24,7 +35,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'walletAddress required' }, { status: 400 });
   }
 
+  const journalId = await resolveJournalId(walletAddress, body.journalId ?? null);
+  if (!journalId) {
+    return NextResponse.json({ error: 'Journal not found for this wallet' }, { status: 404 });
+  }
+
   const service = createAnalyticsService();
-  const summary = await service.detectInsights(walletAddress);
+  const summary = await service.detectInsights(walletAddress, journalId);
   return NextResponse.json(summary);
 }

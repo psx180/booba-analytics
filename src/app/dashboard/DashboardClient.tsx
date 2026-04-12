@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import EquityCurve, { EquityPoint, TradeMeta, REGIME_LABELS } from './EquityCurve';
 import UnderwaterCurve, { UnderwaterPoint } from './UnderwaterCurve';
+import { useJournal } from '../JournalContext';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -349,6 +350,10 @@ function RegimeRow({ regime, stats }: { regime: string; stats: PerformanceData }
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function DashboardClient({ walletAddress }: { walletAddress: string }) {
+  // Active journal id flows in from JournalContext. Every API call appends
+  // it via buildParams so the dashboard renders journal-scoped analytics.
+  // Switching journal triggers fetchData (journalId is in the dep list).
+  const { journalId, buildParams } = useJournal();
   const [performance, setPerformance] = useState<PerformanceData | null>(null);
   const [equityCurve, setEquityCurve] = useState<EquityPoint[]>([]);
   const [tradeMetas, setTradeMetas] = useState<TradeMeta[]>([]);
@@ -377,18 +382,21 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
     async (regime: string | null) => {
       setLoading(true);
       try {
-        const params = new URLSearchParams({ walletAddress });
-        if (regime) params.set('regime', regime);
-
-        const breakdownParams = new URLSearchParams({ walletAddress, groupBy: 'regime' });
-        const equityParams = new URLSearchParams(params);
-        equityParams.set('withXpnl', 'true');
+        // buildParams returns walletAddress + journalId already; we just
+        // tack on per-call extras (regime, groupBy, withXpnl).
+        const params = buildParams(regime ? { regime } : undefined);
+        const breakdownParams = buildParams({ groupBy: 'regime' });
+        const equityParams = buildParams({
+          ...(regime ? { regime } : {}),
+          withXpnl: 'true',
+        });
+        const insightsParams = buildParams();
 
         const [summaryRes, equityRes, breakdownRes, insightsRes] = await Promise.all([
           fetch(`/api/analytics/summary?${params}`),
           fetch(`/api/analytics/equity-curve?${equityParams}`),
           fetch(`/api/analytics/breakdown?${breakdownParams}`),
-          fetch(`/api/analytics/insights?walletAddress=${walletAddress}`),
+          fetch(`/api/analytics/insights?${insightsParams}`),
         ]);
 
         const [summaryData, equityData, breakdownData, insightsData] = await Promise.all([
@@ -433,12 +441,16 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
         setLoading(false);
       }
     },
-    [walletAddress],
+    [walletAddress, buildParams],
   );
 
   useEffect(() => {
+    // Skip the initial empty render before the journal id is resolved —
+    // otherwise the first fetch goes out without a journal scope and
+    // forces a second one once it arrives.
+    if (!journalId) return;
     fetchData(activeRegime);
-  }, [fetchData, activeRegime]);
+  }, [fetchData, activeRegime, journalId]);
 
   const handleRegimeToggle = (regime: string) => {
     const next = activeRegime === regime ? null : regime;
@@ -452,7 +464,9 @@ export default function DashboardClient({ walletAddress }: { walletAddress: stri
       const res = await fetch('/api/analytics/metrics/compute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ walletAddress }),
+        // journalId scopes both metric writes and insight detection to the
+        // active journal — sibling journals stay untouched.
+        body: JSON.stringify({ walletAddress, journalId }),
       });
       const data = await res.json();
       const metricsCount = data.metrics?.computed ?? 0;

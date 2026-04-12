@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import type { AnalyticsFilters } from './types';
 import { EMPTY_FILTERS, ALL_REGIMES, REGIME_LABELS, TRADE_TYPES, buildParams } from './types';
+import { useJournal } from '../JournalContext';
 import CalendarHeatmap from './CalendarHeatmap';
 import TimeAnalysis from './TimeAnalysis';
 import ExitAnalysis from './ExitAnalysis';
@@ -170,6 +171,10 @@ function Section({
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function AnalyticsClient({ walletAddress }: { walletAddress: string }) {
+  // Active journal scope. Re-fetch every section when journalId changes so
+  // switching journals refreshes the entire analytics page in one pass.
+  const { journalId } = useJournal();
+
   const [filters, setFilters] = useState<AnalyticsFilters>(EMPTY_FILTERS);
   const [assetOptions, setAssetOptions] = useState<string[]>([]);
   const [insights, setInsights] = useState<Insight[]>([]);
@@ -179,9 +184,11 @@ export default function AnalyticsClient({ walletAddress }: { walletAddress: stri
     setFilters((f) => ({ ...f, [key]: value }));
   }, []);
 
-  // Populate asset options from trade-units (same wallet)
+  // Populate asset options from trade-units (same wallet + journal)
   useEffect(() => {
-    fetch(`/api/trade-units?walletAddress=${walletAddress}&pageSize=500`)
+    if (!journalId) return;
+    const p = new URLSearchParams({ walletAddress, journalId, pageSize: '500' });
+    fetch(`/api/trade-units?${p}`)
       .then((r) => r.json())
       .then((d) => {
         const assets = [
@@ -192,28 +199,35 @@ export default function AnalyticsClient({ walletAddress }: { walletAddress: stri
         setAssetOptions(assets);
       })
       .catch(() => {});
-  }, [walletAddress]);
+  }, [walletAddress, journalId]);
 
-  // Load insights once on mount
+  // Load insights when journal or wallet changes
   useEffect(() => {
-    fetch(`/api/analytics/insights?walletAddress=${walletAddress}`)
+    if (!journalId) return;
+    const p = new URLSearchParams({ walletAddress, journalId });
+    fetch(`/api/analytics/insights?${p}`)
       .then((r) => r.json())
       .then((d) => setInsights(d.insights ?? []))
       .catch(() => {});
-  }, [walletAddress]);
+  }, [walletAddress, journalId]);
 
   // Load the WART summary so the trader profile section has data to render.
-  // Re-fetch when filters change so the radar reflects the active slice.
+  // Re-fetch when filters or journal change so the radar reflects the
+  // currently active slice.
   useEffect(() => {
+    if (!journalId) return;
     const params = buildParams(walletAddress, filters);
+    params.set('journalId', journalId);
     fetch(`/api/analytics/summary?${params}`)
       .then((r) => r.json())
       .then((d) => setWartResult(d.wartResult ?? null))
       .catch(() => {});
-  }, [walletAddress, filters]);
+  }, [walletAddress, filters, journalId]);
 
   const hasFilters = Object.values(filters).some(Boolean);
-  const chartProps = { walletAddress, filters };
+  // Pass journalId down to every chart subcomponent so they can include it
+  // in their own fetches without each one having to re-pull the context.
+  const chartProps = { walletAddress, filters, journalId: journalId ?? undefined };
 
   // Pull the combinatorial-search insight out of the generic insight stream;
   // it gets its own dedicated Edge Finder section below.

@@ -43,19 +43,19 @@ const axisProps = {
   tickLine: false,
 };
 
-export default function RegimePerformance({ walletAddress, filters }: AnalyticsChartProps) {
+export default function RegimePerformance({ walletAddress, filters, journalId }: AnalyticsChartProps) {
   const [breakdown, setBreakdown] = useState<RegimeBreakdown>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    const p = buildParams(walletAddress, filters);
+    const p = buildParams(walletAddress, filters, journalId);
     p.set('groupBy', 'regime');
     fetch(`/api/analytics/breakdown?${p}`)
       .then((r) => r.json())
       .then((d) => setBreakdown(d.breakdowns?.regime ?? {}))
       .finally(() => setLoading(false));
-  }, [walletAddress, filters]);
+  }, [walletAddress, filters, journalId]);
 
   if (loading) {
     return (

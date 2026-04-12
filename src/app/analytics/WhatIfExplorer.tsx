@@ -83,18 +83,18 @@ function DeltaCell({ actual, whatIf, field, isPercent, higherBetter = true }: {
   );
 }
 
-export default function WhatIfExplorer({ walletAddress, filters }: AnalyticsChartProps) {
+export default function WhatIfExplorer({ walletAddress, filters, journalId }: AnalyticsChartProps) {
   const [positions, setPositions] = useState<PositionData[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/analytics/positions?${buildParams(walletAddress, filters)}`)
+    fetch(`/api/analytics/positions?${buildParams(walletAddress, filters, journalId)}`)
       .then((r) => r.json())
       .then((d) => setPositions(d.positions ?? []))
       .finally(() => setLoading(false));
-  }, [walletAddress, filters]);
+  }, [walletAddress, filters, journalId]);
 
   const actual = useMemo(() => computeStats(positions), [positions]);
 

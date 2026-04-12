@@ -77,12 +77,23 @@ export class AnalyticsService {
 
   // ─── Type 1: Metrics ────────────────────────────────────────────────────
 
-  async computeMetrics(walletAddress: string): Promise<MetricComputeSummary> {
-    const positions = await this.db.position.findMany({
-      where: { walletAddress, status: 'closed' },
-    });
+  async computeMetrics(
+    walletAddress: string,
+    journalId?: string,
+  ): Promise<MetricComputeSummary> {
+    // Journal scoping: only compute metrics for positions in the requested
+    // journal. When omitted, falls back to wallet-wide for back-compat with
+    // scripts. The route layer always supplies a journalId so the dashboard
+    // never produces metrics that span journals.
+    const where: any = { walletAddress, status: 'closed' };
+    if (journalId) where.journalId = journalId;
 
-    console.log(`[analytics] computeMetrics: ${positions.length} closed positions for ${walletAddress}`);
+    const positions = await this.db.position.findMany({ where });
+
+    console.log(
+      `[analytics] computeMetrics: ${positions.length} closed positions for ${walletAddress}` +
+      (journalId ? ` (journal=${journalId})` : ''),
+    );
 
     // Run any batch metric computers up front. The result is a per-metric map
     // from positionId → metric updates that the per-position loop merges into
@@ -144,16 +155,20 @@ export class AnalyticsService {
     // Runs after standard metrics so tilt scores reflect the latest
     // computed state. The default detector persists its output; the
     // heuristic scorer is also run (dev comparison only — no persistence).
+    // Both passes are journal-scoped so episodes don't leak between
+    // independent journals.
     let tiltSummary: { totalEpisodes: number; positionsAffected: number } | undefined;
     try {
-      const tiltResult = await this.tiltService.analyzeAndPersist(walletAddress);
+      const tiltResult = await this.tiltService.analyzeAndPersist(walletAddress, journalId);
       tiltSummary = tiltResult.summary;
 
       // Parallel comparison against the heuristic scorer.
       try {
         const heuristic = createHeuristicTiltDetector();
+        const heuristicWhere: any = { walletAddress };
+        if (journalId) heuristicWhere.journalId = journalId;
         const allPositions = await this.db.position.findMany({
-          where  : { walletAddress },
+          where  : heuristicWhere,
           orderBy: { firstEntryTime: 'asc' },
         });
         const comparison = heuristic.detect(allPositions as unknown as Position[]);
@@ -230,6 +245,11 @@ export class AnalyticsService {
     // Override totalPnl with fill-level sum so it stays constant regardless of
     // how positions are merged or split. Position.aggregatePnl can diverge from
     // the fill total due to volume-weighted averaging across merged groups.
+    //
+    // When a journal is in scope we must restrict the fill sum to fills that
+    // belong to positions in this journal — otherwise the dashboard would
+    // show wallet-wide P&L even when the user has narrowed to one journal.
+    // The walk is Trade → OrderGroup → Position.journalId.
     const fillWhere: Record<string, any> = { walletAddress };
     if (filters?.asset) fillWhere.asset = filters.asset;
     if (filters?.regime) fillWhere.regimeAtEntry = filters.regime;
@@ -237,6 +257,11 @@ export class AnalyticsService {
       fillWhere.entryTime = {
         ...(filters.dateFrom ? { gte: filters.dateFrom } : {}),
         ...(filters.dateTo   ? { lte: filters.dateTo }   : {}),
+      };
+    }
+    if (filters?.journalId) {
+      fillWhere.orderGroup = {
+        is: { position: { is: { journalId: filters.journalId } } },
       };
     }
     const fillSum = await this.db.trade.aggregate({
@@ -277,8 +302,14 @@ export class AnalyticsService {
 
   // ─── Type 3: Insights ───────────────────────────────────────────────────
 
-  async detectInsights(walletAddress: string): Promise<InsightRunSummary> {
-    const positions = await this.loadFilteredPositions(walletAddress);
+  async detectInsights(
+    walletAddress: string,
+    journalId?: string,
+  ): Promise<InsightRunSummary> {
+    // Load only the journal's positions so insights are computed entirely
+    // from the journal's own data — independent equity curve, independent
+    // disposition effect, independent everything.
+    const positions = await this.loadFilteredPositions(walletAddress, { journalId });
     let insights: Insight[] = [];
     const skipped: string[] = [];
 
@@ -322,12 +353,14 @@ export class AnalyticsService {
     );
 
     // Persist to booba_observations. Deactivate prior observations from the
-    // same module for this wallet so stored insights reflect the latest run.
+    // same module *for this journal* so stored insights reflect the latest
+    // run without trampling sibling journals on the same wallet.
     const modulesProduced = new Set(insights.map((i) => i.module));
     if (modulesProduced.size > 0) {
       await this.db.boobaObservation.updateMany({
         where: {
           walletAddress,
+          journalId: journalId ?? null,
           sourceModule: { in: Array.from(modulesProduced) },
           isActive: true,
         },
@@ -339,6 +372,7 @@ export class AnalyticsService {
       await this.db.boobaObservation.create({
         data: {
           walletAddress,
+          journalId: journalId ?? null,
           observationText: JSON.stringify(insight),
           confidence: confidenceBand(insight.confidence),
           sourceModule: insight.module,
@@ -353,10 +387,19 @@ export class AnalyticsService {
     return { insights, skipped };
   }
 
-  /** Return previously-stored active insights without re-running detectors. */
-  async getStoredInsights(walletAddress: string): Promise<Insight[]> {
+  /**
+   * Return previously-stored active insights without re-running detectors.
+   * Pass `journalId` to read only this journal's stored insights — when
+   * omitted (legacy callers), reads everything for the wallet.
+   */
+  async getStoredInsights(
+    walletAddress: string,
+    journalId?: string,
+  ): Promise<Insight[]> {
+    const where: any = { walletAddress, isActive: true };
+    if (journalId) where.journalId = journalId;
     const rows = await this.db.boobaObservation.findMany({
-      where: { walletAddress, isActive: true },
+      where,
       orderBy: { createdAt: 'desc' },
     });
 
@@ -383,6 +426,13 @@ export class AnalyticsService {
     filters?: Filters,
   ): Promise<Position[]> {
     const where: any = { walletAddress };
+
+    // Journal scope is the *primary* filter for the multi-journal system —
+    // every analytic (equity curve, Elo, WART, insights) is computed only on
+    // positions in this journal so each journal gets a truly independent
+    // view. Callers should always supply this; the API routes do, but the
+    // service stays robust if a script calls it without one.
+    if (filters?.journalId) where.journalId = filters.journalId;
 
     if (filters?.regime) where.regimeAtEntry = filters.regime;
     if (filters?.asset) where.asset = filters.asset;

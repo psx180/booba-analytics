@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAnalyticsService } from '@/services/analytics';
 import { computeXpnlResult } from '@/services/analytics/metrics/xpnl';
 import { prisma } from '@/lib/prisma';
+import { resolveJournalId } from '@/lib/journals';
 import { parseFilters } from '../_filters';
 
 export async function GET(req: NextRequest) {
@@ -13,13 +14,20 @@ export async function GET(req: NextRequest) {
 
   const service = createAnalyticsService();
   const filters = parseFilters(sp);
+  // Journal scope — same pattern as the other analytics routes.
+  const journalId = await resolveJournalId(walletAddress, sp.get('journalId'));
+  if (!journalId) {
+    return NextResponse.json({ error: 'Journal not found for this wallet' }, { status: 404 });
+  }
+  filters.journalId = journalId;
+
   const result = await service.aggregate('equity-curve', walletAddress, filters);
 
   // Optional xPnL overlay — opt-in via ?withXpnl=true so existing callers
   // (regime breakdown table, weekly summary jobs) don't pay the KNN cost.
   const withXpnl = sp.get('withXpnl') === 'true';
   if (withXpnl) {
-    const where: any = { walletAddress };
+    const where: any = { walletAddress, journalId };
     if (filters.regime) where.regimeAtEntry = filters.regime;
     if (filters.asset) where.asset = filters.asset;
     if (filters.strategy) where.strategyId = filters.strategy;

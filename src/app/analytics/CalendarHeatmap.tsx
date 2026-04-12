@@ -58,20 +58,20 @@ interface TooltipState {
   y: number;
 }
 
-export default function CalendarHeatmap({ walletAddress, filters }: AnalyticsChartProps) {
+export default function CalendarHeatmap({ walletAddress, filters, journalId }: AnalyticsChartProps) {
   const [dayMap, setDayMap] = useState<DayMap>({});
   const [loading, setLoading] = useState(true);
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
 
   useEffect(() => {
     setLoading(true);
-    const p = buildParams(walletAddress, filters);
+    const p = buildParams(walletAddress, filters, journalId);
     p.set('groupBy', 'date');
     fetch(`/api/analytics/breakdown?${p}`)
       .then((r) => r.json())
       .then((d) => setDayMap(d.breakdowns?.date ?? {}))
       .finally(() => setLoading(false));
-  }, [walletAddress, filters]);
+  }, [walletAddress, filters, journalId]);
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);

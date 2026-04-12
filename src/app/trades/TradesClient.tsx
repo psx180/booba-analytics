@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
 import TradeDetailModal from './TradeDetailModal';
+import { useJournal } from '../JournalContext';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -197,27 +198,36 @@ function Toast({
 function FloatingToolbar({
   selectedIds,
   selectedUnits,
+  journals,
+  currentJournalId,
   onClear,
   onMerge,
   onLink,
   onSplit,
   onReclassify,
+  onMoveJournal,
 }: {
   selectedIds: Set<string>;
   selectedUnits: TradeUnit[];
+  journals: JournalSummaryLite[];
+  currentJournalId: string | null;
   onClear: () => void;
   onMerge: () => void;
   onLink: (type: 'delta_neutral' | 'pairs_trade' | 'basis_trade') => void;
   onSplit: () => void;
   onReclassify: () => void;
+  onMoveJournal: (targetJournalId: string) => void;
 }) {
   const count = selectedIds.size;
   const [linkOpen, setLinkOpen] = useState(false);
   const linkRef = useRef<HTMLDivElement>(null);
+  const [journalOpen, setJournalOpen] = useState(false);
+  const journalRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (linkRef.current && !linkRef.current.contains(e.target as Node)) setLinkOpen(false);
+      if (journalRef.current && !journalRef.current.contains(e.target as Node)) setJournalOpen(false);
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -226,6 +236,9 @@ function FloatingToolbar({
   const hasLinkedStrategy = selectedUnits.some((u) => u.kind === 'linked_strategy');
   const assets = new Set(selectedUnits.flatMap((u) => u.asset.split(' / ')));
   const mixedAssets = assets.size > 1;
+  // Journal moves only apply to bare positions — linked strategies follow
+  // their legs and shouldn't be moved as a unit.
+  const canMoveJournal = !hasLinkedStrategy && journals.length > 1;
 
   return (
     <div className="sticky top-0 z-10 flex items-center gap-3 bg-[#13181f]/95 backdrop-blur-sm border border-[#30363d] rounded-lg px-4 py-2.5 shadow-lg">
@@ -288,52 +301,109 @@ function FloatingToolbar({
           </div>
         </>
       )}
+
+      {/* Move-to-Journal applies to single + multi selection alike, so it
+          lives outside the count===1 branch. Hidden when there's only one
+          journal in the wallet (nothing to move into). */}
+      {canMoveJournal && (
+        <div className="relative" ref={journalRef}>
+          <button
+            onClick={() => setJournalOpen((o) => !o)}
+            className="px-3 py-1.5 bg-[#21262d] hover:bg-[#30363d] text-sm text-[#e6edf3] border border-[#30363d] rounded transition-colors flex items-center gap-1.5"
+          >
+            Move to Journal... <span className="text-[10px]">▾</span>
+          </button>
+          {journalOpen && (
+            <div className="absolute top-full left-0 mt-1 bg-[#1c2128] border border-[#30363d] rounded shadow-xl z-20 min-w-[200px]">
+              {journals.map((j) => {
+                const isCurrent = j.id === currentJournalId;
+                return (
+                  <button
+                    key={j.id}
+                    disabled={isCurrent}
+                    onClick={() => { onMoveJournal(j.id); setJournalOpen(false); }}
+                    className={`w-full text-left px-3 py-2 text-sm transition-colors flex items-center justify-between gap-2 ${
+                      isCurrent
+                        ? 'text-[#6e7681] cursor-not-allowed'
+                        : 'text-[#e6edf3] hover:bg-[#21262d]'
+                    }`}
+                  >
+                    <span className="truncate">{j.name}</span>
+                    {isCurrent && (
+                      <span className="text-[9px] uppercase tracking-widest">current</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
 // ── Three-Dot Menu ────────────────────────────────────────────────────────────
 
+interface JournalSummaryLite {
+  id: string;
+  name: string;
+  isDefault: boolean;
+}
+
 function ThreeDotMenu({
   unit,
+  journals,
+  currentJournalId,
   onViewDetails,
   onSplit,
   onReclassify,
   onDelete,
   onUnlink,
+  onMoveJournal,
 }: {
   unit: TradeUnit;
+  journals: JournalSummaryLite[];
+  currentJournalId: string | null;
   onViewDetails: () => void;
   onSplit: () => void;
   onReclassify: () => void;
   onDelete: () => void;
   onUnlink: () => void;
+  onMoveJournal: (targetJournalId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+        setMoveOpen(false);
+      }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const close = () => setOpen(false);
+  const close = () => { setOpen(false); setMoveOpen(false); };
   const isLinked = unit.kind === 'linked_strategy';
+  // Linked strategies aren't moved per-row — their legs (positions) carry
+  // the journal assignment, and the trade-units row simply follows.
+  const canMoveJournal = !isLinked && journals.length > 1;
 
   return (
     <div className="relative" ref={ref}>
       <button
-        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); setMoveOpen(false); }}
         className="p-1 text-[#6e7681] hover:text-white rounded hover:bg-[#30363d] transition-colors text-base leading-none"
         aria-label="More options"
       >
         ⋮
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 bg-[#1c2128] border border-[#30363d] rounded shadow-xl z-30 min-w-[160px]">
+        <div className="absolute right-0 top-full mt-1 bg-[#1c2128] border border-[#30363d] rounded shadow-xl z-30 min-w-[180px]">
           {!isLinked && (
             <button
               onClick={() => { close(); onViewDetails(); }}
@@ -363,6 +433,45 @@ function ThreeDotMenu({
               >
                 Reclassify
               </button>
+              {canMoveJournal && (
+                <div
+                  className="relative"
+                  onMouseEnter={() => setMoveOpen(true)}
+                  onMouseLeave={() => setMoveOpen(false)}
+                >
+                  <button
+                    onClick={() => setMoveOpen((o) => !o)}
+                    className="w-full text-left px-3 py-2 text-sm text-[#e6edf3] hover:bg-[#21262d] transition-colors flex items-center justify-between gap-2"
+                  >
+                    <span>Move to Journal</span>
+                    <span className="text-[10px] text-[#6e7681]">▸</span>
+                  </button>
+                  {moveOpen && (
+                    <div className="absolute right-full top-0 mr-1 bg-[#1c2128] border border-[#30363d] rounded shadow-xl z-40 min-w-[180px]">
+                      {journals.map((j) => {
+                        const isCurrent = j.id === currentJournalId;
+                        return (
+                          <button
+                            key={j.id}
+                            disabled={isCurrent}
+                            onClick={() => { close(); onMoveJournal(j.id); }}
+                            className={`w-full text-left px-3 py-2 text-xs transition-colors flex items-center justify-between gap-2 ${
+                              isCurrent
+                                ? 'text-[#6e7681] cursor-not-allowed'
+                                : 'text-[#e6edf3] hover:bg-[#21262d]'
+                            }`}
+                          >
+                            <span className="truncate">{j.name}</span>
+                            {isCurrent && (
+                              <span className="text-[9px] uppercase tracking-widest">current</span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="my-0.5 h-px bg-[#30363d]" />
               <button
                 onClick={() => { close(); onDelete(); }}
@@ -807,6 +916,10 @@ interface Filters {
 const EMPTY_FILTERS: Filters = { tradeType: '', asset: '', status: '' };
 
 export default function TradesClient({ walletAddress }: { walletAddress: string }) {
+  // Active journal scope. Every API call routes through buildParams so the
+  // table, summary stats, grouping output, and analytics fetches all stay
+  // bound to the same journal.
+  const { journalId, journals, buildParams, refresh: refreshJournals } = useJournal();
   const [tradeUnits, setTradeUnits] = useState<TradeUnit[]>([]);
   const [pagination, setPagination] = useState<Pagination | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -835,14 +948,19 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const p = new URLSearchParams({ walletAddress, sortBy, sortDir, page: String(page) });
-      if (filters.tradeType) p.set('tradeType', filters.tradeType);
-      if (filters.asset) p.set('asset', filters.asset);
-      if (filters.status) p.set('status', filters.status);
+      const p = buildParams({
+        sortBy,
+        sortDir,
+        page: String(page),
+        ...(filters.tradeType ? { tradeType: filters.tradeType } : {}),
+        ...(filters.asset ? { asset: filters.asset } : {}),
+        ...(filters.status ? { status: filters.status } : {}),
+      });
+      const summaryParams = buildParams();
 
       const [unitsRes, summaryRes] = await Promise.all([
         fetch(`/api/trade-units?${p}`),
-        fetch(`/api/analytics/summary?walletAddress=${walletAddress}`),
+        fetch(`/api/analytics/summary?${summaryParams}`),
       ]);
       const [unitsData, summaryData] = await Promise.all([
         unitsRes.json(),
@@ -864,9 +982,12 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
     } finally {
       setLoading(false);
     }
-  }, [walletAddress, sortBy, sortDir, page, filters]);
+  }, [walletAddress, sortBy, sortDir, page, filters, buildParams]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    if (!journalId) return;
+    fetchData();
+  }, [fetchData, journalId]);
   useEffect(() => { setPage(1); }, [filters, sortBy, sortDir]);
 
   const handleSort = (field: string) => {
@@ -1063,14 +1184,58 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
       await fetch('/api/analytics/metrics/compute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ walletAddress }),
+        body: JSON.stringify({ walletAddress, journalId }),
       });
       setAnalyticsStale(false);
       await fetchData();
     } finally {
       setComputingAnalytics(false);
     }
-  }, [walletAddress, fetchData]);
+  }, [walletAddress, journalId, fetchData]);
+
+  // ── Move position(s) to a different journal ───────────────────────────────
+  // Used by both the per-row three-dot menu (single id) and the floating
+  // toolbar (multi-select). Refreshes the journal list afterwards so the
+  // dropdown's per-journal counts stay accurate.
+  const handleMoveJournal = useCallback(
+    async (positionIds: string[], targetJournalId: string) => {
+      if (positionIds.length === 0) return;
+      try {
+        const res = await fetch('/api/positions/move-journal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ positionIds, targetJournalId }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          showToast(data?.error ?? 'Move failed');
+          return;
+        }
+        const data = await res.json();
+        clearSelection();
+        // Positions that moved out of the active journal disappear from
+        // this view immediately — refresh both the table and the journal
+        // list (counts) to reflect that.
+        await Promise.all([fetchData(), refreshJournals()]);
+        setAnalyticsStale(true);
+        const target = journals.find((j) => j.id === targetJournalId);
+        showToast(
+          `Moved ${data.moved} position${data.moved === 1 ? '' : 's'} to "${target?.name ?? 'journal'}".`,
+        );
+      } catch (err) {
+        console.error('Move journal failed', err);
+      }
+    },
+    [clearSelection, fetchData, refreshJournals, journals, showToast],
+  );
+
+  // Lite projection of journals for the menu components — they only need
+  // id/name/isDefault, not the full summary type.
+  const journalLite: JournalSummaryLite[] = journals.map((j) => ({
+    id: j.id,
+    name: j.name,
+    isDefault: j.isDefault,
+  }));
 
   return (
     <div className="space-y-4">
@@ -1235,6 +1400,8 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
         <FloatingToolbar
           selectedIds={selectedIds}
           selectedUnits={selectedUnits}
+          journals={journalLite}
+          currentJournalId={journalId}
           onClear={clearSelection}
           onMerge={() => setMergeConfirm(true)}
           onLink={handleLink}
@@ -1247,6 +1414,14 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
             const unit = tradeUnits.find((u) => u.id === id);
             if (unit) setReclassifyUnit(unit);
           }}
+          onMoveJournal={(targetJournalId) =>
+            handleMoveJournal(
+              [...selectedIds].filter(
+                (id) => tradeUnits.find((u) => u.id === id)?.kind === 'position',
+              ),
+              targetJournalId,
+            )
+          }
         />
       )}
 
@@ -1391,11 +1566,16 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
                         >
                           <ThreeDotMenu
                             unit={unit}
+                            journals={journalLite}
+                            currentJournalId={journalId}
                             onViewDetails={() => setDetailPositionId(unit.id)}
                             onSplit={() => setSplitPositionId(unit.id)}
                             onReclassify={() => setReclassifyUnit(unit)}
                             onDelete={() => handleDelete(unit.id)}
                             onUnlink={() => handleUnlink(unit.id)}
+                            onMoveJournal={(targetJournalId) =>
+                              handleMoveJournal([unit.id], targetJournalId)
+                            }
                           />
                         </td>
                       </tr>

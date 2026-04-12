@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { resolveJournalId } from '@/lib/journals';
 
 const ALL_REGIMES = [
   'trending_low_vol',
@@ -17,20 +18,24 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'walletAddress required' }, { status: 400 });
   }
 
-  const positionCount = await prisma.position.count({ where: { walletAddress } });
-
-  if (positionCount > 0) {
-    return computeFromPositions(walletAddress);
+  const journalId = await resolveJournalId(walletAddress, sp.get('journalId'));
+  if (!journalId) {
+    return NextResponse.json({ error: 'Journal not found for this wallet' }, { status: 404 });
   }
 
-  return computeFromFills(walletAddress);
+  // Empty-journal short-circuit: a brand-new journal with no positions yet
+  // would otherwise fall through to the fill-based path, which would surface
+  // wallet-wide fills and show numbers for a journal that should appear
+  // empty. Always go through the position path when journal-scoped.
+  return computeFromPositions(walletAddress, journalId);
 }
 
-async function computeFromPositions(walletAddress: string) {
-  // Unlinked positions — they have regimeAtEntry directly
+async function computeFromPositions(walletAddress: string, journalId: string) {
+  // Unlinked positions — they have regimeAtEntry directly. Scope by journal.
   const positions = await prisma.position.findMany({
     where: {
       walletAddress,
+      journalId,
       linkedStrategyId: null,
       status: 'closed',
       aggregatePnl: { not: null },
@@ -38,12 +43,15 @@ async function computeFromPositions(walletAddress: string) {
     select: { aggregatePnl: true, regimeAtEntry: true },
   });
 
-  // Linked strategies — use regime from the first leg
+  // Linked strategies — include only when at least one of their legs is in
+  // the requested journal. The displayed regime still comes from the first
+  // chronological leg, matching the previous behaviour.
   const linkedStrategies = await prisma.linkedStrategy.findMany({
     where: {
       walletAddress,
       status: 'closed',
       combinedPnl: { not: null },
+      positions: { some: { journalId } },
     },
     include: {
       positions: {
@@ -63,21 +71,6 @@ async function computeFromPositions(walletAddress: string) {
   for (const ls of linkedStrategies) {
     const regime = ls.positions[0]?.regimeAtEntry ?? null;
     addToBucket(byRegime, regime, ls.combinedPnl ?? 0);
-  }
-
-  return formatResult(byRegime);
-}
-
-async function computeFromFills(walletAddress: string) {
-  const trades = await prisma.trade.findMany({
-    where: { walletAddress, pnlRealized: { not: null }, exitTime: { not: null } },
-    select: { pnlRealized: true, regimeAtEntry: true },
-  });
-
-  const byRegime = initRegimeBuckets();
-
-  for (const t of trades) {
-    addToBucket(byRegime, t.regimeAtEntry, t.pnlRealized ?? 0);
   }
 
   return formatResult(byRegime);

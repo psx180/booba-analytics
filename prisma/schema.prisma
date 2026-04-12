@@ -13,6 +13,33 @@ datasource db {
   provider = "sqlite"
 }
 
+// ─── Journals ──────────────────────────────────────────────────────────────────
+//
+// A journal is an independent slice of trading data with its own analytics —
+// own equity curve, own Elo, own insights. Use cases: mainnet vs testnet,
+// market-making vs directional, isolating a focused time period. Positions
+// are the unit of journal assignment; orders/fills follow via relations.
+//
+// Every wallet has exactly one default journal ("All Trades"), seeded on
+// first import. Positions with journalId == null are treated as belonging to
+// the default journal at query time (legacy data and resilience against
+// cleared assignments).
+
+model Journal {
+  id            String     @id @default(cuid())
+  walletAddress String
+  name          String                                 // e.g., 'Main Trading', 'Testnet Practice', 'Market Making'
+  description   String?
+  isDefault     Boolean    @default(false)              // exactly one default journal per wallet
+  filters       String?                                 // JSON — optional auto-filter rules (e.g., {"asset":"BTC"})
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  positions     Position[]
+
+  @@index([walletAddress])
+}
+
 // ─── Strategies ────────────────────────────────────────────────────────────────
 
 model Strategy {
@@ -113,10 +140,17 @@ model Position {
   linkedStrategy      LinkedStrategy? @relation(fields: [linkedStrategyId], references: [id])
   strategyId          String?
   strategy            Strategy?       @relation(fields: [strategyId], references: [id])
+  // Journal assignment — null means "in the wallet's default journal" (legacy
+  // rows) and is resolved at query time. New positions are always written
+  // with an explicit journalId.
+  journalId           String?
+  journal             Journal?        @relation(fields: [journalId], references: [id])
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
 
   orderGroups         OrderGroup[]
+
+  @@index([journalId])
 }
 
 // ─── Order Groups (fills grouped by order) ────────────────────────────────────
@@ -218,6 +252,11 @@ model CustomStatDefinition {
 model BoobaObservation {
   id                String    @id @default(cuid())
   walletAddress     String?
+  // Journal scope — observations are derived from a specific journal's
+  // positions, so two journals on the same wallet keep independent insights.
+  // Null means "wallet-wide" (legacy rows pre-multi-journal). Resolved to
+  // the wallet's default journal at query time when filtering.
+  journalId         String?
   observationText   String
   confidence        String?   // high | medium | low
   sourceModule      String?   // exit_optimizer | disposition_detector | tilt_detector | novel_pattern | weekly_synthesis
@@ -230,6 +269,8 @@ model BoobaObservation {
   impactScore       Float?
   category          String?   // exit | entry | behavior | strategy | risk | timing | pacifica
   isSignificant     Boolean?
+
+  @@index([walletAddress, journalId])
 }
 
 // ─── Analysis Snapshots ────────────────────────────────────────────────────────

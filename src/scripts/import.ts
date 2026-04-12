@@ -23,6 +23,7 @@ import {
   ingestFunding,
   ingestTrades,
 } from '../services/ingestion';
+import { ensureDefaultJournal } from '../lib/journals';
 
 async function main() {
   const walletAddress = process.argv[2];
@@ -35,6 +36,12 @@ async function main() {
 
   console.log(`\nImporting trades for: ${walletAddress}`);
   console.log(`Mode: ${incremental ? 'incremental (new only)' : 'full history'}\n`);
+
+  // Make sure the wallet has its default journal up-front so the first
+  // grouping run has a target to assign new positions into. The helper is
+  // idempotent: harmless if a default already exists.
+  const defaultJournal = await ensureDefaultJournal(walletAddress);
+  console.log(`Default journal: "${defaultJournal.name}" (${defaultJournal.id})`);
 
   const apiConfigKey = process.env.PF_API_KEY;
   if (apiConfigKey) console.log('Using API config key for higher rate limits.');

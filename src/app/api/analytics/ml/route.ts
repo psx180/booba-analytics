@@ -16,6 +16,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { resolveJournalId } from '@/lib/journals';
 import type { ClusteringResult } from '@/services/analytics/ml/clustering';
 import type { AnomalyResult } from '@/services/analytics/ml/anomaly';
 import type { MarkovResult } from '@/services/analytics/ml/markov';
@@ -35,14 +36,24 @@ const ML_MODULES = [
 ] as const;
 
 export async function GET(req: NextRequest) {
-  const walletAddress = req.nextUrl.searchParams.get('walletAddress');
+  const sp = req.nextUrl.searchParams;
+  const walletAddress = sp.get('walletAddress');
   if (!walletAddress) {
     return NextResponse.json({ error: 'walletAddress required' }, { status: 400 });
+  }
+
+  // ML results are cached per journal — observations were generated against
+  // a specific journal's positions, so reading them with a different journal
+  // scope would surface stale or irrelevant patterns.
+  const journalId = await resolveJournalId(walletAddress, sp.get('journalId'));
+  if (!journalId) {
+    return NextResponse.json({ error: 'Journal not found for this wallet' }, { status: 404 });
   }
 
   const rows = await prisma.boobaObservation.findMany({
     where: {
       walletAddress,
+      journalId,
       isActive: true,
       sourceModule: { in: ML_MODULES as unknown as string[] },
     },

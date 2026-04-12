@@ -45,17 +45,17 @@ function StatCell({ v, isGood, neutral }: { v: React.ReactNode; isGood?: boolean
   return <td className={`py-2.5 pr-4 text-sm ${cls}`}>{v}</td>;
 }
 
-export default function StrategyBreakdown({ walletAddress, filters }: AnalyticsChartProps) {
+export default function StrategyBreakdown({ walletAddress, filters, journalId }: AnalyticsChartProps) {
   const [positions, setPositions] = useState<PositionData[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/analytics/positions?${buildParams(walletAddress, filters)}`)
+    fetch(`/api/analytics/positions?${buildParams(walletAddress, filters, journalId)}`)
       .then((r) => r.json())
       .then((d) => setPositions(d.positions ?? []))
       .finally(() => setLoading(false));
-  }, [walletAddress, filters]);
+  }, [walletAddress, filters, journalId]);
 
   const overall = useMemo(() => computeStats(positions), [positions]);
 

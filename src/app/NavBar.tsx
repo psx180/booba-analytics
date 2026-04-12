@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import JournalSelector from './JournalSelector';
 
 const tabs = [
   { href: '/dashboard', label: 'Dashboard' },
@@ -42,6 +43,11 @@ export default function NavBar() {
               </Link>
             );
           })}
+          {/* Journal selector lives at the right edge so it stays out of
+              the way of the nav links but is always visible on every page. */}
+          <div className="ml-auto">
+            <JournalSelector />
+          </div>
         </div>
       </div>
     </nav>

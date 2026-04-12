@@ -32,15 +32,27 @@ export class TiltService {
   /**
    * Run detection over every position for this wallet and persist
    * tiltScore / tiltEpisodeId / tiltFeatures back to each record.
+   *
+   * Pass `journalId` to scope detection to a single journal — important so
+   * tilt episodes don't leak between, say, a market-making journal and a
+   * directional one. When omitted (e.g. legacy script callers), the analysis
+   * runs across the wallet.
    */
-  async analyzeAndPersist(walletAddress: string): Promise<TiltAnalyzeSummary> {
+  async analyzeAndPersist(
+    walletAddress: string,
+    journalId?: string,
+  ): Promise<TiltAnalyzeSummary> {
+    const where: any = { walletAddress };
+    if (journalId) where.journalId = journalId;
+
     const positions = await this.db.position.findMany({
-      where  : { walletAddress },
+      where,
       orderBy: { firstEntryTime: 'asc' },
     });
 
     console.log(
-      `[tilt] ${this.detector.name}: analysing ${positions.length} positions for ${walletAddress}`,
+      `[tilt] ${this.detector.name}: analysing ${positions.length} positions for ${walletAddress}` +
+      (journalId ? ` (journal=${journalId})` : ''),
     );
 
     if (positions.length === 0) {

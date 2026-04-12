@@ -19,10 +19,21 @@ export const EMPTY_FILTERS: AnalyticsFilters = {
 export interface AnalyticsChartProps {
   walletAddress: string;
   filters: AnalyticsFilters;
+  /**
+   * Active journal id from JournalContext. Optional in the type so legacy
+   * call sites still type-check, but every page should pass it — analytics
+   * routes fall back to the wallet's default journal otherwise.
+   */
+  journalId?: string;
 }
 
-export function buildParams(walletAddress: string, filters: AnalyticsFilters): URLSearchParams {
+export function buildParams(
+  walletAddress: string,
+  filters: AnalyticsFilters,
+  journalId?: string,
+): URLSearchParams {
   const p = new URLSearchParams({ walletAddress });
+  if (journalId) p.set('journalId', journalId);
   if (filters.regime) p.set('regime', filters.regime);
   if (filters.tradeType) p.set('tradeType', filters.tradeType);
   if (filters.asset) p.set('asset', filters.asset);

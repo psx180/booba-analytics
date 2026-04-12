@@ -1,11 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { resolveJournalId } from '@/lib/journals';
 
 /**
  * GET /api/trade-units
  *
  * Returns the union view: unlinked positions + linked strategies.
  * This is the primary endpoint for the trades table.
+ *
+ * Journal scope: positions are filtered by journalId. Linked strategies are
+ * included when *any* of their leg positions belong to the requested
+ * journal — this matches the user's mental model that linked strategies
+ * "follow" the journal containing at least one of their legs.
  */
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
@@ -13,6 +19,11 @@ export async function GET(req: NextRequest) {
   const walletAddress = sp.get('walletAddress');
   if (!walletAddress) {
     return NextResponse.json({ error: 'walletAddress required' }, { status: 400 });
+  }
+
+  const journalId = await resolveJournalId(walletAddress, sp.get('journalId'));
+  if (!journalId) {
+    return NextResponse.json({ error: 'Journal not found for this wallet' }, { status: 404 });
   }
 
   const tradeType = sp.get('tradeType');
@@ -30,6 +41,7 @@ export async function GET(req: NextRequest) {
   // Fetch unlinked positions (positions not part of any linked strategy)
   const positionWhere: any = {
     walletAddress,
+    journalId,
     linkedStrategyId: null,
     ...(tradeType ? { tradeType } : {}),
     ...(asset ? { asset } : {}),
@@ -54,6 +66,8 @@ export async function GET(req: NextRequest) {
     prisma.linkedStrategy.findMany({
       where: {
         walletAddress,
+        // Linked strategy belongs to this journal if any of its legs do.
+        positions: { some: { journalId } },
         ...(status ? { status } : {}),
         ...(tradeType ? { tradeType } : {}),
         ...(dateFrom || dateTo

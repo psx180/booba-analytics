@@ -2,6 +2,13 @@
  * Shared filter parsing for analytics API routes.
  * Pulls standard filter params out of a URLSearchParams and returns a
  * Filters object that the analytics service understands.
+ *
+ * Note: parseFilters does *not* set `journalId` — that's a separate async
+ * step (resolveJournalId) because it may need to look up the wallet's
+ * default journal. Routes typically:
+ *
+ *   const filters = parseFilters(sp);
+ *   filters.journalId = await resolveJournalId(walletAddress, sp.get('journalId'));
  */
 
 import type { Filters } from '@/services/analytics';
