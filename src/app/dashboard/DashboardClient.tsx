@@ -381,6 +381,7 @@ export default function DashboardClient() {
   const [xpnlSummary, setXpnlSummary] = useState<XpnlSummary | null>(null);
   const [showXpnlOverlay, setShowXpnlOverlay] = useState(true);
   const [wartResult, setWartResult] = useState<WartResult | null>(null);
+  const [untaggedPositionCount, setUntaggedPositionCount] = useState<number>(0);
   const [underwaterSeries, setUnderwaterSeries] = useState<UnderwaterPoint[]>([]);
   const [drawdownStats, setDrawdownStats] = useState<{
     maxDrawdown: number;
@@ -403,18 +404,20 @@ export default function DashboardClient() {
         });
         const insightsParams = buildParams();
 
-        const [summaryRes, equityRes, breakdownRes, insightsRes] = await Promise.all([
+        const [summaryRes, equityRes, breakdownRes, insightsRes, untaggedRes] = await Promise.all([
           authFetch(`/api/analytics/summary?${params}`),
           authFetch(`/api/analytics/equity-curve?${equityParams}`),
           authFetch(`/api/analytics/breakdown?${breakdownParams}`),
           authFetch(`/api/analytics/insights?${insightsParams}`),
+          authFetch('/api/positions/untagged-count'),
         ]);
 
-        const [summaryData, equityData, breakdownData, insightsData] = await Promise.all([
+        const [summaryData, equityData, breakdownData, insightsData, untaggedData] = await Promise.all([
           summaryRes.json() as Promise<PerformanceResult>,
           equityRes.json() as Promise<EquityCurveResult & { xpnl?: XpnlSummary }>,
           breakdownRes.json() as Promise<BreakdownResult>,
           insightsRes.json() as Promise<{ insights: Insight[] }>,
+          untaggedRes.json() as Promise<{ count: number }>,
         ]);
 
         setPerformance(summaryData.data ?? null);
@@ -448,6 +451,7 @@ export default function DashboardClient() {
         }
         setRegimeBreakdown(breakdownData.breakdowns?.regime ?? {});
         setInsights(insightsData.insights ?? []);
+        setUntaggedPositionCount(untaggedData.count ?? 0);
       } finally {
         setLoading(false);
       }
@@ -932,6 +936,7 @@ export default function DashboardClient() {
             : undefined,
         })}
         insight={getContextualMessage('dashboard', {
+          untaggedPositionCount,
           wartResult: wartResult ?? undefined,
           tiltEpisodeCount: performance?.tiltEpisodeCount ?? undefined,
           eloResult: eloResult ?? undefined,

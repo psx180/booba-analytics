@@ -30,7 +30,12 @@ export async function GET(
 
     const owned = await requireOwnedPosition(walletAddress, id);
     if (!owned.ok) return owned.response;
-    const position = owned.position;
+
+    // Re-fetch with the strategy relation so callers can display the strategy name.
+    const position = await prisma.position.findUnique({
+      where: { id },
+      include: { strategy: { select: { id: true, name: true } } },
+    });
 
     return NextResponse.json({ position });
   });
@@ -60,8 +65,12 @@ export async function PATCH(
       return NextResponse.json(updated);
     }
 
-    // Annotation fields: thesis, strategyTag, sourceTag, conviction
-    const annotationFields = ['thesis', 'strategyTag', 'sourceTag', 'conviction'] as const;
+    // Annotation fields
+    const annotationFields = [
+      'thesis', 'strategyTag', 'sourceTag', 'conviction',
+      'strategyId', 'invalidationPrice', 'targetPrice',
+      'emotion', 'mistakes',
+    ] as const;
     const updateData: Record<string, string | number | null> = {};
     for (const field of annotationFields) {
       if (field in body) {

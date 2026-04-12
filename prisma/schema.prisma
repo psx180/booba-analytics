@@ -134,6 +134,8 @@ model Position {
   // User-annotated tags (set via trade detail modal / Phase 2 popup)
   strategyTag         String?
   sourceTag           String?
+  emotion             String?
+  mistakes            String?         // JSON array of mistake tags
 
   customData          String?         // JSON
   linkedStrategyId    String?

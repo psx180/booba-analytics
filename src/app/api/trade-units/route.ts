@@ -105,6 +105,15 @@ export async function GET(req: NextRequest) {
     lastExitTime: string | null;
     regimeAtEntry: string | null;
     childCount: number;
+    // Annotation fields (positions only)
+    thesis?: string | null;
+    strategyId?: string | null;
+    emotion?: string | null;
+    conviction?: number | null;
+    sourceTag?: string | null;
+    invalidationPrice?: number | null;
+    targetPrice?: string | null;
+    mistakes?: string | null;
     // Linked strategy extras
     strategyType?: string;
     netDelta?: number | null;
@@ -134,6 +143,14 @@ export async function GET(req: NextRequest) {
       lastExitTime: p.lastExitTime?.toISOString() ?? null,
       regimeAtEntry: p.regimeAtEntry,
       childCount: p._count.orderGroups,
+      thesis: p.thesis,
+      strategyId: p.strategyId,
+      emotion: p.emotion,
+      conviction: p.conviction,
+      sourceTag: p.sourceTag,
+      invalidationPrice: p.invalidationPrice,
+      targetPrice: p.targetPrice,
+      mistakes: p.mistakes,
     });
   }
 

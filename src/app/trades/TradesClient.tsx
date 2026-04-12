@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
 import TradeDetailModal from './TradeDetailModal';
+import TradeAnnotationPopup, { type PopupPosition } from '@/app/components/trade-popup/TradeAnnotationPopup';
+import BoobaAvatar from '@/app/components/booba/BoobaAvatar';
 import { useJournal } from '../JournalContext';
 import { useAuthFetch } from '@/lib/api-client';
 
@@ -26,6 +28,16 @@ interface TradeUnit {
   lastExitTime: string | null;
   regimeAtEntry: string | null;
   childCount: number;
+  // Annotation fields (positions only)
+  thesis?: string | null;
+  strategyId?: string | null;
+  emotion?: string | null;
+  conviction?: number | null;
+  sourceTag?: string | null;
+  invalidationPrice?: number | null;
+  targetPrice?: string | null;
+  mistakes?: string | null;
+  // Linked strategy extras
   strategyType?: string;
   netDelta?: number | null;
   spreadPnl?: number | null;
@@ -362,6 +374,7 @@ function ThreeDotMenu({
   onDelete,
   onUnlink,
   onMoveJournal,
+  onAnnotate,
 }: {
   unit: TradeUnit;
   journals: JournalSummaryLite[];
@@ -372,6 +385,7 @@ function ThreeDotMenu({
   onDelete: () => void;
   onUnlink: () => void;
   onMoveJournal: (targetJournalId: string) => void;
+  onAnnotate: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
@@ -411,6 +425,14 @@ function ThreeDotMenu({
               className="w-full text-left px-3 py-2 text-sm text-[#e6edf3] hover:bg-[#21262d] transition-colors"
             >
               View Details
+            </button>
+          )}
+          {!isLinked && (
+            <button
+              onClick={() => { close(); onAnnotate(); }}
+              className="w-full text-left px-3 py-2 text-sm text-[#e6edf3] hover:bg-[#21262d] transition-colors"
+            >
+              {(!unit.thesis && !unit.emotion && !unit.strategyId) ? 'Add Context' : 'Edit Context'}
             </button>
           )}
           {isLinked ? (
@@ -951,6 +973,11 @@ export default function TradesClient() {
   const [analyticsStale, setAnalyticsStale] = useState(false);
   const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
   const [computingAnalytics, setComputingAnalytics] = useState(false);
+  const [annotatePositionId, setAnnotatePositionId] = useState<string | null>(null);
+  const [annotateQueue, setAnnotateQueue] = useState<string[]>([]);
+  const [boobaInsight, setBoobaInsight] = useState<string | null>(null);
+  const [untaggedCount, setUntaggedCount] = useState(0);
+  const [untaggedIds, setUntaggedIds] = useState<string[]>([]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -965,18 +992,22 @@ export default function TradesClient() {
       });
       const summaryParams = buildParams();
 
-      const [unitsRes, summaryRes] = await Promise.all([
+      const [unitsRes, summaryRes, untaggedRes] = await Promise.all([
         authFetch(`/api/trade-units?${p}`),
         authFetch(`/api/analytics/summary?${summaryParams}`),
+        authFetch('/api/positions/untagged-count'),
       ]);
-      const [unitsData, summaryData] = await Promise.all([
+      const [unitsData, summaryData, untaggedData] = await Promise.all([
         unitsRes.json(),
         summaryRes.json(),
+        untaggedRes.json(),
       ]);
 
       setTradeUnits(unitsData.tradeUnits ?? []);
       setPagination(unitsData.pagination ?? null);
       setSummary(summaryData?.data ?? null);
+      setUntaggedCount(untaggedData.count ?? 0);
+      setUntaggedIds(untaggedData.ids ?? []);
 
       if (!filters.tradeType && !filters.asset && !filters.status) {
         const assets = [...new Set<string>(
@@ -1200,6 +1231,31 @@ export default function TradesClient() {
     }
   }, [journalId, fetchData, authFetch]);
 
+  // ── Annotation popup helpers ────────────────────────────────────────────────
+
+  const isUntagged = (unit: TradeUnit) =>
+    unit.kind === 'position' && !unit.thesis && !unit.emotion && !unit.strategyId;
+
+  const openAnnotateQueue = useCallback(() => {
+    if (untaggedIds.length === 0) return;
+    setAnnotateQueue(untaggedIds.slice(1));
+    setAnnotatePositionId(untaggedIds[0]);
+  }, [untaggedIds]);
+
+  const handleAnnotateSaved = useCallback(async (msg: string) => {
+    // Clear then set to ensure BoobaAvatar fires on repeated same message
+    setBoobaInsight(null);
+    setTimeout(() => setBoobaInsight(msg), 50);
+    await fetchData();
+    // Advance queue if in queue mode
+    if (annotateQueue.length > 0) {
+      setAnnotatePositionId(annotateQueue[0]);
+      setAnnotateQueue((q) => q.slice(1));
+    } else {
+      setAnnotatePositionId(null);
+    }
+  }, [annotateQueue, fetchData]);
+
   // ── Move position(s) to a different journal ───────────────────────────────
   // Used by both the per-row three-dot menu (single id) and the floating
   // toolbar (multi-select). Refreshes the journal list afterwards so the
@@ -1248,9 +1304,82 @@ export default function TradesClient() {
     isDefault: j.isDefault,
   }));
 
+  const toPopupPosition = (unit: TradeUnit): PopupPosition => ({
+    id: unit.id,
+    asset: unit.asset,
+    direction: unit.direction,
+    pnl: unit.pnl,
+    averageEntryPrice: unit.averageEntryPrice,
+    averageExitPrice: unit.averageExitPrice,
+    totalSize: unit.totalSize,
+    holdTimeSeconds: unit.holdTimeSeconds,
+    regimeAtEntry: unit.regimeAtEntry,
+    thesis: unit.thesis ?? null,
+    conviction: unit.conviction ?? null,
+    emotion: unit.emotion ?? null,
+    strategyId: unit.strategyId ?? null,
+    sourceTag: unit.sourceTag ?? null,
+    invalidationPrice: unit.invalidationPrice ?? null,
+    targetPrice: unit.targetPrice ?? null,
+    mistakes: unit.mistakes ?? null,
+  });
+
+  // Resolve annotatePositionId → PopupPosition.
+  // Prefer the already-loaded trade unit (current page). If not on this page,
+  // fetch from the positions API. Store in state so the popup can render.
+  const [annotatePosition, setAnnotatePosition] = useState<PopupPosition | null>(null);
+
+  useEffect(() => {
+    if (!annotatePositionId) {
+      setAnnotatePosition(null);
+      return;
+    }
+    const inPage = tradeUnits.find((u) => u.id === annotatePositionId);
+    if (inPage) {
+      setAnnotatePosition(toPopupPosition(inPage));
+      return;
+    }
+    // Not in current page — fetch from API
+    let cancelled = false;
+    authFetch(`/api/positions/${annotatePositionId}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled || !d.position) return;
+        const p = d.position;
+        setAnnotatePosition({
+          id: p.id,
+          asset: p.asset,
+          direction: p.direction,
+          pnl: p.aggregatePnl ?? null,
+          averageEntryPrice: p.averageEntryPrice ?? null,
+          averageExitPrice: p.averageExitPrice ?? null,
+          totalSize: p.totalSize ?? null,
+          holdTimeSeconds: p.holdTimeSeconds ?? null,
+          regimeAtEntry: p.regimeAtEntry ?? null,
+          thesis: p.thesis ?? null,
+          conviction: p.conviction ?? null,
+          emotion: p.emotion ?? null,
+          strategyId: p.strategyId ?? null,
+          sourceTag: p.sourceTag ?? null,
+          invalidationPrice: p.invalidationPrice ?? null,
+          targetPrice: p.targetPrice ?? null,
+          mistakes: p.mistakes ?? null,
+        });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [annotatePositionId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div className="space-y-4">
       {/* Dialogs */}
+      {annotatePosition && (
+        <TradeAnnotationPopup
+          position={annotatePosition}
+          onClose={() => { setAnnotatePositionId(null); setAnnotateQueue([]); }}
+          onSaved={handleAnnotateSaved}
+        />
+      )}
       {detailPositionId && (
         <TradeDetailModal
           positionId={detailPositionId}
@@ -1325,6 +1454,22 @@ export default function TradesClient() {
             className="text-xs px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:bg-amber-900 text-white rounded transition-colors shrink-0 ml-4"
           >
             {computingAnalytics ? 'Computing...' : 'Compute Analytics'}
+          </button>
+        </div>
+      )}
+
+      {/* ── Untagged Trades Banner ─────────────────────────────────── */}
+      {!loading && untaggedCount > 0 && (
+        <div className="flex items-center justify-between bg-yellow-900/20 border border-yellow-500/30 rounded-lg px-4 py-2.5">
+          <span className="text-sm text-yellow-300">
+            {untaggedCount} trade{untaggedCount === 1 ? '' : 's'} have no context.
+            Adding strategy and thesis helps Booba learn your patterns.
+          </span>
+          <button
+            onClick={openAnnotateQueue}
+            className="text-xs px-3 py-1.5 bg-yellow-600 hover:bg-yellow-500 text-white rounded transition-colors shrink-0 ml-4"
+          >
+            Tag All
           </button>
         </div>
       )}
@@ -1448,6 +1593,7 @@ export default function TradesClient() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-[10px] uppercase tracking-widest text-[#6e7681] border-b border-[#21262d]">
+                  <th className="px-1 py-3 text-left w-4" />
                   <th className="px-3 py-3 text-left w-8" />
                   <th className="px-3 py-3 text-left w-8" />
                   <SortTh label="Asset" field="asset" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
@@ -1489,6 +1635,20 @@ export default function TradesClient() {
                         }`}
                         style={isSelected ? { boxShadow: 'inset 3px 0 0 #3b82f6' } : undefined}
                       >
+                        {/* Untagged badge */}
+                        <td
+                          className="px-1 py-2.5"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {isUntagged(unit) && (
+                            <button
+                              title="Add context"
+                              onClick={() => setAnnotatePositionId(unit.id)}
+                              className="w-2.5 h-2.5 rounded-full bg-yellow-400 hover:bg-yellow-300 transition-colors block"
+                            />
+                          )}
+                        </td>
+
                         {/* Checkbox */}
                         <td
                           className="px-3 py-2.5"
@@ -1586,13 +1746,14 @@ export default function TradesClient() {
                             onMoveJournal={(targetJournalId) =>
                               handleMoveJournal([unit.id], targetJournalId)
                             }
+                            onAnnotate={() => setAnnotatePositionId(unit.id)}
                           />
                         </td>
                       </tr>
 
                       {isExpanded && (
                         <tr className="bg-[#0d1117]">
-                          <td colSpan={15} className="p-0">
+                          <td colSpan={16} className="p-0">
                             {isLinked && unit.legs ? (
                               <div className="px-4 py-2 space-y-2">
                                 <div className="text-[10px] uppercase tracking-widest text-[#6e7681] px-4">
@@ -1656,6 +1817,12 @@ export default function TradesClient() {
           </div>
         )}
       </div>
+
+      {/* ── Booba Avatar ───────────────────────────────────────────── */}
+      <BoobaAvatar
+        healthScore={70}
+        insight={boobaInsight}
+      />
     </div>
   );
 }

@@ -1,4 +1,5 @@
 export interface BoobaAnalyticsData {
+  untaggedPositionCount?: number;
   wartResult?: {
     composite: number;
     axes?: {
@@ -32,6 +33,12 @@ export function getContextualMessage(
   data: BoobaAnalyticsData,
 ): string | null {
   if (page === 'dashboard') {
+    // 0. Untagged trades — highest priority, actionable nudge
+    const untagged = data.untaggedPositionCount ?? 0;
+    if (untagged > 0) {
+      return `${untagged} new trade${untagged === 1 ? '' : 's'} have no thesis. Want to add context?`;
+    }
+
     // 1. WART declining (composite below 0)
     if (data.wartResult && data.wartResult.composite < 0) {
       return 'Your WART score dropped this week. Risk management is your weakest axis.';

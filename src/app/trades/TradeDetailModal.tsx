@@ -29,8 +29,15 @@ interface PositionDetail {
   lastExitTime: string | null;
   thesis: string | null;
   strategyTag: string | null;
+  strategyId: string | null;
+  strategy?: { id: string; name: string } | null;
   sourceTag: string | null;
   conviction: number | null;
+}
+
+interface Strategy {
+  id: string;
+  name: string;
 }
 
 interface OrderGroup {
@@ -255,9 +262,11 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
   // Editable annotation state
   const [thesis, setThesis] = useState('');
   const [strategyTag, setStrategyTag] = useState('');
+  const [strategyId, setStrategyId] = useState<string | null>(null);
   const [sourceTag, setSourceTag] = useState('');
   const [conviction, setConviction] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
+  const [strategies, setStrategies] = useState<Strategy[]>([]);
 
   // Move order state
   const [movingOrderId, setMovingOrderId] = useState<string | null>(null);
@@ -284,14 +293,17 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
       authFetch(`/api/positions/${positionId}`, { signal: controller.signal }).then((r) => r.json()),
       authFetch(`/api/positions/${positionId}/orders`, { signal: controller.signal }).then((r) => r.json()),
       authFetch('/api/analytics/insights', { signal: controller.signal }).then((r) => r.json()),
+      authFetch('/api/strategies', { signal: controller.signal }).then((r) => r.json()),
     ])
-      .then(([posData, ordersData, insightData]) => {
+      .then(([posData, ordersData, insightData, strategiesData]) => {
         const pos: PositionDetail = posData.position;
         setPosition(pos);
         setThesis(pos?.thesis ?? '');
         setStrategyTag(pos?.strategyTag ?? '');
+        setStrategyId(pos?.strategyId ?? null);
         setSourceTag(pos?.sourceTag ?? '');
         setConviction(pos?.conviction ?? null);
+        setStrategies(strategiesData.strategies ?? []);
         setOrders(ordersData.orders ?? []);
         // Filter insights to those referencing this position
         const all: Insight[] = insightData.insights ?? [];
@@ -361,7 +373,7 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
   }, [positionId, candidates, onClose]);
 
   const saveAnnotations = useCallback(async (patch: Partial<{
-    thesis: string; strategyTag: string; sourceTag: string; conviction: number | null;
+    thesis: string; strategyTag: string; strategyId: string | null; sourceTag: string; conviction: number | null;
   }>) => {
     setSaving(true);
     try {
@@ -687,17 +699,22 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
                 Tags
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {/* Strategy tag */}
+                {/* Strategy */}
                 <div className="flex flex-col gap-1.5">
                   <label className="text-[10px] uppercase tracking-widest text-[#6e7681]">Strategy</label>
                   <select
-                    value={strategyTag}
-                    onChange={(e) => setStrategyTag(e.target.value)}
-                    onBlur={() => saveAnnotations({ strategyTag })}
+                    value={strategyId ?? ''}
+                    onChange={(e) => {
+                      const val = e.target.value || null;
+                      setStrategyId(val);
+                      saveAnnotations({ strategyId: val });
+                    }}
                     className="bg-[#161b22] border border-[#30363d] text-sm text-[#e6edf3] rounded px-2 py-1.5 focus:outline-none focus:border-blue-500"
                   >
                     <option value="">— None —</option>
-                    {/* Strategy options will be populated when the tagging system is built */}
+                    {strategies.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
                   </select>
                 </div>
 
