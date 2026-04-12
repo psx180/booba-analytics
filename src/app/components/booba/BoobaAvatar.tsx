@@ -18,6 +18,10 @@ export interface BoobaAvatarProps {
   isHidden?: boolean;
   onHide?: () => void;
   onShow?: () => void;
+  /** When set, clicking the avatar toggles the chat panel open/closed */
+  onChatToggle?: () => void;
+  /** Whether the chat panel is currently open */
+  chatOpen?: boolean;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -71,6 +75,8 @@ export default function BoobaAvatar({
   insight,
   onHide,
   onShow,
+  onChatToggle,
+  chatOpen,
 }: BoobaAvatarProps) {
   const px = size === 'medium' ? 120 : 60;
 
@@ -105,6 +111,15 @@ export default function BoobaAvatar({
       setDisplayMood(baseMood);
     }
   }, [baseMood]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Chat open → excited mood; chat close → return to base mood
+  useEffect(() => {
+    if (chatOpen) {
+      setDisplayMood('excited');
+    } else if (displayMood === 'excited') {
+      setDisplayMood(baseMood);
+    }
+  }, [chatOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Show insight bubble when insight prop changes
   const prevInsightRef = useRef<string | null | undefined>(undefined);
@@ -233,8 +248,9 @@ export default function BoobaAvatar({
           height: `${px}px`,
           opacity: fadingOut ? 0 : 1,
           transition: 'opacity 300ms ease',
-          cursor: 'default',
+          cursor: onChatToggle ? 'pointer' : 'default',
         }}
+        onClick={onChatToggle}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       >

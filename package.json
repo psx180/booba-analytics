@@ -9,13 +9,17 @@
     "import": "tsx src/scripts/import.ts",
     "regimes": "tsx src/scripts/compute-regimes.ts",
     "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate dev"
+    "db:migrate": "prisma migrate dev",
+    "mcp:trade-data": "tsx src/scripts/mcp-trade-data.ts",
+    "mcp:analytics": "tsx src/scripts/mcp-analytics.ts",
+    "mcp:grouping": "tsx src/scripts/mcp-grouping.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@prisma/adapter-better-sqlite3": "^7.7.0",
     "@prisma/client": "^7.7.0",
     "@privy-io/react-auth": "^3.21.2",

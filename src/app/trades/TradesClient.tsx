@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
 import TradeDetailModal from './TradeDetailModal';
 import TradeAnnotationPopup, { type PopupPosition } from '@/app/components/trade-popup/TradeAnnotationPopup';
 import BoobaAvatar from '@/app/components/booba/BoobaAvatar';
+import BoobaChat from '@/app/components/booba/BoobaChat';
 import { useJournal } from '../JournalContext';
 import { useAuthFetch } from '@/lib/api-client';
 
@@ -949,6 +950,7 @@ export default function TradesClient() {
   // the dev wallet in dev-bypass mode).
   const { journalId, journals, buildParams, refresh: refreshJournals } = useJournal();
   const authFetch = useAuthFetch();
+  const [chatOpen, setChatOpen] = useState(false);
   const [tradeUnits, setTradeUnits] = useState<TradeUnit[]>([]);
   const [pagination, setPagination] = useState<Pagination | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -1818,10 +1820,13 @@ export default function TradesClient() {
         )}
       </div>
 
-      {/* ── Booba Avatar ───────────────────────────────────────────── */}
+      {/* ── Booba Avatar + Chat ────────────────────────────────────── */}
+      <BoobaChat isOpen={chatOpen} onClose={() => setChatOpen(false)} />
       <BoobaAvatar
         healthScore={70}
-        insight={boobaInsight}
+        insight={chatOpen ? null : boobaInsight}
+        onChatToggle={() => setChatOpen((o) => !o)}
+        chatOpen={chatOpen}
       />
     </div>
   );

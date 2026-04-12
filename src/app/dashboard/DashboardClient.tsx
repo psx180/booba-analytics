@@ -6,6 +6,7 @@ import UnderwaterCurve, { UnderwaterPoint } from './UnderwaterCurve';
 import { useJournal } from '../JournalContext';
 import { useAuthFetch } from '@/lib/api-client';
 import BoobaAvatar from '@/app/components/booba/BoobaAvatar';
+import BoobaChat from '@/app/components/booba/BoobaChat';
 import { computeHealthScore } from '@/app/components/booba/computeHealthScore';
 import { getContextualMessage } from '@/app/components/booba/getContextualMessage';
 
@@ -360,6 +361,7 @@ export default function DashboardClient() {
   // journal-scoped analytics. Switching journal triggers fetchData.
   const { journalId, buildParams } = useJournal();
   const authFetch = useAuthFetch();
+  const [chatOpen, setChatOpen] = useState(false);
   const [performance, setPerformance] = useState<PerformanceData | null>(null);
   const [equityCurve, setEquityCurve] = useState<EquityPoint[]>([]);
   const [tradeMetas, setTradeMetas] = useState<TradeMeta[]>([]);
@@ -924,7 +926,8 @@ export default function DashboardClient() {
         </div>
       )}
 
-      {/* ── Booba Avatar ──────────────────────────────────────────────────── */}
+      {/* ── Booba Avatar + Chat ──────────────────────────────────────────── */}
+      <BoobaChat isOpen={chatOpen} onClose={() => setChatOpen(false)} />
       <BoobaAvatar
         healthScore={computeHealthScore({
           wartComposite: wartResult?.composite,
@@ -935,7 +938,7 @@ export default function DashboardClient() {
             ? -Math.abs(drawdownStats.currentDrawdownPct)
             : undefined,
         })}
-        insight={getContextualMessage('dashboard', {
+        insight={chatOpen ? null : getContextualMessage('dashboard', {
           untaggedPositionCount,
           wartResult: wartResult ?? undefined,
           tiltEpisodeCount: performance?.tiltEpisodeCount ?? undefined,
@@ -953,6 +956,8 @@ export default function DashboardClient() {
         })}
         eloTrend={eloResult?.recentTrend}
         wartTrend={wartResult?.composite}
+        onChatToggle={() => setChatOpen((o) => !o)}
+        chatOpen={chatOpen}
       />
     </div>
   );
