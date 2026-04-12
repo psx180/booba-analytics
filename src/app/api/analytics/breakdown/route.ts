@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAnalyticsService } from '@/services/analytics';
-import { resolveJournalId } from '@/lib/journals';
+import { resolveJournalFilterId } from '@/lib/journals';
 import { parseFilters } from '../_filters';
 
 const VALID_DIMENSIONS = new Set([
@@ -32,11 +32,11 @@ export async function GET(req: NextRequest) {
   }
 
   const filters = parseFilters(sp);
-  const journalId = await resolveJournalId(walletAddress, sp.get('journalId'));
-  if (!journalId) {
+  const journalRes = await resolveJournalFilterId(walletAddress, sp.get('journalId'));
+  if (!journalRes.valid) {
     return NextResponse.json({ error: 'Journal not found for this wallet' }, { status: 404 });
   }
-  filters.journalId = journalId;
+  if (journalRes.id) filters.journalId = journalRes.id;
 
   const service = createAnalyticsService();
   const result = await service.aggregate(

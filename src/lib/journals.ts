@@ -73,6 +73,31 @@ export async function resolveJournalId(
 }
 
 /**
+ * Like resolveJournalId but returns the value to use as a WHERE clause:
+ *   - { valid: false }               → journal not found; route should 404
+ *   - { valid: true, id: null }      → wallet-wide (default journal); skip journalId filter
+ *   - { valid: true, id: string }    → filter by this specific journalId
+ *
+ * The "All Trades" default journal returns id=null so every analytics route
+ * automatically sees all positions for the wallet without a journalId WHERE.
+ */
+export async function resolveJournalFilterId(
+  walletAddress: string,
+  requestedJournalId: string | null | undefined,
+): Promise<{ valid: false } | { valid: true; id: string | null }> {
+  if (requestedJournalId) {
+    const journal = await prisma.journal.findUnique({
+      where: { id: requestedJournalId },
+    });
+    if (!journal || journal.walletAddress !== walletAddress) return { valid: false };
+    // Default journal = wallet-wide; no journalId WHERE clause needed.
+    return { valid: true, id: journal.isDefault ? null : journal.id };
+  }
+  // No journalId requested → default journal → wallet-wide.
+  return { valid: true, id: null };
+}
+
+/**
  * Same as resolveJournalId but for use in places that already know the
  * provided id is valid (e.g., chained from a previous resolve). Throws if
  * the journal doesn't exist for this wallet.

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAnalyticsService } from '@/services/analytics';
-import { resolveJournalId } from '@/lib/journals';
+import { resolveJournalFilterId } from '@/lib/journals';
 
 /**
  * POST /api/analytics/metrics/compute
@@ -20,14 +20,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'walletAddress required' }, { status: 400 });
   }
 
-  const journalId = await resolveJournalId(walletAddress, body.journalId ?? null);
-  if (!journalId) {
+  const journalRes = await resolveJournalFilterId(walletAddress, body.journalId ?? null);
+  if (!journalRes.valid) {
     return NextResponse.json({ error: 'Journal not found for this wallet' }, { status: 404 });
   }
+  const journalScope = journalRes.id ?? undefined;
 
   const service = createAnalyticsService();
-  const metricsSummary = await service.computeMetrics(walletAddress, journalId);
-  const insightSummary = await service.detectInsights(walletAddress, journalId);
+  const metricsSummary = await service.computeMetrics(walletAddress, journalScope);
+  const insightSummary = await service.detectInsights(walletAddress, journalScope);
 
   return NextResponse.json({
     metrics: metricsSummary,
@@ -45,12 +46,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'walletAddress required' }, { status: 400 });
   }
 
-  const journalId = await resolveJournalId(walletAddress, sp.get('journalId'));
-  if (!journalId) {
+  const journalRes = await resolveJournalFilterId(walletAddress, sp.get('journalId'));
+  if (!journalRes.valid) {
     return NextResponse.json({ error: 'Journal not found for this wallet' }, { status: 404 });
   }
 
   const service = createAnalyticsService();
-  const summary = await service.computeMetrics(walletAddress, journalId);
+  const summary = await service.computeMetrics(walletAddress, journalRes.id ?? undefined);
   return NextResponse.json(summary);
 }

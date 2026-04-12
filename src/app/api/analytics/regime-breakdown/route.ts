@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { resolveJournalId } from '@/lib/journals';
+import { resolveJournalFilterId } from '@/lib/journals';
 
 const ALL_REGIMES = [
   'trending_low_vol',
@@ -18,41 +18,36 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'walletAddress required' }, { status: 400 });
   }
 
-  const journalId = await resolveJournalId(walletAddress, sp.get('journalId'));
-  if (!journalId) {
+  const journalRes = await resolveJournalFilterId(walletAddress, sp.get('journalId'));
+  if (!journalRes.valid) {
     return NextResponse.json({ error: 'Journal not found for this wallet' }, { status: 404 });
   }
 
-  // Empty-journal short-circuit: a brand-new journal with no positions yet
-  // would otherwise fall through to the fill-based path, which would surface
-  // wallet-wide fills and show numbers for a journal that should appear
-  // empty. Always go through the position path when journal-scoped.
-  return computeFromPositions(walletAddress, journalId);
+  return computeFromPositions(walletAddress, journalRes.id);
 }
 
-async function computeFromPositions(walletAddress: string, journalId: string) {
+async function computeFromPositions(walletAddress: string, journalId: string | null) {
   // Unlinked positions — they have regimeAtEntry directly. Scope by journal.
+  const posWhere: any = {
+    walletAddress,
+    linkedStrategyId: null,
+    status: 'closed',
+    aggregatePnl: { not: null },
+  };
+  if (journalId) posWhere.journalId = journalId;
   const positions = await prisma.position.findMany({
-    where: {
-      walletAddress,
-      journalId,
-      linkedStrategyId: null,
-      status: 'closed',
-      aggregatePnl: { not: null },
-    },
+    where: posWhere,
     select: { aggregatePnl: true, regimeAtEntry: true },
   });
 
   // Linked strategies — include only when at least one of their legs is in
   // the requested journal. The displayed regime still comes from the first
   // chronological leg, matching the previous behaviour.
+  const lsWhere: any = { walletAddress, status: 'closed', combinedPnl: { not: null } };
+  // When journal-scoped, only include strategies that have at least one leg in this journal.
+  if (journalId) lsWhere.positions = { some: { journalId } };
   const linkedStrategies = await prisma.linkedStrategy.findMany({
-    where: {
-      walletAddress,
-      status: 'closed',
-      combinedPnl: { not: null },
-      positions: { some: { journalId } },
-    },
+    where: lsWhere,
     include: {
       positions: {
         select: { regimeAtEntry: true },

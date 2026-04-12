@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAnalyticsService } from '@/services/analytics';
-import { resolveJournalId } from '@/lib/journals';
+import { resolveJournalFilterId } from '@/lib/journals';
 
 /**
  * GET  — return stored insights (from booba_observations).
@@ -18,13 +18,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'walletAddress required' }, { status: 400 });
   }
 
-  const journalId = await resolveJournalId(walletAddress, sp.get('journalId'));
-  if (!journalId) {
+  const journalRes = await resolveJournalFilterId(walletAddress, sp.get('journalId'));
+  if (!journalRes.valid) {
     return NextResponse.json({ error: 'Journal not found for this wallet' }, { status: 404 });
   }
 
   const service = createAnalyticsService();
-  const insights = await service.getStoredInsights(walletAddress, journalId);
+  const insights = await service.getStoredInsights(walletAddress, journalRes.id ?? undefined);
   return NextResponse.json({ insights });
 }
 
@@ -35,12 +35,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'walletAddress required' }, { status: 400 });
   }
 
-  const journalId = await resolveJournalId(walletAddress, body.journalId ?? null);
-  if (!journalId) {
+  const journalRes = await resolveJournalFilterId(walletAddress, body.journalId ?? null);
+  if (!journalRes.valid) {
     return NextResponse.json({ error: 'Journal not found for this wallet' }, { status: 404 });
   }
 
   const service = createAnalyticsService();
-  const summary = await service.detectInsights(walletAddress, journalId);
+  const summary = await service.detectInsights(walletAddress, journalRes.id ?? undefined);
   return NextResponse.json(summary);
 }

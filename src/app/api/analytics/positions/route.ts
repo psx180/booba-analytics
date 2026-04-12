@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { resolveJournalId } from '@/lib/journals';
+import { resolveJournalFilterId } from '@/lib/journals';
 import { parseFilters } from '../_filters';
 
 /**
@@ -20,13 +20,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'walletAddress required' }, { status: 400 });
   }
 
-  const journalId = await resolveJournalId(walletAddress, sp.get('journalId'));
-  if (!journalId) {
+  const journalRes = await resolveJournalFilterId(walletAddress, sp.get('journalId'));
+  if (!journalRes.valid) {
     return NextResponse.json({ error: 'Journal not found for this wallet' }, { status: 404 });
   }
 
   const filters = parseFilters(sp);
-  const where: Record<string, any> = { walletAddress, status: 'closed', journalId };
+  const where: Record<string, any> = { walletAddress, status: 'closed' };
+  if (journalRes.id) where.journalId = journalRes.id;
 
   if (filters.regime) where.regimeAtEntry = filters.regime;
   if (filters.asset) where.asset = filters.asset;

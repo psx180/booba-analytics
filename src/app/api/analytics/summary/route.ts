@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAnalyticsService } from '@/services/analytics';
-import { resolveJournalId } from '@/lib/journals';
+import { resolveJournalFilterId } from '@/lib/journals';
 import { parseFilters } from '../_filters';
 
 export async function GET(req: NextRequest) {
@@ -12,14 +12,12 @@ export async function GET(req: NextRequest) {
 
   const service = createAnalyticsService();
   const filters = parseFilters(sp);
-  // Resolve journalId once and stamp it onto the filters object so the
-  // service's loadFilteredPositions / fillSum query both pick it up.
-  // Falls back to the wallet's default journal when omitted.
-  const journalId = await resolveJournalId(walletAddress, sp.get('journalId'));
-  if (!journalId) {
+  // Resolve journal scope. Default journal returns id=null → wallet-wide view.
+  const journalRes = await resolveJournalFilterId(walletAddress, sp.get('journalId'));
+  if (!journalRes.valid) {
     return NextResponse.json({ error: 'Journal not found for this wallet' }, { status: 404 });
   }
-  filters.journalId = journalId;
+  if (journalRes.id) filters.journalId = journalRes.id;
 
   // Compose the full advanced summary so the dashboard only needs one fetch
   // to populate every stat card. The performance result keeps the legacy

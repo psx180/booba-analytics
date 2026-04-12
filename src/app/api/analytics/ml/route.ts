@@ -16,7 +16,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { resolveJournalId } from '@/lib/journals';
+import { resolveJournalFilterId } from '@/lib/journals';
 import type { ClusteringResult } from '@/services/analytics/ml/clustering';
 import type { AnomalyResult } from '@/services/analytics/ml/anomaly';
 import type { MarkovResult } from '@/services/analytics/ml/markov';
@@ -45,18 +45,21 @@ export async function GET(req: NextRequest) {
   // ML results are cached per journal — observations were generated against
   // a specific journal's positions, so reading them with a different journal
   // scope would surface stale or irrelevant patterns.
-  const journalId = await resolveJournalId(walletAddress, sp.get('journalId'));
-  if (!journalId) {
+  const journalRes = await resolveJournalFilterId(walletAddress, sp.get('journalId'));
+  if (!journalRes.valid) {
     return NextResponse.json({ error: 'Journal not found for this wallet' }, { status: 404 });
   }
 
+  const obsWhere: any = {
+    walletAddress,
+    isActive: true,
+    sourceModule: { in: ML_MODULES as unknown as string[] },
+  };
+  // Default journal (id=null) → wallet-wide: no journalId filter on observations.
+  if (journalRes.id) obsWhere.journalId = journalRes.id;
+
   const rows = await prisma.boobaObservation.findMany({
-    where: {
-      walletAddress,
-      journalId,
-      isActive: true,
-      sourceModule: { in: ML_MODULES as unknown as string[] },
-    },
+    where: obsWhere,
     orderBy: { createdAt: 'desc' },
   });
 

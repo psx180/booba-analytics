@@ -15,7 +15,7 @@
  * updates immediately and downstream consumers see the new state.
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useJournal } from './JournalContext';
 
 const REGIMES = [
@@ -294,15 +294,17 @@ export default function ManageJournalsModal({ onClose }: { onClose: () => void }
                       </>
                     ) : (
                       <>
-                        <button
-                          onClick={() => {
-                            resetMessages();
-                            setAssignFor(assignFor === j.id ? null : j.id);
-                          }}
-                          className="px-2 py-1 text-xs text-[#8b949e] hover:text-white border border-[#30363d] rounded"
-                        >
-                          Assign Trades
-                        </button>
+                        {!j.isDefault && (
+                          <button
+                            onClick={() => {
+                              resetMessages();
+                              setAssignFor(assignFor === j.id ? null : j.id);
+                            }}
+                            className="px-2 py-1 text-xs text-[#8b949e] hover:text-white border border-[#30363d] rounded"
+                          >
+                            Assign Trades
+                          </button>
+                        )}
                         <button
                           onClick={() => {
                             resetMessages();
@@ -330,6 +332,7 @@ export default function ManageJournalsModal({ onClose }: { onClose: () => void }
                 {/* Assign sub-form */}
                 {assignFor === j.id && (
                   <AssignTradesForm
+                    walletAddress={walletAddress}
                     onCancel={() => setAssignFor(null)}
                     onSubmit={(f) => handleAssign(j.id, f)}
                     working={working}
@@ -356,11 +359,20 @@ export default function ManageJournalsModal({ onClose }: { onClose: () => void }
 
 // ─── Assign Trades Form ──────────────────────────────────────────────────────
 
+interface FilterOptions {
+  assets: string[];
+  tradeTypes: string[];
+  regimes: string[];
+  subaccounts: string[];
+}
+
 function AssignTradesForm({
+  walletAddress,
   onCancel,
   onSubmit,
   working,
 }: {
+  walletAddress: string;
   onCancel: () => void;
   onSubmit: (filter: AssignFilter) => void;
   working: boolean;
@@ -371,11 +383,23 @@ function AssignTradesForm({
   const [regime, setRegime] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [options, setOptions] = useState<FilterOptions>({
+    assets: [], tradeTypes: [], regimes: [], subaccounts: [],
+  });
+
+  useEffect(() => {
+    fetch(`/api/journals/filter-options?walletAddress=${encodeURIComponent(walletAddress)}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data && !data.error) setOptions(data);
+      })
+      .catch(() => {});
+  }, [walletAddress]);
 
   const submit = () => {
     const filter: AssignFilter = {};
-    if (asset.trim()) filter.asset = asset.trim().toUpperCase();
-    if (subaccount.trim()) filter.subaccount = subaccount.trim();
+    if (asset) filter.asset = asset;
+    if (subaccount) filter.subaccount = subaccount;
     if (tradeType) filter.tradeType = tradeType;
     if (regime) filter.regime = regime;
     if (dateFrom) filter.dateFrom = dateFrom;
@@ -384,8 +408,10 @@ function AssignTradesForm({
     onSubmit(filter);
   };
 
-  const empty =
-    !asset.trim() && !subaccount.trim() && !tradeType && !regime && !dateFrom && !dateTo;
+  const empty = !asset && !subaccount && !tradeType && !regime && !dateFrom && !dateTo;
+
+  const selectCls =
+    'bg-[#0d1117] border border-[#30363d] rounded px-2 py-1 text-xs text-[#e6edf3] focus:outline-none focus:border-blue-500';
 
   return (
     <div className="mt-3 pt-3 border-t border-[#21262d] space-y-2">
@@ -393,51 +419,41 @@ function AssignTradesForm({
         Move every matching position from any journal into this one
       </p>
       <div className="grid grid-cols-2 gap-2">
-        <input
-          type="text"
-          placeholder="Asset (e.g. BTC)"
-          value={asset}
-          onChange={(e) => setAsset(e.target.value)}
-          className="bg-[#0d1117] border border-[#30363d] rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
-        />
-        <input
-          type="text"
-          placeholder="Subaccount tag"
-          value={subaccount}
-          onChange={(e) => setSubaccount(e.target.value)}
-          className="bg-[#0d1117] border border-[#30363d] rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-blue-500"
-        />
-        <select
-          value={tradeType}
-          onChange={(e) => setTradeType(e.target.value)}
-          className="bg-[#0d1117] border border-[#30363d] rounded px-2 py-1 text-xs text-[#e6edf3] focus:outline-none focus:border-blue-500"
-        >
+        <select value={asset} onChange={(e) => setAsset(e.target.value)} className={selectCls}>
+          <option value="">Any asset</option>
+          {options.assets.map((a) => (
+            <option key={a} value={a}>{a}</option>
+          ))}
+        </select>
+        <select value={subaccount} onChange={(e) => setSubaccount(e.target.value)} className={selectCls}>
+          <option value="">Any subaccount</option>
+          {options.subaccounts.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+        <select value={tradeType} onChange={(e) => setTradeType(e.target.value)} className={selectCls}>
           <option value="">Any trade type</option>
-          {TRADE_TYPES.map((t) => (
+          {(options.tradeTypes.length > 0 ? options.tradeTypes : TRADE_TYPES).map((t) => (
             <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>
           ))}
         </select>
-        <select
-          value={regime}
-          onChange={(e) => setRegime(e.target.value)}
-          className="bg-[#0d1117] border border-[#30363d] rounded px-2 py-1 text-xs text-[#e6edf3] focus:outline-none focus:border-blue-500"
-        >
+        <select value={regime} onChange={(e) => setRegime(e.target.value)} className={selectCls}>
           <option value="">Any regime</option>
-          {REGIMES.map((r) => (
-            <option key={r.value} value={r.value}>{r.label}</option>
+          {(options.regimes.length > 0 ? options.regimes : REGIMES.map((r) => r.value)).map((r) => (
+            <option key={r} value={r}>{r.replace(/_/g, ' ')}</option>
           ))}
         </select>
         <input
           type="date"
           value={dateFrom}
           onChange={(e) => setDateFrom(e.target.value)}
-          className="bg-[#0d1117] border border-[#30363d] rounded px-2 py-1 text-xs text-[#e6edf3] focus:outline-none focus:border-blue-500"
+          className={selectCls}
         />
         <input
           type="date"
           value={dateTo}
           onChange={(e) => setDateTo(e.target.value)}
-          className="bg-[#0d1117] border border-[#30363d] rounded px-2 py-1 text-xs text-[#e6edf3] focus:outline-none focus:border-blue-500"
+          className={selectCls}
         />
       </div>
       <div className="flex gap-2 justify-end pt-1">

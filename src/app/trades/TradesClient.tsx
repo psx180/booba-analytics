@@ -1217,7 +1217,11 @@ export default function TradesClient({ walletAddress }: { walletAddress: string 
         // this view immediately — refresh both the table and the journal
         // list (counts) to reflect that.
         await Promise.all([fetchData(), refreshJournals()]);
-        setAnalyticsStale(true);
+        // Moving positions between journals doesn't change what "All Trades"
+        // shows (it aggregates everything), so only mark analytics stale when
+        // viewing a specific sub-journal whose visible positions just changed.
+        const activeIsDefault = journals.find((j) => j.id === journalId)?.isDefault ?? true;
+        if (!activeIsDefault) setAnalyticsStale(true);
         const target = journals.find((j) => j.id === targetJournalId);
         showToast(
           `Moved ${data.moved} position${data.moved === 1 ? '' : 's'} to "${target?.name ?? 'journal'}".`,
