@@ -5,6 +5,9 @@ import EquityCurve, { EquityPoint, TradeMeta, REGIME_LABELS } from './EquityCurv
 import UnderwaterCurve, { UnderwaterPoint } from './UnderwaterCurve';
 import { useJournal } from '../JournalContext';
 import { useAuthFetch } from '@/lib/api-client';
+import BoobaAvatar from '@/app/components/booba/BoobaAvatar';
+import { computeHealthScore } from '@/app/components/booba/computeHealthScore';
+import { getContextualMessage } from '@/app/components/booba/getContextualMessage';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -916,6 +919,36 @@ export default function DashboardClient() {
           </table>
         </div>
       )}
+
+      {/* ── Booba Avatar ──────────────────────────────────────────────────── */}
+      <BoobaAvatar
+        healthScore={computeHealthScore({
+          wartComposite: wartResult?.composite,
+          tiltScore: performance ? Math.round((performance.avgTiltScore ?? 0) * 100) : undefined,
+          eloTrend: eloResult?.recentTrend,
+          recentWinRate: performance?.winRate,
+          currentDrawdownPct: drawdownStats && drawdownStats.currentDrawdown < 0
+            ? -Math.abs(drawdownStats.currentDrawdownPct)
+            : undefined,
+        })}
+        insight={getContextualMessage('dashboard', {
+          wartResult: wartResult ?? undefined,
+          tiltEpisodeCount: performance?.tiltEpisodeCount ?? undefined,
+          eloResult: eloResult ?? undefined,
+          entropyResult: entropyResult ?? undefined,
+          xpnlLuckScore: xpnlSummary?.luckScore ?? undefined,
+          insights: insights.map((i) => ({
+            module: i.module,
+            title: i.title,
+            description: i.description,
+            isSignificant: i.isSignificant,
+            impactScore: i.impactScore,
+            data: i.data,
+          })),
+        })}
+        eloTrend={eloResult?.recentTrend}
+        wartTrend={wartResult?.composite}
+      />
     </div>
   );
 }

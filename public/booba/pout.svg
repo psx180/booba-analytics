@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 60" width="60" height="60">
+  <!-- face -->
+  <circle cx="30" cy="30" r="28" fill="#6366f1"/>
+  <!-- droopy sad eyes -->
+  <path d="M14 30 Q20 26 26 30" stroke="#1e293b" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <path d="M34 30 Q40 26 46 30" stroke="#1e293b" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <!-- sad downturned mouth -->
+  <path d="M20 43 Q30 37 40 43" stroke="#1e293b" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <!-- tear drop left -->
+  <path d="M20 33 Q22 38 20 42 Q18 38 20 33 Z" fill="#a5b4fc" opacity="0.8"/>
+</svg>

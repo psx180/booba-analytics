@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 60" width="60" height="60">
+  <!-- face -->
+  <circle cx="30" cy="30" r="28" fill="#3b82f6"/>
+  <!-- left eye - half closed (arc bottom) -->
+  <path d="M14 28 Q20 23 26 28" stroke="#1e293b" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <!-- right eye - half closed -->
+  <path d="M34 28 Q40 23 46 28" stroke="#1e293b" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <!-- gentle smile -->
+  <path d="M22 38 Q30 44 38 38" stroke="#1e293b" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <!-- blush left -->
+  <ellipse cx="15" cy="34" rx="5" ry="3" fill="#93c5fd" opacity="0.45"/>
+  <!-- blush right -->
+  <ellipse cx="45" cy="34" rx="5" ry="3" fill="#93c5fd" opacity="0.45"/>
+</svg>

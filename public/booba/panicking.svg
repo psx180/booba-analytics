@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 60" width="60" height="60">
+  <defs>
+    <filter id="panic-glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <!-- face with red glow -->
+  <circle cx="30" cy="30" r="28" fill="#dc2626" filter="url(#panic-glow)"/>
+  <!-- X left eye -->
+  <line x1="14" y1="22" x2="23" y2="31" stroke="#1e293b" stroke-width="3" stroke-linecap="round"/>
+  <line x1="23" y1="22" x2="14" y2="31" stroke="#1e293b" stroke-width="3" stroke-linecap="round"/>
+  <!-- X right eye -->
+  <line x1="37" y1="22" x2="46" y2="31" stroke="#1e293b" stroke-width="3" stroke-linecap="round"/>
+  <line x1="46" y1="22" x2="37" y2="31" stroke="#1e293b" stroke-width="3" stroke-linecap="round"/>
+  <!-- open screaming mouth -->
+  <ellipse cx="30" cy="44" rx="10" ry="7" fill="#1e293b"/>
+  <ellipse cx="30" cy="42" rx="7.5" ry="4.5" fill="#dc2626"/>
+  <!-- flying sweat drops -->
+  <path d="M51 8 Q54 13 51 17 Q48 13 51 8 Z" fill="#93c5fd"/>
+  <path d="M8 10 Q11 15 8 19 Q5 15 8 10 Z" fill="#93c5fd"/>
+</svg>

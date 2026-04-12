@@ -18,6 +18,38 @@ body {
   box-sizing: border-box;
 }
 
+/* ── Booba Avatar Animations ─────────────────────────────────────────────── */
+@keyframes booba-float {
+  0%, 100% { transform: translateY(2px); }
+  50%       { transform: translateY(-2px); }
+}
+@keyframes booba-breathe {
+  0%, 100% { transform: scale(1); }
+  50%       { transform: scale(1.02); }
+}
+@keyframes booba-pulse-opacity {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.88; }
+}
+@keyframes booba-shake {
+  0%, 100% { transform: translateX(-1px); }
+  50%       { transform: translateX(1px); }
+}
+@keyframes booba-panic-shake {
+  0%, 100% { transform: translateX(-2px); }
+  50%       { transform: translateX(2px); }
+}
+@keyframes booba-panic-glow {
+  0%, 100% { box-shadow: 0 0 8px 3px rgba(239, 68, 68, 0.25); border-radius: 50%; }
+  50%       { box-shadow: 0 0 18px 8px rgba(239, 68, 68, 0.55); border-radius: 50%; }
+}
+
+.booba-money-mode { animation: booba-float 3s ease-in-out infinite; }
+.booba-calm       { animation: booba-breathe 4s ease-in-out infinite; }
+.booba-alert      { animation: booba-pulse-opacity 1.5s ease-in-out infinite; }
+.booba-nervous    { animation: booba-shake 0.5s ease-in-out infinite; }
+.booba-panicking  { animation: booba-panic-shake 0.3s ease-in-out infinite, booba-panic-glow 0.6s ease-in-out infinite; }
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 6px;

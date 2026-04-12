@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 60" width="60" height="60">
+  <defs>
+    <filter id="glow" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="2.5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <!-- face -->
+  <circle cx="30" cy="30" r="28" fill="#16a34a" filter="url(#glow)"/>
+  <!-- sunglasses left lens -->
+  <rect x="9" y="22" width="16" height="10" rx="4" fill="#0f172a"/>
+  <!-- sunglasses right lens -->
+  <rect x="35" y="22" width="16" height="10" rx="4" fill="#0f172a"/>
+  <!-- bridge -->
+  <rect x="25" y="24.5" width="10" height="3" rx="1.5" fill="#0f172a"/>
+  <!-- smile -->
+  <path d="M18 40 Q30 50 42 40" stroke="#0f172a" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <!-- sparkle top-right -->
+  <polygon points="50,7 51.2,10.8 55,12 51.2,13.2 50,17 48.8,13.2 45,12 48.8,10.8" fill="#fde68a"/>
+  <!-- sparkle top-left -->
+  <polygon points="9,5 10,7.8 12.8,8.8 10,9.8 9,12.6 8,9.8 5.2,8.8 8,7.8" fill="#fde68a"/>
+</svg>
