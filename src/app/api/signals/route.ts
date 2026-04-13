@@ -1,11 +1,38 @@
 /**
  * GET  /api/signals — List signals for the authenticated wallet
  * POST /api/signals — Create a new signal
+ *
+ * POST also accepts bot auth: if `x-bot-api-key` matches BOT_API_KEY env var,
+ * Privy auth is skipped and DEFAULT_WALLET_ADDRESS is used as the wallet.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { withAuth } from '@/lib/api-auth';
 import { prisma } from '@/lib/prisma';
+
+/**
+ * Resolve the wallet address for a request, preferring bot API key auth over
+ * Privy. Returns null if neither path authenticates.
+ *
+ * Bot auth is only enabled when BOT_API_KEY is set in the environment —
+ * if the env var is absent, bot key headers are ignored and Privy is required.
+ */
+async function resolveBotOrPrivy(
+  req: NextRequest,
+  handler: (walletAddress: string) => Promise<NextResponse>,
+): Promise<NextResponse> {
+  const botKey = process.env.BOT_API_KEY;
+  const defaultWallet = process.env.DEFAULT_WALLET_ADDRESS;
+
+  if (botKey && defaultWallet) {
+    const provided = req.headers.get('x-bot-api-key');
+    if (provided === botKey) {
+      return handler(defaultWallet);
+    }
+  }
+
+  return withAuth(req, handler);
+}
 
 // ── GET ─────────────────────────────────────────────────────────────────────
 
@@ -41,7 +68,7 @@ export async function GET(req: NextRequest) {
 // ── POST ────────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  return withAuth(req, async (walletAddress) => {
+  return resolveBotOrPrivy(req, async (walletAddress) => {
     let body: {
       asset: string;
       direction: string;
