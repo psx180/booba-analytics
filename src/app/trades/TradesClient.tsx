@@ -6,6 +6,7 @@ import TradeAnnotationPopup, { type PopupPosition } from '@/app/components/trade
 import BoobaAvatar from '@/app/components/booba/BoobaAvatar';
 import BoobaChat from '@/app/components/booba/BoobaChat';
 import { useJournal } from '../JournalContext';
+import { useLive } from '../LiveContext';
 import { useAuthFetch } from '@/lib/api-client';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -949,6 +950,7 @@ export default function TradesClient() {
   // journal — and the wallet itself is the Privy-authenticated one (or
   // the dev wallet in dev-bypass mode).
   const { journalId, journals, buildParams, refresh: refreshJournals } = useJournal();
+  const { lastSyncImport } = useLive();
   const authFetch = useAuthFetch();
   const [chatOpen, setChatOpen] = useState(false);
   const [tradeUnits, setTradeUnits] = useState<TradeUnit[]>([]);
@@ -975,6 +977,11 @@ export default function TradesClient() {
   const [boobaInsight, setBoobaInsight] = useState<string | null>(null);
   const [untaggedCount, setUntaggedCount] = useState(0);
   const [untaggedIds, setUntaggedIds] = useState<string[]>([]);
+  // Sync button state
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [syncCooldown, setSyncCooldown] = useState(false);
+  const hasMountSynced = useRef(false);
+  const syncCooldownTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -1024,6 +1031,36 @@ export default function TradesClient() {
     fetchData();
   }, [fetchData, journalId]);
   useEffect(() => { setPage(1); }, [filters, sortBy, sortDir]);
+
+  // ── Mount-time sync ─────────────────────────────────────────────────────
+  // Non-blocking: page data loads from cache/DB immediately, then this runs
+  // in the background to catch any fills missed while the app was closed.
+  useEffect(() => {
+    if (!journalId || hasMountSynced.current) return;
+    hasMountSynced.current = true;
+    authFetch('/api/sync', { method: 'POST' })
+      .then((r) => r.json())
+      .then((data: { imported?: number }) => {
+        if ((data.imported ?? 0) > 0) fetchData();
+      })
+      .catch(() => {});
+  // fetchData and authFetch are stable callbacks — including them satisfies
+  // the linter without causing re-runs.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [journalId]);
+
+  // ── React to background polling sync finds ──────────────────────────────
+  // When the 60-second poller in usePacificaLive finds new trades it bumps
+  // lastSyncImport. Refresh the table so the new fills appear.
+  const lastSyncImportRef = useRef(lastSyncImport);
+  useEffect(() => {
+    if (lastSyncImport === lastSyncImportRef.current) return;
+    lastSyncImportRef.current = lastSyncImport;
+    fetchData();
+    showToast('New trades synced — list refreshed.');
+  // fetchData / showToast are stable; lastSyncImport drives the logic.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastSyncImport]);
 
   const handleSort = (field: string) => {
     if (sortBy === field) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -1213,6 +1250,30 @@ export default function TradesClient() {
       setAnnotatePositionId(null);
     }
   }, [annotateQueue, fetchData]);
+
+  // ── Manual sync button ─────────────────────────────────────────────────
+  const handleManualSync = useCallback(async () => {
+    if (syncLoading || syncCooldown) return;
+    setSyncLoading(true);
+    try {
+      const res = await authFetch('/api/sync', { method: 'POST' });
+      const data = (await res.json()) as { imported?: number };
+      const imported = data.imported ?? 0;
+      if (imported > 0) {
+        await fetchData();
+        showToast(`Synced ${imported} new trade${imported === 1 ? '' : 's'}.`);
+      } else {
+        showToast('Up to date — no new trades found.');
+      }
+    } catch {
+      // silently swallow; user can retry after cooldown
+    } finally {
+      setSyncLoading(false);
+      setSyncCooldown(true);
+      if (syncCooldownTimer.current) clearTimeout(syncCooldownTimer.current);
+      syncCooldownTimer.current = setTimeout(() => setSyncCooldown(false), 10_000);
+    }
+  }, [syncLoading, syncCooldown, authFetch, fetchData, showToast]);
 
   // ── Move position(s) to a different journal ───────────────────────────────
   // Used by both the per-row three-dot menu (single id) and the floating
@@ -1444,6 +1505,27 @@ export default function TradesClient() {
               Clear filters
             </button>
           )}
+          {/* Manual sync button */}
+          <button
+            onClick={handleManualSync}
+            disabled={syncLoading || syncCooldown}
+            title={syncCooldown ? 'Up to date' : 'Sync new trades from Pacifica'}
+            className={`ml-auto self-end flex items-center gap-1.5 px-3 py-1.5 rounded text-xs border transition-colors ${
+              syncCooldown
+                ? 'text-emerald-400 border-emerald-800/50 bg-emerald-900/20 cursor-default'
+                : syncLoading
+                ? 'text-[#6e7681] border-[#30363d] bg-[#21262d] cursor-wait'
+                : 'text-[#8b949e] border-[#30363d] bg-[#21262d] hover:text-white hover:border-[#6e7681]'
+            }`}
+          >
+            <span
+              className={`text-sm leading-none ${syncLoading ? 'animate-spin' : ''}`}
+              style={syncLoading ? { display: 'inline-block' } : undefined}
+            >
+              {syncCooldown ? '✓' : '↻'}
+            </span>
+            <span>{syncLoading ? 'Syncing…' : syncCooldown ? 'Up to date' : 'Sync'}</span>
+          </button>
         </div>
       </div>
 

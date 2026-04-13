@@ -14,7 +14,7 @@ const tabs = [
   { href: '/analytics', label: 'Analytics' },
   { href: '/signals', label: 'Signals' },
   { href: '#', label: 'Auctions', disabled: true },
-  { href: '#', label: 'Settings', disabled: true },
+  { href: '/settings', label: 'Settings' },
 ];
 
 function truncate(addr: string): string {

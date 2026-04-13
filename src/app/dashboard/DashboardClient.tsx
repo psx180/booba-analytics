@@ -302,12 +302,14 @@ export default function DashboardClient() {
   } | null>(null);
 
   // ── Live websocket state ──
-  const { openPositions, initialPositions, lastTrade, lastClosedTrade, connected } = useLive();
+  const { openPositions, initialPositions, lastTrade, lastClosedTrade, connected, lastSyncImport } = useLive();
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [livePopup, setLivePopup] = useState<PopupPosition | null>(null);
   const [liveHealthBoost, setLiveHealthBoost] = useState(0);
   const lastTradeSeenRef = useRef<number>(0);
   const lastClosedSeenRef = useRef<number>(0);
+  const hasMountSynced = useRef(false);
+  const lastSyncImportRef = useRef(lastSyncImport);
 
   const pushToast = useCallback((message: string, kind: Toast['kind'] = 'info') => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -436,6 +438,41 @@ export default function DashboardClient() {
     if (!journalId) return;
     fetchData(activeRegime);
   }, [fetchData, activeRegime, journalId]);
+
+  // ── Mount-time sync ──────────────────────────────────────────────────────
+  // Non-blocking: page renders from cache immediately, then checks for any
+  // fills that arrived while the app was closed or the user was on another page.
+  useEffect(() => {
+    if (!journalId || hasMountSynced.current) return;
+    hasMountSynced.current = true;
+    authFetch('/api/sync', { method: 'POST' })
+      .then((r) => r.json())
+      .then((data: { imported?: number }) => {
+        if ((data.imported ?? 0) > 0) {
+          // Clear the cache so the next fetchData call does a real fetch,
+          // then refresh in the background (no spinner).
+          const cacheKey = `${journalId}|${activeRegime ?? ''}`;
+          dashboardCache.delete(cacheKey);
+          doFetch(activeRegime, true).catch(console.error);
+        }
+      })
+      .catch(() => {});
+  // authFetch, doFetch, activeRegime are stable for this one-shot effect.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [journalId]);
+
+  // ── React to background polling sync finds ───────────────────────────────
+  // When the 60-second poller finds new trades it bumps lastSyncImport.
+  // Background-refresh the dashboard so the new fills appear.
+  useEffect(() => {
+    if (lastSyncImport === lastSyncImportRef.current) return;
+    lastSyncImportRef.current = lastSyncImport;
+    if (!journalId) return;
+    const cacheKey = `${journalId}|${activeRegime ?? ''}`;
+    dashboardCache.delete(cacheKey);
+    doFetch(activeRegime, true).catch(console.error);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastSyncImport]);
 
   // ── Live: react to new fills ───────────────────────────────────────────────
   // On isNewPosition=true → fetch the full Position, open TradeAnnotationPopup

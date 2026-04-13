@@ -19,6 +19,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePrivy } from '@privy-io/react-auth';
 import { isDevBypass } from '@/app/privy-env';
 
+const SYNC_POLL_INTERVAL_MS = 60_000;
+
 export interface LivePositionRow {
   symbol: string;
   side: 'long' | 'short';
@@ -74,6 +76,12 @@ export interface PacificaLiveState {
   lastClosedTrade: PositionClosedData | null;
   connected: boolean;
   streamOpen: boolean;
+  /**
+   * Incremented each time the background sync poll imports new trades.
+   * Consumers (TradesClient, DashboardClient) watch this value to trigger
+   * a silent data refresh when the polling fallback finds missed fills.
+   */
+  lastSyncImport: number;
 }
 
 export function usePacificaLive(): PacificaLiveState {
@@ -83,6 +91,7 @@ export function usePacificaLive(): PacificaLiveState {
   const [lastClosedTrade, setLastClosedTrade] = useState<PositionClosedData | null>(null);
   const [connected, setConnected] = useState(false);
   const [streamOpen, setStreamOpen] = useState(false);
+  const [lastSyncImport, setLastSyncImport] = useState(0);
 
   const devBypass = isDevBypass();
   const getTokenRef = useRef<(() => Promise<string | null>) | null>(null);
@@ -192,6 +201,33 @@ export function usePacificaLive(): PacificaLiveState {
     };
   }, [devBypass, handleEvent]);
 
+  // ── Background sync polling ──────────────────────────────────────────────
+  // Calls POST /api/sync every 60 seconds as a belt-and-suspenders fallback
+  // for any fills the websocket may have missed. Silent — no UI indicator.
+  // On imported > 0, bumps lastSyncImport so page-level consumers can react.
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (!devBypass && getTokenRef.current) {
+          const token = await getTokenRef.current();
+          if (token) headers.Authorization = `Bearer ${token}`;
+        }
+        const res = await fetch('/api/sync', { method: 'POST', headers });
+        if (!res.ok) return;
+        const data = (await res.json()) as { imported?: number };
+        if ((data.imported ?? 0) > 0) {
+          setLastSyncImport((n) => n + 1);
+        }
+      } catch {
+        // silent — retry next interval
+      }
+    };
+
+    const timer = setInterval(poll, SYNC_POLL_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [devBypass]);
+
   return {
     openPositions,
     initialPositions,
@@ -199,5 +235,6 @@ export function usePacificaLive(): PacificaLiveState {
     lastClosedTrade,
     connected,
     streamOpen,
+    lastSyncImport,
   };
 }
