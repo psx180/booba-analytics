@@ -668,7 +668,6 @@ function BehaviorTab({
           </p>
         </div>
       )}
-      <PatternsSection />
     </div>
   );
 }
