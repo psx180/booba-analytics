@@ -45,6 +45,18 @@ export interface NewTradeData {
   pnl: number | null;
   isNewPosition: boolean;
   receivedAt: number;
+  sessionWarning?: {
+    tradeNumber: number;
+    optimalStop: number;
+    avgPnlAfterOptimal: number;
+  };
+  regimeContext?: {
+    currentRegime: string;
+    assetRegimeWinRate: number;
+    baselineWinRate: number;
+    assetRegimeAvgPnl: number;
+    tradeCountInRegime: number;
+  };
 }
 
 export interface PositionClosedData {

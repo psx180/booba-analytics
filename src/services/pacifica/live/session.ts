@@ -78,6 +78,8 @@ class LiveSession extends EventEmitter {
   private lastPriceEmitAt = 0;
   private priceEmitTimer: ReturnType<typeof setTimeout> | null = null;
   private fillQueue: Promise<unknown> = Promise.resolve();
+  private sessionTradeCount = 0;
+  private lastTradeAt = 0;
 
   constructor(public readonly walletAddress: string) {
     super();
@@ -175,14 +177,41 @@ class LiveSession extends EventEmitter {
 
   // ── Handlers ──
 
+  // ── Session trade counting ──
+  //
+  // Reset at midnight UTC or after 8 hours of inactivity — whichever
+  // fires first. Returns the incremented count after reset logic runs.
+  private getAndIncrementSessionCount(): number {
+    const now = Date.now();
+    const eightHours = 8 * 60 * 60 * 1_000;
+
+    if (this.lastTradeAt > 0) {
+      const lastDate = new Date(this.lastTradeAt);
+      const nowDate  = new Date(now);
+      const crossedMidnight =
+        nowDate.getUTCFullYear() !== lastDate.getUTCFullYear() ||
+        nowDate.getUTCMonth()    !== lastDate.getUTCMonth()    ||
+        nowDate.getUTCDate()     !== lastDate.getUTCDate();
+      const inactiveReset = now - this.lastTradeAt > eightHours;
+      if (crossedMidnight || inactiveReset) {
+        this.sessionTradeCount = 0;
+      }
+    }
+
+    this.lastTradeAt = now;
+    this.sessionTradeCount++;
+    return this.sessionTradeCount;
+  }
+
   private onAccountTrade(data: WsAccountTrade['data']): void {
     console.log(
       `[live ${short(this.walletAddress)}] fill ${data.side} ${data.amount} ${data.symbol} @ ${data.price}`,
     );
+    const sessionTradeNumber = this.getAndIncrementSessionCount();
     // Serialize fill processing so two near-simultaneous partial fills can't
     // race on the "find open position" lookup and create two positions.
     this.fillQueue = this.fillQueue
-      .then(() => handleAccountTrade(this.walletAddress, data))
+      .then(() => handleAccountTrade(this.walletAddress, data, sessionTradeNumber))
       .then((events) => {
         for (const e of events) this.emit('event', e);
       })

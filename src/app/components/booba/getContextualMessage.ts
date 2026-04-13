@@ -1,5 +1,7 @@
 export interface BoobaAnalyticsData {
   untaggedPositionCount?: number;
+  /** Total closed trade count. Analytics messages are suppressed below 15. */
+  totalTrades?: number;
   /** ISO timestamp of the last analytics compute run. Used for stale-data nudge. */
   lastComputedAt?: string | null;
   wartResult?: {
@@ -35,6 +37,21 @@ export function getContextualMessage(
   data: BoobaAnalyticsData,
 ): string | null {
   if (page === 'dashboard') {
+    const totalTrades = data.totalTrades ?? 0;
+    const untagged = data.untaggedPositionCount ?? 0;
+
+    // Below the minimum threshold, only show onboarding messages.
+    // The untagged nudge is exempt — always useful regardless of trade count.
+    if (totalTrades < 15) {
+      if (untagged > 0) {
+        return `${untagged} new trade${untagged === 1 ? '' : 's'} have no thesis. Want to add context?`;
+      }
+      const remaining = 15 - totalTrades;
+      return totalTrades === 0
+        ? 'Welcome! Start trading — analytics unlock after 15 trades.'
+        : `Keep trading! Analytics unlock after ${remaining} more trade${remaining === 1 ? '' : 's'}.`;
+    }
+
     // Build two pools: analytics messages and the untagged nudge.
     const analyticsMsgs: string[] = [];
 
@@ -104,7 +121,6 @@ export function getContextualMessage(
       analyticsMsgs.push(topInsight.description);
     }
 
-    const untagged = data.untaggedPositionCount ?? 0;
     const untaggedMsg =
       untagged > 0
         ? `${untagged} new trade${untagged === 1 ? '' : 's'} have no thesis. Want to add context?`

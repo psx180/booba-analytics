@@ -32,6 +32,18 @@ export interface NewTradeEvent {
     price: number;
     pnl: number | null;
     isNewPosition: boolean;
+    sessionWarning?: {
+      tradeNumber: number;
+      optimalStop: number;
+      avgPnlAfterOptimal: number;
+    };
+    regimeContext?: {
+      currentRegime: string;
+      assetRegimeWinRate: number;
+      baselineWinRate: number;
+      assetRegimeAvgPnl: number;
+      tradeCountInRegime: number;
+    };
   };
 }
 
@@ -49,9 +61,102 @@ export type FillEvent = NewTradeEvent | PositionClosedEvent;
 
 const groupingService = new GroupingService();
 
+const DEFAULT_OPTIMAL_TRADES = 20;
+const ONE_HOUR_MS = 60 * 60 * 1_000;
+const MIN_REGIME_SAMPLE = 5;
+
+/** Fetch the user's decision-fatigue optimal trade cutoff from the stored insight. */
+async function fetchOptimalTradeCount(walletAddress: string): Promise<number> {
+  try {
+    const obs = await prisma.boobaObservation.findFirst({
+      where: { walletAddress, sourceModule: 'time-of-day-edge', isActive: true },
+      orderBy: { createdAt: 'desc' },
+      select: { observationText: true },
+    });
+    if (!obs) return DEFAULT_OPTIMAL_TRADES;
+    const insight = JSON.parse(obs.observationText) as {
+      data?: { fatigue?: { optimalCutoff?: number; lateAvg?: number } };
+    };
+    return insight?.data?.fatigue?.optimalCutoff ?? DEFAULT_OPTIMAL_TRADES;
+  } catch {
+    return DEFAULT_OPTIMAL_TRADES;
+  }
+}
+
+/** Look up the avg P&L after the optimal cutoff from the stored insight. */
+async function fetchLateAvgPnl(walletAddress: string): Promise<number> {
+  try {
+    const obs = await prisma.boobaObservation.findFirst({
+      where: { walletAddress, sourceModule: 'time-of-day-edge', isActive: true },
+      orderBy: { createdAt: 'desc' },
+      select: { observationText: true },
+    });
+    if (!obs) return 0;
+    const insight = JSON.parse(obs.observationText) as {
+      data?: { fatigue?: { lateAvg?: number } };
+    };
+    return insight?.data?.fatigue?.lateAvg ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Compute regime-conditional stats for a wallet + asset from closed positions. */
+async function fetchRegimeContext(
+  walletAddress: string,
+  asset: string,
+): Promise<NewTradeEvent['data']['regimeContext']> {
+  try {
+    // Use the most recent BTC regime snapshot as the market proxy.
+    const snapshot = await prisma.regimeSnapshot.findFirst({
+      where: { asset: 'BTC', timestamp: { lte: new Date() } },
+      orderBy: { timestamp: 'desc' },
+      select: { regimeClassification: true, timestamp: true },
+    });
+    if (!snapshot?.regimeClassification) return undefined;
+    if (Date.now() - snapshot.timestamp.getTime() > ONE_HOUR_MS) return undefined;
+
+    const currentRegime = snapshot.regimeClassification;
+
+    const [allClosed, assetRegimeClosed] = await Promise.all([
+      prisma.position.findMany({
+        where: { walletAddress, status: 'closed' },
+        select: { aggregatePnl: true },
+      }),
+      prisma.position.findMany({
+        where: { walletAddress, asset, regimeAtEntry: currentRegime, status: 'closed' },
+        select: { aggregatePnl: true },
+      }),
+    ]);
+
+    if (allClosed.length === 0 || assetRegimeClosed.length < MIN_REGIME_SAMPLE) return undefined;
+
+    const baselineWinRate =
+      (allClosed.filter((p) => (p.aggregatePnl ?? 0) > 0).length / allClosed.length) * 100;
+    const assetRegimeWinRate =
+      (assetRegimeClosed.filter((p) => (p.aggregatePnl ?? 0) > 0).length /
+        assetRegimeClosed.length) *
+      100;
+    const assetRegimeAvgPnl =
+      assetRegimeClosed.reduce((s, p) => s + (p.aggregatePnl ?? 0), 0) /
+      assetRegimeClosed.length;
+
+    return {
+      currentRegime,
+      assetRegimeWinRate,
+      baselineWinRate,
+      assetRegimeAvgPnl,
+      tradeCountInRegime: assetRegimeClosed.length,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 export async function handleAccountTrade(
   walletAddress: string,
   raw: WsAccountTrade['data'],
+  sessionTradeNumber = 1,
 ): Promise<FillEvent[]> {
   if (raw.history_id == null) return [];
 
@@ -90,6 +195,29 @@ export async function handleAccountTrade(
   const events: FillEvent[] = [];
   const side: 'long' | 'short' = entry.side.includes('long') ? 'long' : 'short';
 
+  // ── Enrichment (session fatigue + regime context) ──────────────────────
+  // Both run in parallel and fail gracefully — a thrown error just skips
+  // the enrichment rather than blocking the trade event.
+  const [optimalStop, lateAvgPnl, regimeContext] = await Promise.all([
+    fetchOptimalTradeCount(walletAddress),
+    fetchLateAvgPnl(walletAddress),
+    fetchRegimeContext(walletAddress, entry.symbol),
+  ]);
+
+  const sessionWarning: NewTradeEvent['data']['sessionWarning'] =
+    sessionTradeNumber > optimalStop
+      ? { tradeNumber: sessionTradeNumber, optimalStop, avgPnlAfterOptimal: lateAvgPnl }
+      : undefined;
+
+  console.log(
+    `[live] Trade #${sessionTradeNumber} in session (optimal: ${optimalStop})`,
+  );
+  if (regimeContext) {
+    console.log(
+      `[live] Regime context: ${regimeContext.currentRegime}, asset win rate: ${regimeContext.assetRegimeWinRate.toFixed(1)}%`,
+    );
+  }
+
   events.push({
     type: 'new_trade',
     data: {
@@ -100,6 +228,8 @@ export async function handleAccountTrade(
       price: parseFloat(entry.price),
       pnl: entry.pnl ? parseFloat(entry.pnl) : null,
       isNewPosition: grouped.isNewPosition,
+      ...(sessionWarning && { sessionWarning }),
+      ...(regimeContext && { regimeContext }),
     },
   });
 

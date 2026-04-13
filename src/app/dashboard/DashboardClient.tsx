@@ -488,6 +488,37 @@ export default function DashboardClient() {
         'info',
       );
     }
+
+    // Session fatigue warning
+    if (lastTrade.sessionWarning) {
+      const { tradeNumber, optimalStop, avgPnlAfterOptimal } = lastTrade.sessionWarning;
+      pushToast(
+        `Trade #${tradeNumber} this session. Your data shows performance drops after trade #${optimalStop}. Avg P&L after that: $${avgPnlAfterOptimal.toFixed(2)}/trade.`,
+        'warn',
+      );
+      setLiveHealthBoost((prev) => prev - 8);
+    }
+
+    // Regime context
+    if (lastTrade.regimeContext) {
+      const { currentRegime, assetRegimeWinRate, baselineWinRate } = lastTrade.regimeContext;
+      const diff = assetRegimeWinRate - baselineWinRate;
+      if (Math.abs(diff) > 5) {
+        const regime = currentRegime.replace(/_/g, ' ');
+        if (diff < 0) {
+          pushToast(
+            `Regime: ${regime}. ${lastTrade.symbol} win rate here: ${assetRegimeWinRate.toFixed(1)}% vs ${baselineWinRate.toFixed(1)}% baseline. Consider reducing size.`,
+            'warn',
+          );
+          setLiveHealthBoost((prev) => prev - 5);
+        } else {
+          pushToast(
+            `Regime: ${regime}. You perform well here — ${assetRegimeWinRate.toFixed(1)}% win rate vs ${baselineWinRate.toFixed(1)}% baseline.`,
+            'info',
+          );
+        }
+      }
+    }
   }, [lastTrade, authFetch, pushToast]);
 
   // ── Live: react to closed positions ────────────────────────────────────────
@@ -917,6 +948,7 @@ export default function DashboardClient() {
         insight={chatOpen ? null : getContextualMessage('dashboard', {
           untaggedPositionCount,
           lastComputedAt,
+          totalTrades: performance?.tradeCount ?? 0,
           wartResult: wartResult ?? undefined,
           tiltEpisodeCount: performance?.tiltEpisodeCount ?? undefined,
           eloResult: eloResult ?? undefined,
