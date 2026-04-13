@@ -109,9 +109,13 @@ export async function POST(req: NextRequest) {
     // but kept as optional override so the route stays backwards-compatible.
     if (withRegimes) {
       try {
-        const { AdxAtrDetector, BinanceCandleSource, RegimeService } = await import('@/services/regime');
+        const { AdxAtrDetector, RegimeService } = await import('@/services/regime');
+        const { getCandleCache, CacheBackedCandleSource } = await import('@/services/candles');
         const detector = new AdxAtrDetector();
-        const source = new BinanceCandleSource();
+        const source = new CacheBackedCandleSource(
+          getCandleCache(),
+          (asset) => asset.replace(/USDT$/, ''),
+        );
         const regimeService = new RegimeService(detector, source);
 
         const end = new Date();

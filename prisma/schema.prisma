@@ -328,6 +328,33 @@ model RegimeSnapshot {
   @@index([asset, timestamp])
 }
 
+// ─── Candle Cache ──────────────────────────────────────────────────────────────
+//
+// Server-wide OHLCV cache, populated on demand by anything that fetches
+// candles through the cache layer (exit-quality MFE/MAE, regime detection,
+// trade replay). One row per (asset, timeframe, timestamp) — the `source`
+// field records which backend (pacifica / bybit / binance) served the data
+// so we can prefer higher-fidelity sources on refetch. Asset uses Pacifica
+// symbol notation ('BTC', 'SOL', 'kPEPE') — adapters inside the cache do
+// the symbol mapping for Bybit/Binance requests.
+
+model CandleCache {
+  id        String   @id @default(cuid())
+  asset     String
+  timeframe String   // '1m', '5m', '15m', '1h', '4h', '1d'
+  timestamp DateTime
+  open      Float
+  high      Float
+  low       Float
+  close     Float
+  volume    Float
+  source    String   // 'pacifica' | 'bybit' | 'binance'
+  createdAt DateTime @default(now())
+
+  @@unique([asset, timeframe, timestamp])
+  @@index([asset, timeframe, timestamp])
+}
+
 // ─── Alerts ────────────────────────────────────────────────────────────────────
 
 model Alert {

@@ -30,9 +30,13 @@ export async function POST(req: NextRequest) {
       // Slow tier: exit-quality candle fetch + regime computation. No insights re-run.
       const metricsSummary = await service.computeMetrics(walletAddress, journalScope, 'slow');
       try {
-        const { AdxAtrDetector, BinanceCandleSource, RegimeService } = await import('@/services/regime');
+        const { AdxAtrDetector, RegimeService } = await import('@/services/regime');
+        const { getCandleCache, CacheBackedCandleSource } = await import('@/services/candles');
         const detector = new AdxAtrDetector();
-        const source = new BinanceCandleSource();
+        const source = new CacheBackedCandleSource(
+          getCandleCache(),
+          (asset) => asset.replace(/USDT$/, ''),
+        );
         const regimeService = new RegimeService(detector, source);
         const end = new Date();
         const start = new Date(end.getTime() - 365 * 86_400_000);

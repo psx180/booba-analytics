@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
 import { useAuthFetch } from '@/lib/api-client';
+import TradeReplay from './TradeReplay';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -19,8 +20,10 @@ interface PositionDetail {
   aggregateFunding: number | null;
   holdTimeSeconds: number | null;
   mfePnl: number | null;
+  mfePrice: number | null;
   mfePriceDiff?: number | null;
   maePnl: number | null;
+  maePrice: number | null;
   exitEfficiency: number | null;
   moneyLeftOnTable: number | null;
   tiltScore: number | null;
@@ -274,6 +277,9 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
   const [loadingCandidates, setLoadingCandidates] = useState(false);
   const [moveToast, setMoveToast] = useState<string | null>(null);
 
+  // Active tab in the modal body ('details' vs. 'replay')
+  const [activeTab, setActiveTab] = useState<'details' | 'replay'>('details');
+
   const overlayRef = useRef<HTMLDivElement>(null);
 
   // Close on Escape
@@ -490,6 +496,52 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
               </div>
             </div>
 
+            {/* ── Tabs ─────────────────────────────────────────────────── */}
+            <div className="px-6 border-b border-[#21262d] flex gap-1">
+              <button
+                onClick={() => setActiveTab('details')}
+                className={`px-3 py-2 text-xs uppercase tracking-widest border-b-2 -mb-px transition-colors ${
+                  activeTab === 'details'
+                    ? 'border-blue-500 text-white'
+                    : 'border-transparent text-[#6e7681] hover:text-[#e6edf3]'
+                }`}
+              >
+                Details
+              </button>
+              <button
+                onClick={() => setActiveTab('replay')}
+                className={`px-3 py-2 text-xs uppercase tracking-widest border-b-2 -mb-px transition-colors ${
+                  activeTab === 'replay'
+                    ? 'border-blue-500 text-white'
+                    : 'border-transparent text-[#6e7681] hover:text-[#e6edf3]'
+                }`}
+              >
+                Replay
+              </button>
+            </div>
+
+            {activeTab === 'replay' ? (
+              <div className="px-6 py-5">
+                <TradeReplay
+                  position={{
+                    id: position.id,
+                    asset: position.asset,
+                    direction: position.direction,
+                    averageEntryPrice: position.averageEntryPrice,
+                    averageExitPrice: position.averageExitPrice,
+                    totalSize: position.totalSize,
+                    aggregatePnl: position.aggregatePnl,
+                    firstEntryTime: position.firstEntryTime,
+                    lastExitTime: position.lastExitTime,
+                    mfePrice: position.mfePrice,
+                    maePrice: position.maePrice,
+                    exitEfficiency: position.exitEfficiency,
+                    holdTimeSeconds: position.holdTimeSeconds,
+                  }}
+                />
+              </div>
+            ) : (
+            <>
             {/* ── Metrics Grid ────────────────────────────────────────── */}
             <div className="px-6 py-4 border-b border-[#21262d]">
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -772,6 +824,8 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
                   })}
                 </div>
               </div>
+            )}
+            </>
             )}
           </div>
         )}

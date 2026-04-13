@@ -50,9 +50,17 @@ export async function runCompute(
   if (tiers.includes('slow')) {
     await service.computeMetrics(walletAddress, journalId, 'slow');
     try {
-      const { AdxAtrDetector, BinanceCandleSource, RegimeService } = await import('./regime');
+      const { AdxAtrDetector, RegimeService } = await import('./regime');
+      const { getCandleCache, CacheBackedCandleSource } = await import('./candles');
       const detector = new AdxAtrDetector();
-      const source = new BinanceCandleSource();
+      // Route BTC candle fetches through the shared cache. Snapshots stay
+      // under the historical 'BTCUSDT' asset label (so existing rows aren't
+      // orphaned), but the cache stores under 'BTC' — `mapAsset` strips the
+      // USDT suffix before hitting the cache.
+      const source = new CacheBackedCandleSource(
+        getCandleCache(),
+        (asset) => asset.replace(/USDT$/, ''),
+      );
       const regimeService = new RegimeService(detector, source);
       const end = new Date();
       const start = new Date(end.getTime() - 365 * 86_400_000);

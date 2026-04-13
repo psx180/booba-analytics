@@ -28,9 +28,10 @@
  *      (1m for <15min trades, 15m for <4h, 1h for ≥4h)
  *   3. Buckets positions by (asset, timeframe), computes the union date range
  *      for each bucket, and fetches once
- *   4. Falls through Pacifica → Bybit → Binance for each asset, logging
- *      which source served the data and skipping unsupported assets without
- *      failing the pipeline
+ *   4. Calls the injected fetcher (normally CandleCache, which serves from
+ *      its local DB cache and falls through Pacifica → Bybit → Binance on a
+ *      miss). Assets with no candle data anywhere return [] and are skipped
+ *      without failing the pipeline.
  *   5. Slices each bucket's candles to each position's exact entry-to-exit
  *      window, then computes MFE/MAE/exitEfficiency/moneyLeftOnTable/maeRatio
  *
@@ -39,72 +40,18 @@
  */
 
 import type { MetricComputer, Position, Candle } from './base';
-import type { CandleSource } from '../../regime/types';
 
 // ─── Public types ─────────────────────────────────────────────────────────
 
 /**
- * One candle backend with the symbol-format conversion baked in. The same
- * Pacifica asset (e.g. 'BTC') maps to different symbol strings per source
- * ('BTC' for Pacifica's own /kline, 'BTCUSDT' for Bybit/Binance), so each
- * source decides how to translate.
+ * Thin contract over whatever actually produces candles. We used to bundle
+ * a multi-source fallback chain inline here, but it moved to CandleCache so
+ * every caller (MFE/MAE, regime, trade replay) hits the same shared cache.
+ * `CandleCache.getCandles` matches this shape, so analytics passes it in
+ * directly.
  */
-export interface CandleSourceAdapter {
-  /** Logged so the operator can see which backend served the data. */
-  readonly name: string;
-  /**
-   * Map a Pacifica asset to the symbol this backend uses, or return null
-   * if the asset isn't listed. Returning null lets the multi-source fetcher
-   * fall through to the next backend without making a doomed request.
-   */
-  toSymbol(asset: string): string | null;
-  /** Underlying candle source. */
-  source: CandleSource;
-}
-
-export interface MultiSourceCandleFetcher {
-  /**
-   * Try each configured source in order. Returns candles from the first
-   * source that yields a non-empty result. Returns [] if every source fails
-   * or returns nothing — caller logs and skips that asset.
-   */
+export interface CandleFetcher {
   fetch(asset: string, timeframe: string, start: Date, end: Date): Promise<Candle[]>;
-}
-
-// ─── Default fetcher implementation ───────────────────────────────────────
-
-export function createMultiSourceFetcher(adapters: CandleSourceAdapter[]): MultiSourceCandleFetcher {
-  return {
-    async fetch(asset, timeframe, start, end) {
-      for (const adapter of adapters) {
-        const symbol = adapter.toSymbol(asset);
-        if (symbol == null) {
-          console.log(`[exit-quality] ${adapter.name} does not list ${asset}, trying next source...`);
-          continue;
-        }
-        try {
-          const candles = await adapter.source.fetchCandles(symbol, timeframe, start, end);
-          if (candles.length > 0) {
-            console.log(
-              `[exit-quality] Using ${adapter.name} candle source for ${asset} ` +
-              `(${candles.length} ${timeframe} candles)`,
-            );
-            return candles;
-          }
-          console.log(
-            `[exit-quality] ${adapter.name} returned 0 candles for ${asset} ${timeframe} ` +
-            `[${start.toISOString()} → ${end.toISOString()}], trying next source...`,
-          );
-        } catch (err) {
-          console.log(
-            `[exit-quality] ${adapter.name} candles failed for ${asset}: ` +
-            `${(err as Error).message}, trying next source...`,
-          );
-        }
-      }
-      return [];
-    },
-  };
 }
 
 // ─── Factory ──────────────────────────────────────────────────────────────
@@ -160,7 +107,7 @@ interface Bucket {
 }
 
 export function createExitQualityComputer(
-  fetcher: MultiSourceCandleFetcher,
+  fetcher: CandleFetcher,
 ): MetricComputer {
   return {
     name: 'exit-quality',
