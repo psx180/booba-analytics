@@ -35,7 +35,7 @@ export const tiltEpisodesDetector: InsightDetector = {
         title: 'Tilt Episode Analysis Pending',
         description: `Need ${needed} more trades. Watching for behavioural deviations — periods where frequency, sizing, and hold times shift away from your baseline.`,
         severity: 'info', confidence: 0, affectedPositions: [],
-        data: { tradeCount: qualified.length, needed },
+        data: { tradeCount: qualified.length, needed, episodes: [] },
         statistics: [pending('welch_t_test', qualified.length)],
         impactScore: 0, category: 'behavior', isSignificant: false, sampleSize: qualified.length,
       }];
@@ -50,7 +50,7 @@ export const tiltEpisodesDetector: InsightDetector = {
         description:
           'Tilt scores have not been computed for any positions yet. Run Compute Analytics to enable tilt-episode insights.',
         severity: 'info', confidence: 0, affectedPositions: [],
-        data: { tradeCount: qualified.length },
+        data: { tradeCount: qualified.length, episodes: [] },
         statistics: [pending('welch_t_test', qualified.length)],
         impactScore: 0, category: 'behavior', isSignificant: false, sampleSize: qualified.length,
       }];
@@ -84,6 +84,7 @@ export const tiltEpisodesDetector: InsightDetector = {
           tradeCount: withTiltData.length,
           avgTiltScore: Math.round(avgTiltScore * 1000) / 1000,
           episodeCount: 0,
+          episodes: [],
         },
         statistics: [pending('welch_t_test', withTiltData.length)],
         impactScore: 0, category: 'behavior', isSignificant: false, sampleSize: withTiltData.length,
@@ -188,6 +189,19 @@ export const tiltEpisodesDetector: InsightDetector = {
         mostCommonTrigger,
         counterfactualImprovement: Math.round(improvement * 100) / 100,
         tradeCount          : withTiltData.length,
+        episodes            : Array.from(episodeMap.entries()).map(([id, members]) => {
+          const times = members
+            .filter((p) => p.firstEntryTime != null)
+            .map((p) => p.firstEntryTime!.getTime());
+          const pnls = members.map((p) => p.aggregatePnl ?? 0);
+          return {
+            id,
+            startDate : times.length > 0 ? new Date(Math.min(...times)).toISOString() : null,
+            endDate   : times.length > 0 ? new Date(Math.max(...times)).toISOString() : null,
+            tradeCount: members.length,
+            totalPnl  : Math.round(pnls.reduce((a, b) => a + b, 0) * 100) / 100,
+          };
+        }),
       },
       statistics: [pnlTest],
       impactScore,
