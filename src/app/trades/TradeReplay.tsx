@@ -9,11 +9,14 @@
  * override. Context candles before entry render dimmer; active candles
  * during the trade stream in on play.
  *
- * Entry / exit / MFE / MAE are drawn as horizontal price lines on the
- * chart. Entry and exit only appear once the playhead reaches their
- * timestamps; MFE and MAE appear once the playhead reaches the candle that
- * actually contains the extreme (not the timestamp — price lines are about
- * WHERE the excursion happened, not when the metric was computed).
+ * Entry, MFE, and MAE are drawn as static horizontal price lines created
+ * once when the chart mounts — they sit at their fixed prices and never
+ * move during playback (autoscaling changes pixel position, not price).
+ * Exit is the only dynamic line: it appears labeled once the playhead
+ * reaches the exit candle, and disappears if the user rewinds past it.
+ * Entry and exit also get series markers (BUY/SELL arrows) on their
+ * respective candles, added up front and surfaced automatically by the
+ * markers plugin when the bar they're anchored to becomes visible.
  *
  * Running P&L below the chart recomputes each candle advance, using the
  * current candle's close as the mark price and the position's entry price
@@ -26,8 +29,11 @@ import type {
   IChartApi,
   ISeriesApi,
   IPriceLine,
+  ISeriesMarkersPluginApi,
+  SeriesMarker,
   CandlestickData,
   UTCTimestamp,
+  Time,
 } from 'lightweight-charts';
 import { useAuthFetch } from '@/lib/api-client';
 
@@ -148,6 +154,7 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const priceLinesRef = useRef<Record<string, IPriceLine>>({});
+  const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const lcRef = useRef<LightweightChartsModule | null>(null);
   const [lcReady, setLcReady] = useState(false);
 
@@ -177,13 +184,20 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
     const controller = new AbortController();
     setLoading(true);
     setError(null);
+    // Clear the old timeframe's candles up front — this toggles `hasCandles`
+    // false for a render, which runs the chart-init cleanup and destroys the
+    // old chart. When the new fetch lands, the chart re-mounts from scratch.
+    setRawCandles([]);
 
     const intervalMs = TIMEFRAME_MS[timeframe];
-    const fetchStart = entryTime - CONTEXT_CANDLES * intervalMs;
+    // Request one extra candle-width on each side so the boundary-aligned
+    // entry candle (whose open time is floor(entryTime / intervalMs)) always
+    // comes back, plus a full 20 context candles before it.
+    const fetchStart = entryTime - (CONTEXT_CANDLES + 1) * intervalMs;
     // For closed positions, fetch up to exit; for open positions, fetch up to now.
     const fetchEnd = exitTime ?? Date.now();
     // Clamp to avoid requesting future candles
-    const effectiveEnd = Math.min(fetchEnd, Date.now());
+    const effectiveEnd = Math.min(fetchEnd + intervalMs, Date.now());
 
     const url = `/api/candles?asset=${encodeURIComponent(position.asset)}` +
       `&timeframe=${timeframe}` +
@@ -203,9 +217,16 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
           setError(`Replay not available — no price data for ${position.asset}.`);
         }
         setRawCandles(candles);
-        // Reset playback to the entry candle
-        const ctx = candles.filter((c) => new Date(c.timestamp).getTime() < entryTime).length;
-        setContextCount(ctx);
+        // Entry candle = last candle whose open-time is at or before entryTime.
+        // Context = every candle STRICTLY BEFORE that one. Without `<=` the
+        // boundary-aligned entry candle itself would land in the context set
+        // and the first "active" reveal would skip the entry bar.
+        let entryIdx = -1;
+        for (let i = 0; i < candles.length; i++) {
+          if (new Date(candles[i].timestamp).getTime() <= entryTime) entryIdx = i;
+          else break;
+        }
+        setContextCount(entryIdx >= 0 ? entryIdx : 0);
         setCurrentIndex(1);
         setPlaying(false);
       })
@@ -238,12 +259,28 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
   }, []);
 
   // ── Chart init ───────────────────────────────────────────────────────────
+  //
+  // Runs whenever lightweight-charts finishes loading, whenever the user
+  // switches timeframe (the fetch effect blanks rawCandles first, which
+  // flips hasCandles false and fires the cleanup below), or whenever fresh
+  // data lands for a new timeframe. The chart is fully destroyed and
+  // recreated on every such transition so we never mutate an existing chart
+  // with data from a different scale.
+  //
+  // Static price lines for entry / MFE / MAE are created inside this effect
+  // so they exist from the moment the chart mounts and never shift during
+  // playback. (The exit price line is dynamic and lives in its own effect
+  // below — it appears only when the playhead reaches the exit candle.)
+  // Entry / exit markers (BUY/SELL arrows) are also attached here once:
+  // lightweight-charts only renders a marker when its `time` is present in
+  // the series data, so we can add both up front and they surface naturally
+  // as the playback reveals their candles.
 
   const hasCandles = rawCandles.length > 0;
 
   useEffect(() => {
     if (!lcReady || !lcRef.current || !containerRef.current || !hasCandles) return;
-    const { createChart, CandlestickSeries } = lcRef.current;
+    const { createChart, CandlestickSeries, createSeriesMarkers, LineStyle } = lcRef.current;
 
     const chart = createChart(containerRef.current, {
       layout: {
@@ -277,18 +314,110 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
       borderDownColor: DOWN_COLOR,
       wickUpColor: UP_COLOR,
       wickDownColor: DOWN_COLOR,
+      // Kill the built-in last-price line — that's the unlabeled red/green
+      // line that follows the most recent candle's close. We draw our own
+      // labeled entry/exit/MFE/MAE lines and don't want the auto one to
+      // compete visually.
+      priceLineVisible: false,
+      lastValueVisible: false,
     });
 
     chartRef.current = chart;
     seriesRef.current = series;
 
+    // ── Static price lines (entry / MFE / MAE) ────────────────────────────
+    //
+    // Created once at mount; never touched during playback. The lines hold
+    // a fixed price, so when autoscaling expands the Y axis later the lines
+    // stay put in price space and only their pixel position shifts — which
+    // the user reads as "static lines on a moving chart", the intended feel.
+
+    if (entryTime != null && position.averageEntryPrice != null) {
+      priceLinesRef.current.entry = series.createPriceLine({
+        price: position.averageEntryPrice,
+        color: position.direction === 'long' ? UP_COLOR : DOWN_COLOR,
+        lineWidth: 1,
+        lineStyle: LineStyle.Solid,
+        axisLabelVisible: true,
+        title: `Entry ${fmtPrice(position.averageEntryPrice)}`,
+      });
+    }
+    if (position.mfePrice != null) {
+      priceLinesRef.current.mfe = series.createPriceLine({
+        price: position.mfePrice,
+        color: UP_COLOR,
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: `MFE ${fmtPrice(position.mfePrice)}`,
+      });
+    }
+    if (position.maePrice != null) {
+      priceLinesRef.current.mae = series.createPriceLine({
+        price: position.maePrice,
+        color: DOWN_COLOR,
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: `MAE ${fmtPrice(position.maePrice)}`,
+      });
+    }
+
+    // ── Entry / exit markers ──────────────────────────────────────────────
+    //
+    // Find the boundary-aligned entry / exit candles and attach arrows. The
+    // plugin silently skips markers whose `time` isn't yet in the series
+    // data, so both are set up front and appear as playback reveals them.
+
+    const findCandleAt = (targetMs: number): RawCandle | null => {
+      let candidate: RawCandle | null = null;
+      for (const c of rawCandles) {
+        if (new Date(c.timestamp).getTime() <= targetMs) candidate = c;
+        else break;
+      }
+      return candidate;
+    };
+
+    const markers: SeriesMarker<Time>[] = [];
+    if (entryTime != null) {
+      const entryCandle = findCandleAt(entryTime);
+      if (entryCandle) {
+        const isLong = position.direction === 'long';
+        markers.push({
+          time: Math.floor(new Date(entryCandle.timestamp).getTime() / 1000) as UTCTimestamp,
+          position: isLong ? 'belowBar' : 'aboveBar',
+          shape:    isLong ? 'arrowUp'  : 'arrowDown',
+          color:    isLong ? UP_COLOR   : DOWN_COLOR,
+          text:     isLong ? 'BUY'      : 'SELL',
+        });
+      }
+    }
+    if (exitTime != null) {
+      const exitCandle = findCandleAt(exitTime);
+      if (exitCandle) {
+        const isLong = position.direction === 'long';
+        markers.push({
+          time: Math.floor(new Date(exitCandle.timestamp).getTime() / 1000) as UTCTimestamp,
+          position: isLong ? 'aboveBar' : 'belowBar',
+          shape:    isLong ? 'arrowDown' : 'arrowUp',
+          color:    isLong ? DOWN_COLOR  : UP_COLOR,
+          text:     isLong ? 'SELL'      : 'BUY',
+        });
+      }
+    }
+    if (markers.length > 0) {
+      markersPluginRef.current = createSeriesMarkers(series, markers);
+    }
+
     return () => {
+      markersPluginRef.current?.detach();
+      markersPluginRef.current = null;
       priceLinesRef.current = {};
       seriesRef.current = null;
       chartRef.current = null;
       chart.remove();
     };
-  }, [lcReady, hasCandles, timeframe]);
+  }, [lcReady, hasCandles, timeframe, entryTime, exitTime, position.averageEntryPrice, position.mfePrice, position.maePrice, position.direction, rawCandles]);
 
   // ── Candlestick data + per-bar dimming for context ───────────────────────
 
@@ -315,100 +444,52 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
     });
   }, [rawCandles, contextCount, currentIndex]);
 
-  // Push data to the series whenever the slice changes
+  // Push data to the series whenever the slice changes, and refit the time
+  // scale so the visible area hugs the revealed candles. Without fitContent
+  // the chart either leaves blank space on the right (early playback) or
+  // cuts new bars off the edge (late playback).
   useEffect(() => {
-    if (!seriesRef.current) return;
-    seriesRef.current.setData(displayedCandles);
+    const series = seriesRef.current;
+    const chart = chartRef.current;
+    if (!series || !chart) return;
+    series.setData(displayedCandles);
+    chart.timeScale().fitContent();
   }, [displayedCandles]);
 
-  // ── Price lines: entry / exit / MFE / MAE ────────────────────────────────
+  // ── Dynamic exit price line ──────────────────────────────────────────────
   //
-  // Added to the chart as soon as the playhead reaches the relevant candle.
-  // Removed if the user rewinds past that point.
+  // The only line that isn't static. Appears labeled 'Exit $X' once the
+  // playhead reaches the exit candle; removed again if the user rewinds
+  // before it. Everything else (entry / MFE / MAE) lives on the static side
+  // in the chart-init effect.
 
   useEffect(() => {
     const series = seriesRef.current;
     const lc = lcRef.current;
-    if (!series || !lc || rawCandles.length === 0) return;
-    const { LineStyle } = lc;
+    if (!series || !lc) return;
+    if (exitTime == null || position.averageExitPrice == null) return;
 
     const shown = displayedCandles.length;
     if (shown === 0) return;
 
-    const latestCandle = rawCandles[shown - 1];
-    const latestMs = new Date(latestCandle.timestamp).getTime();
+    const latestMs = new Date(rawCandles[shown - 1].timestamp).getTime();
+    const shouldShow = latestMs >= exitTime;
+    const existing = priceLinesRef.current.exit;
 
-    const ensureLine = (
-      key: string,
-      shouldShow: boolean,
-      options: { price: number; color: string; lineStyle: number; title: string },
-    ) => {
-      const existing = priceLinesRef.current[key];
-      if (shouldShow && !existing) {
-        priceLinesRef.current[key] = series.createPriceLine({
-          price: options.price,
-          color: options.color,
-          lineWidth: 1,
-          lineStyle: options.lineStyle,
-          axisLabelVisible: true,
-          title: options.title,
-        });
-      } else if (!shouldShow && existing) {
-        series.removePriceLine(existing);
-        delete priceLinesRef.current[key];
-      }
-    };
-
-    // Entry — shown once playhead reaches the entry bar.
-    if (entryTime != null && position.averageEntryPrice != null) {
-      ensureLine('entry', latestMs >= entryTime, {
-        price: position.averageEntryPrice,
-        color: position.direction === 'long' ? UP_COLOR : DOWN_COLOR,
-        lineStyle: LineStyle.Solid,
-        title: `Entry ${fmtPrice(position.averageEntryPrice)}`,
-      });
-    }
-
-    // Exit — shown once playhead reaches the exit bar. Closed longs exit by
-    // selling (red-ish label), closed shorts exit by buying back (green-ish).
-    if (exitTime != null && position.averageExitPrice != null) {
-      ensureLine('exit', latestMs >= exitTime, {
+    if (shouldShow && !existing) {
+      priceLinesRef.current.exit = series.createPriceLine({
         price: position.averageExitPrice,
         color: position.direction === 'long' ? DOWN_COLOR : UP_COLOR,
-        lineStyle: LineStyle.Solid,
+        lineWidth: 1,
+        lineStyle: lc.LineStyle.Solid,
+        axisLabelVisible: true,
         title: `Exit ${fmtPrice(position.averageExitPrice)}`,
       });
+    } else if (!shouldShow && existing) {
+      series.removePriceLine(existing);
+      delete priceLinesRef.current.exit;
     }
-
-    // MFE / MAE — appear when the candle that contains the extreme has been
-    // revealed. We scan the revealed slice for the first bar whose range
-    // crosses the extreme price.
-    const firstBarContaining = (price: number): RawCandle | null => {
-      for (let i = 0; i < shown; i++) {
-        const c = rawCandles[i];
-        if (c.low <= price && c.high >= price) return c;
-      }
-      return null;
-    };
-
-    if (position.mfePrice != null) {
-      ensureLine('mfe', firstBarContaining(position.mfePrice) != null, {
-        price: position.mfePrice,
-        color: UP_COLOR,
-        lineStyle: LineStyle.Dashed,
-        title: `MFE ${fmtPrice(position.mfePrice)}`,
-      });
-    }
-
-    if (position.maePrice != null) {
-      ensureLine('mae', firstBarContaining(position.maePrice) != null, {
-        price: position.maePrice,
-        color: DOWN_COLOR,
-        lineStyle: LineStyle.Dashed,
-        title: `MAE ${fmtPrice(position.maePrice)}`,
-      });
-    }
-  }, [displayedCandles, rawCandles, entryTime, exitTime, position]);
+  }, [displayedCandles, rawCandles, exitTime, position.averageExitPrice, position.direction]);
 
   // ── Playback loop ────────────────────────────────────────────────────────
 
