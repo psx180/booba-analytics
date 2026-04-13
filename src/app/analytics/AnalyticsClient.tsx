@@ -19,6 +19,7 @@ import MarkovBars from './behavior/MarkovBars';
 import SessionDecayChart from './behavior/SessionDecayChart';
 import SizeAfterOutcomeScatter from './behavior/SizeAfterOutcomeScatter';
 import TiltEquityCurve, { type TiltEpisode } from './behavior/TiltEquityCurve';
+import MonteCarloChart from './monte-carlo/MonteCarloChart';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -703,6 +704,7 @@ function StrategyTab({
           <WhatIfExplorer {...chartProps} />
         </div>
       </div>
+      <MonteCarloChart journalId={chartProps.journalId} />
     </div>
   );
 }
