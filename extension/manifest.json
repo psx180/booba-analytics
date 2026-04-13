@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "AI-powered trading journal and copilot for Pacifica DEX",
   "permissions": ["storage", "activeTab"],
-  "host_permissions": ["https://app.pacifica.fi/*", "https://*.pacifica.fi/*"],
+  "host_permissions": ["https://app.pacifica.fi/*", "https://*.pacifica.fi/*", "http://localhost:3000/*", "http://localhost/*"],
   "background": {
     "service_worker": "background.js"
   },

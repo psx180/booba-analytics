@@ -3,10 +3,14 @@
   'use strict';
 
   const DEFAULTS = {
-    showBooba: true,
-    boobaSize: 50,
-    position: 'bottom-right',
-    webAppUrl: 'http://localhost:3000',
+    showBooba:            true,
+    boobaSize:            50,
+    position:             'bottom-right',
+    webAppUrl:            'http://localhost:3000',
+    apiKey:               '',
+    walletAddress:        '',
+    enableTradeDetection: true,
+    enableThesisPopup:    true,
   };
 
   chrome.storage.local.get(DEFAULTS, (settings) => {

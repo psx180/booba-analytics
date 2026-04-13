@@ -3,22 +3,34 @@
   'use strict';
 
   const DEFAULTS = {
-    webAppUrl:  'http://localhost:3000',
-    showBooba:  true,
-    boobaSize:  50,
-    position:   'bottom-right',
+    webAppUrl:            'http://localhost:3000',
+    apiKey:               '',
+    walletAddress:        '',
+    showBooba:            true,
+    enableTradeDetection: true,
+    enableThesisPopup:    true,
+    boobaSize:            50,
+    position:             'bottom-right',
   };
 
-  const form        = document.getElementById('options-form');
-  const urlInput    = document.getElementById('web-app-url');
-  const showToggle  = document.getElementById('show-booba');
-  const saveStatus  = document.getElementById('save-status');
+  const form               = document.getElementById('options-form');
+  const urlInput           = document.getElementById('web-app-url');
+  const apiKeyInput        = document.getElementById('api-key');
+  const walletInput        = document.getElementById('wallet-address');
+  const showToggle         = document.getElementById('show-booba');
+  const tradeDetectToggle  = document.getElementById('enable-trade-detection');
+  const thesisPopupToggle  = document.getElementById('enable-thesis-popup');
+  const saveStatus         = document.getElementById('save-status');
 
-  // ── Load saved settings ────────────────────────────────────────────────────
+  // ── Load saved settings ──────────────────────────────────────────────────
 
   chrome.storage.local.get(DEFAULTS, (s) => {
-    urlInput.value   = s.webAppUrl;
-    showToggle.checked = s.showBooba;
+    urlInput.value            = s.webAppUrl;
+    apiKeyInput.value         = s.apiKey;
+    walletInput.value         = s.walletAddress;
+    showToggle.checked        = s.showBooba;
+    tradeDetectToggle.checked = s.enableTradeDetection;
+    thesisPopupToggle.checked = s.enableThesisPopup;
 
     const sizeRadio = form.querySelector(`input[name="booba-size"][value="${s.boobaSize}"]`);
     if (sizeRadio) sizeRadio.checked = true;
@@ -27,7 +39,7 @@
     if (posRadio) posRadio.checked = true;
   });
 
-  // ── Save ───────────────────────────────────────────────────────────────────
+  // ── Save ─────────────────────────────────────────────────────────────────
 
   form.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -36,10 +48,14 @@
     const posInput  = form.querySelector('input[name="position"]:checked');
 
     const settings = {
-      webAppUrl:  urlInput.value.trim() || DEFAULTS.webAppUrl,
-      showBooba:  showToggle.checked,
-      boobaSize:  sizeInput ? parseInt(sizeInput.value, 10) : DEFAULTS.boobaSize,
-      position:   posInput  ? posInput.value : DEFAULTS.position,
+      webAppUrl:            urlInput.value.trim()   || DEFAULTS.webAppUrl,
+      apiKey:               apiKeyInput.value.trim(),
+      walletAddress:        walletInput.value.trim(),
+      showBooba:            showToggle.checked,
+      enableTradeDetection: tradeDetectToggle.checked,
+      enableThesisPopup:    thesisPopupToggle.checked,
+      boobaSize:            sizeInput ? parseInt(sizeInput.value, 10) : DEFAULTS.boobaSize,
+      position:             posInput  ? posInput.value : DEFAULTS.position,
     };
 
     chrome.storage.local.set(settings, () => {

@@ -31,6 +31,11 @@ export async function GET(req: NextRequest) {
     return new Response('Unauthorized', { status: 401 });
   }
 
+  const origin = req.headers.get('origin') ?? '';
+  const allowCors =
+    origin.startsWith('chrome-extension://') ||
+    /^https?:\/\/localhost/.test(origin);
+
   const session = await acquireSession(wallet);
   const encoder = new TextEncoder();
 
@@ -85,6 +90,7 @@ export async function GET(req: NextRequest) {
       'Cache-Control': 'no-cache, no-transform',
       'Connection': 'keep-alive',
       'X-Accel-Buffering': 'no',
+      ...(allowCors && { 'Access-Control-Allow-Origin': origin }),
     },
   });
 }

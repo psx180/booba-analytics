@@ -32,6 +32,28 @@
       </div>
 
       <div class="options__field">
+        <label class="options__label" for="api-key">API Key</label>
+        <input
+          type="text"
+          id="api-key"
+          class="options__input"
+          placeholder="BOT_API_KEY value from your .env"
+        />
+        <p class="options__hint">The BOT_API_KEY from your journal app's environment — used to authenticate the extension.</p>
+      </div>
+
+      <div class="options__field">
+        <label class="options__label" for="wallet-address">Wallet Address</label>
+        <input
+          type="text"
+          id="wallet-address"
+          class="options__input"
+          placeholder="Your Solana wallet address"
+        />
+        <p class="options__hint">Your Solana wallet address — used to scope trade data to your account.</p>
+      </div>
+
+      <div class="options__field">
         <div class="options__toggle-row">
           <label class="options__label" for="show-booba">Show Booba on Pacifica</label>
           <label class="options__switch">
@@ -40,6 +62,28 @@
           </label>
         </div>
         <p class="options__hint">Display the floating Booba avatar on app.pacifica.fi</p>
+      </div>
+
+      <div class="options__field">
+        <div class="options__toggle-row">
+          <label class="options__label" for="enable-trade-detection">Enable trade detection</label>
+          <label class="options__switch">
+            <input type="checkbox" id="enable-trade-detection" checked />
+            <span class="options__switch-slider"></span>
+          </label>
+        </div>
+        <p class="options__hint">Connect to the journal app's live stream and detect new trades automatically.</p>
+      </div>
+
+      <div class="options__field">
+        <div class="options__toggle-row">
+          <label class="options__label" for="enable-thesis-popup">Enable thesis popup</label>
+          <label class="options__switch">
+            <input type="checkbox" id="enable-thesis-popup" checked />
+            <span class="options__switch-slider"></span>
+          </label>
+        </div>
+        <p class="options__hint">Show the thesis capture popup when a new position is opened.</p>
       </div>
 
       <div class="options__field">
