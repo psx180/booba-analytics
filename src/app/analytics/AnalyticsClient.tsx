@@ -20,6 +20,7 @@ import SessionDecayChart from './behavior/SessionDecayChart';
 import SizeAfterOutcomeScatter from './behavior/SizeAfterOutcomeScatter';
 import TiltEquityCurve, { type TiltEpisode } from './behavior/TiltEquityCurve';
 import MonteCarloChart from './monte-carlo/MonteCarloChart';
+import WhatIfChart from './what-if/WhatIfChart';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -704,6 +705,7 @@ function StrategyTab({
           <WhatIfExplorer {...chartProps} />
         </div>
       </div>
+      <WhatIfChart journalId={chartProps.journalId} />
       <MonteCarloChart journalId={chartProps.journalId} />
     </div>
   );
