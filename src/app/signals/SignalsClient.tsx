@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuthFetch } from '@/lib/api-client';
 import SignalInput from './SignalInput';
+import CallerAnalyticsModal from './CallerAnalyticsModal';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -104,6 +105,7 @@ export default function SignalsClient() {
   const [callers, setCallers] = useState<CallerStats[]>([]);
   const [signals, setSignals] = useState<Signal[]>([]);
   const [expandedCaller, setExpandedCaller] = useState<string | null>(null);
+  const [analyticsCaller, setAnalyticsCaller] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
   const [checkResult, setCheckResult] = useState<string | null>(null);
@@ -249,7 +251,12 @@ export default function SignalsClient() {
                       }}>
                         {callerInitial(caller.callerName)}
                       </span>
-                      <span style={{ color: '#e6edf3', fontWeight: 600 }}>{caller.callerName}</span>
+                      <span
+                        style={{ color: '#e6edf3', fontWeight: 600, cursor: 'pointer', textDecoration: 'underline', textDecorationColor: '#30363d', textUnderlineOffset: '3px' }}
+                        onClick={(e) => { e.stopPropagation(); setAnalyticsCaller(caller.callerName); }}
+                      >
+                        {caller.callerName}
+                      </span>
                       <span style={{ color: '#484f58', fontSize: '11px' }}>
                         {caller.open > 0 ? `${caller.open} open` : ''}
                       </span>
@@ -350,6 +357,14 @@ export default function SignalsClient() {
           <SectionHeader>Your Execution vs Callers</SectionHeader>
           <ExecutionPanel signals={linkedSignals} callers={callers} />
         </section>
+      )}
+
+      {/* Caller analytics modal */}
+      {analyticsCaller && (
+        <CallerAnalyticsModal
+          callerName={analyticsCaller}
+          onClose={() => setAnalyticsCaller(null)}
+        />
       )}
     </div>
   );
