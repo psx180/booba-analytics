@@ -30,6 +30,13 @@ export interface BoobaAnalyticsData {
     impactScore?: number;
     data?: Record<string, unknown>;
   }>;
+  /** Social context for open positions — populated by ELFA enrichment. */
+  openPositionSocialAlerts?: Array<{
+    asset: string;
+    mentionCount: number;
+    sentimentScore: number;
+    trendDirection: 'rising' | 'falling' | 'stable';
+  }>;
 }
 
 export function getContextualMessage(
@@ -111,6 +118,23 @@ export function getContextualMessage(
     // WART positive — positive reinforcement
     if (data.wartResult && data.wartResult.composite > 1) {
       analyticsMsgs.push("Looking at your patterns...");
+    }
+
+    // Social shift alerts for held positions (low-priority pool candidate)
+    if (data.openPositionSocialAlerts) {
+      for (const alert of data.openPositionSocialAlerts) {
+        const sentimentLabel =
+          alert.sentimentScore > 0.3 ? 'bullish' : alert.sentimentScore < -0.3 ? 'bearish' : 'neutral';
+        if (alert.trendDirection === 'rising') {
+          analyticsMsgs.push(
+            `${alert.asset} social attention up — ${alert.mentionCount} mentions/hr, sentiment ${sentimentLabel}`,
+          );
+        } else if (alert.trendDirection === 'falling') {
+          analyticsMsgs.push(
+            `${alert.asset} social attention declining — watch for momentum shift`,
+          );
+        }
+      }
     }
 
     // Top significant insight

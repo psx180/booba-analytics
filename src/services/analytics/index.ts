@@ -43,6 +43,7 @@ import { combinatorialSearchDetector } from './insights/combinatorial-search';
 import { xpnlInsightDetector }       from './insights/xpnl-insight';
 import { entropyInsightDetector }    from './insights/entropy-insight';
 import { wartInsightDetector }       from './insights/wart-insight';
+import { socialCorrelationDetector } from './insights/social-correlation';
 
 // Candle fetches route through the shared CandleCache (DB-backed, server-
 // wide). First compute run fills the cache; subsequent runs hit it directly.
@@ -91,6 +92,7 @@ export const insightDetectors: InsightDetector[] = [
   xpnlInsightDetector,
   entropyInsightDetector,
   wartInsightDetector,
+  socialCorrelationDetector,
 ];
 
 export function createAnalyticsService(): AnalyticsService {

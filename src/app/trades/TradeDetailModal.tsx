@@ -36,6 +36,9 @@ interface PositionDetail {
   strategy?: { id: string; name: string } | null;
   sourceTag: string | null;
   conviction: number | null;
+  socialSentiment: number | null;
+  socialMentions: number | null;
+  socialMindshare: number | null;
 }
 
 interface Strategy {
@@ -880,6 +883,53 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
                 </div>
               </div>
             )}
+
+            {/* ── Social Context ──────────────────────────────────────── */}
+            <div className="px-6 py-4 border-b border-[#21262d]">
+              <h3 className="text-xs uppercase tracking-widest text-[#6e7681] mb-3">
+                Social Context at Entry
+              </h3>
+              {position.socialMentions == null ? (
+                <p className="text-xs text-[#6e7681]">Social data not available</p>
+              ) : (
+                <div className="flex flex-wrap gap-4 items-center">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[10px] uppercase tracking-widest text-[#6e7681]">Sentiment</span>
+                    <span className={`text-sm font-semibold tabular-nums ${
+                      position.socialSentiment != null && position.socialSentiment > 0.3
+                        ? 'text-green-400'
+                        : position.socialSentiment != null && position.socialSentiment < -0.3
+                          ? 'text-red-400'
+                          : 'text-[#8b949e]'
+                    }`}>
+                      {position.socialSentiment != null
+                        ? `${position.socialSentiment > 0 ? '+' : ''}${position.socialSentiment.toFixed(2)} (${
+                            position.socialSentiment > 0.3
+                              ? 'Bullish'
+                              : position.socialSentiment < -0.3
+                                ? 'Bearish'
+                                : 'Neutral'
+                          })`
+                        : '—'}
+                    </span>
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[10px] uppercase tracking-widest text-[#6e7681]">Mentions</span>
+                    <span className="text-sm font-semibold tabular-nums text-white">
+                      {position.socialMentions.toLocaleString()}/hr
+                    </span>
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[10px] uppercase tracking-widest text-[#6e7681]">Mindshare</span>
+                    <span className="text-sm font-semibold tabular-nums text-white">
+                      {position.socialMindshare != null
+                        ? `${position.socialMindshare.toFixed(1)}%`
+                        : '—'}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* ── Insights ────────────────────────────────────────────── */}
             {insights.length > 0 && (

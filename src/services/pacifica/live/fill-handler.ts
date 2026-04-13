@@ -19,6 +19,8 @@ import { prisma } from '../../../lib/prisma';
 import { ingestTrades } from '../../ingestion';
 import { fillId } from '../../ingestion/mapper';
 import { GroupingService } from '../../grouping';
+import { getTokenSocialContext } from '../../elfa/elfa-service';
+import type { ElfaSocialContext } from '../../elfa/elfa-service';
 import type { TradeHistoryEntry } from '../types/account';
 import type { WsAccountTrade } from '../types/ws';
 
@@ -37,6 +39,7 @@ export interface NewTradeEvent {
       optimalStop: number;
       avgPnlAfterOptimal: number;
     };
+    socialContext?: ElfaSocialContext;
     regimeContext?: {
       currentRegime: string;
       assetRegimeWinRate: number;
@@ -198,10 +201,11 @@ export async function handleAccountTrade(
   // ── Enrichment (session fatigue + regime context) ──────────────────────
   // Both run in parallel and fail gracefully — a thrown error just skips
   // the enrichment rather than blocking the trade event.
-  const [optimalStop, lateAvgPnl, regimeContext] = await Promise.all([
+  const [optimalStop, lateAvgPnl, regimeContext, socialContext] = await Promise.all([
     fetchOptimalTradeCount(walletAddress),
     fetchLateAvgPnl(walletAddress),
     fetchRegimeContext(walletAddress, entry.symbol),
+    getTokenSocialContext(entry.symbol).catch(() => null),
   ]);
 
   const sessionWarning: NewTradeEvent['data']['sessionWarning'] =
@@ -229,9 +233,24 @@ export async function handleAccountTrade(
       pnl: entry.pnl ? parseFloat(entry.pnl) : null,
       isNewPosition: grouped.isNewPosition,
       ...(sessionWarning && { sessionWarning }),
+      ...(socialContext && { socialContext }),
       ...(regimeContext && { regimeContext }),
     },
   });
+
+  // Store social context on the position — fire-and-forget
+  if (socialContext) {
+    prisma.position
+      .update({
+        where: { id: grouped.positionId },
+        data: {
+          socialSentiment: socialContext.sentimentScore,
+          socialMentions: socialContext.mentionCount,
+          socialMindshare: socialContext.mindshare,
+        },
+      })
+      .catch((err) => console.warn('[live] Social enrichment failed:', err));
+  }
 
   if (grouped.wasClosed) {
     const pos = await prisma.position.findUnique({ where: { id: grouped.positionId } });

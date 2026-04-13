@@ -137,6 +137,11 @@ model Position {
   emotion             String?
   mistakes            String?         // JSON array of mistake tags
 
+  // Social context at time of entry (populated by ELFA enrichment)
+  socialSentiment    Float?           // -1 to 1 at time of entry
+  socialMentions     Int?             // mention count at time of entry
+  socialMindshare    Float?           // % of total discussion at time of entry
+
   customData          String?         // JSON
   linkedStrategyId    String?
   linkedStrategy      LinkedStrategy? @relation(fields: [linkedStrategyId], references: [id])

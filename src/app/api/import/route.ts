@@ -128,6 +128,35 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // 9. ELFA social enrichment — fire-and-forget, never blocks the import
+    import('@/services/elfa/elfa-service')
+      .then(async ({ getTokenSocialContext }) => {
+        const { prisma: db } = await import('@/lib/prisma');
+        const unenriched = await db.position.findMany({
+          where: { walletAddress, socialMentions: null },
+          select: { id: true, asset: true },
+        });
+        // Group by asset so one cached API call covers all positions on that asset
+        const byAsset = new Map<string, string[]>();
+        for (const p of unenriched) {
+          if (!byAsset.has(p.asset)) byAsset.set(p.asset, []);
+          byAsset.get(p.asset)!.push(p.id);
+        }
+        for (const [asset, ids] of byAsset) {
+          const ctx = await getTokenSocialContext(asset).catch(() => null);
+          if (!ctx) continue;
+          await db.position.updateMany({
+            where: { id: { in: ids } },
+            data: {
+              socialSentiment: ctx.sentimentScore,
+              socialMentions: ctx.mentionCount,
+              socialMindshare: ctx.mindshare,
+            },
+          });
+        }
+      })
+      .catch((err) => console.warn('[import] ELFA enrichment failed:', err));
+
     // Build a user-friendly summary
     const totalPositions = (groupingSummary as { totalPositions?: number }).totalPositions ?? 0;
     const assets = new Set<string>();
