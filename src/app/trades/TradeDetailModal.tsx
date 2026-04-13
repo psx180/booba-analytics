@@ -78,6 +78,18 @@ interface Insight {
   affectedPositions: string[];
 }
 
+interface SignalOption {
+  id: string;
+  callerName: string;
+  asset: string;
+  direction: string;
+  entryPrice: number;
+  targetPrice: number | null;
+  stopPrice: number | null;
+  createdAt: string;
+  positionId: string | null;
+}
+
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const REGIME_BADGE: Record<string, { label: string; bg: string; text: string }> = {
@@ -271,6 +283,11 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
   const [saving, setSaving] = useState(false);
   const [strategies, setStrategies] = useState<Strategy[]>([]);
 
+  // Signal link state
+  const [matchingSignals, setMatchingSignals] = useState<SignalOption[]>([]);
+  const [linkedSignalId, setLinkedSignalId] = useState<string | null>(null);
+  const [savingSignal, setSavingSignal] = useState(false);
+
   // Move order state
   const [movingOrderId, setMovingOrderId] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<CandidatePosition[]>([]);
@@ -300,8 +317,9 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
       authFetch(`/api/positions/${positionId}/orders`, { signal: controller.signal }).then((r) => r.json()),
       authFetch('/api/analytics/insights', { signal: controller.signal }).then((r) => r.json()),
       authFetch('/api/strategies', { signal: controller.signal }).then((r) => r.json()),
+      authFetch('/api/signals?limit=100', { signal: controller.signal }).then((r) => r.json()),
     ])
-      .then(([posData, ordersData, insightData, strategiesData]) => {
+      .then(([posData, ordersData, insightData, strategiesData, signalsData]) => {
         const pos: PositionDetail = posData.position;
         setPosition(pos);
         setThesis(pos?.thesis ?? '');
@@ -314,6 +332,17 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
         // Filter insights to those referencing this position
         const all: Insight[] = insightData.insights ?? [];
         setInsights(all.filter((i) => i.affectedPositions?.includes(positionId)));
+        // Matching signals: same asset and direction (case-insensitive), sorted by date desc
+        const allSignals: SignalOption[] = signalsData.signals ?? [];
+        const matches = allSignals.filter(
+          (s) =>
+            s.asset.toUpperCase() === (pos?.asset ?? '').toUpperCase() &&
+            s.direction.toUpperCase() === (pos?.direction ?? '').toUpperCase(),
+        );
+        setMatchingSignals(matches);
+        // Pre-select if one is already linked to this position
+        const alreadyLinked = matches.find((s) => s.positionId === positionId);
+        setLinkedSignalId(alreadyLinked?.id ?? null);
         setFetchDone(true);
       })
       .catch((err) => {
@@ -392,6 +421,30 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
       setSaving(false);
     }
   }, [positionId, authFetch]);
+
+  const handleLinkSignal = useCallback(async (signalId: string | null) => {
+    setSavingSignal(true);
+    // Unlink the previously linked signal (if any) and link the new one
+    try {
+      if (linkedSignalId && linkedSignalId !== signalId) {
+        await authFetch(`/api/signals/${linkedSignalId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ positionId: null }),
+        });
+      }
+      if (signalId) {
+        await authFetch(`/api/signals/${signalId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ positionId }),
+        });
+      }
+      setLinkedSignalId(signalId);
+    } finally {
+      setSavingSignal(false);
+    }
+  }, [linkedSignalId, positionId, authFetch]);
 
   const handleOverlayClick = (e: React.MouseEvent) => {
     if (e.target === overlayRef.current) onClose();
@@ -797,6 +850,36 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
                 </div>
               </div>
             </div>
+
+            {/* ── Signal Source ────────────────────────────────────── */}
+            {matchingSignals.length > 0 && (
+              <div className="px-6 py-4 border-b border-[#21262d]">
+                <h3 className="text-xs uppercase tracking-widest text-[#6e7681] mb-3">
+                  Signal Source
+                </h3>
+                <div className="flex flex-col gap-2">
+                  <p className="text-xs text-[#6e7681]">
+                    Link this trade to an external call you followed.
+                  </p>
+                  <select
+                    value={linkedSignalId ?? ''}
+                    disabled={savingSignal}
+                    onChange={(e) => handleLinkSignal(e.target.value || null)}
+                    className="bg-[#161b22] border border-[#30363d] text-sm text-[#e6edf3] rounded px-2 py-1.5 focus:outline-none focus:border-blue-500 disabled:opacity-50"
+                  >
+                    <option value="">— No signal linked —</option>
+                    {matchingSignals.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.callerName} · {s.asset} {s.direction} @ ${s.entryPrice.toLocaleString()}
+                        {s.targetPrice ? ` → $${s.targetPrice.toLocaleString()}` : ''}
+                        {' '}· {new Date(s.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      </option>
+                    ))}
+                  </select>
+                  {savingSignal && <p className="text-xs text-[#6e7681]">Saving…</p>}
+                </div>
+              </div>
+            )}
 
             {/* ── Insights ────────────────────────────────────────────── */}
             {insights.length > 0 && (

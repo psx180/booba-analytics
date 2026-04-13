@@ -12,7 +12,8 @@
     "db:migrate": "prisma migrate dev",
     "mcp:trade-data": "tsx src/scripts/mcp-trade-data.ts",
     "mcp:analytics": "tsx src/scripts/mcp-analytics.ts",
-    "mcp:grouping": "tsx src/scripts/mcp-grouping.ts"
+    "mcp:grouping": "tsx src/scripts/mcp-grouping.ts",
+    "seed:signals": "tsx src/scripts/seed-signals.ts"
   },
   "keywords": [],
   "author": "",

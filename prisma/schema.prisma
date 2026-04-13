@@ -355,6 +355,39 @@ model CandleCache {
   @@index([asset, timeframe, timestamp])
 }
 
+// ─── Signals (Caller/Signal tracking) ─────────────────────────────────────
+
+model Signal {
+  id            String   @id @default(cuid())
+  walletAddress String
+  source        String   // 'discord', 'twitter', 'telegram', 'manual'
+  channelName   String?  // e.g. 'alpha-calls', '@CryptoGuru'
+  callerName    String   // who made the call
+  rawMessage    String?  // original message text
+
+  asset         String   // BTC, ETH, SOL
+  direction     String   // LONG, SHORT
+  entryPrice    Float
+  targetPrice   Float?
+  stopPrice     Float?
+
+  // Outcome tracking
+  status        String   @default("open") // open, hit_target, hit_stop, expired, closed_manual
+  outcomePrice  Float?
+  outcomePnlPct Float?   // percentage return
+  outcomeRMultiple Float? // reward / risk
+  resolvedAt    DateTime?
+
+  // Link to user's position if they followed this call
+  positionId    String?
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([walletAddress, callerName])
+  @@index([walletAddress, status])
+}
+
 // ─── Alerts ────────────────────────────────────────────────────────────────────
 
 model Alert {

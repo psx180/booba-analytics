@@ -12,6 +12,7 @@ const tabs = [
   { href: '/dashboard', label: 'Dashboard' },
   { href: '/trades', label: 'Trades' },
   { href: '/analytics', label: 'Analytics' },
+  { href: '/signals', label: 'Signals' },
   { href: '#', label: 'Auctions', disabled: true },
   { href: '#', label: 'Settings', disabled: true },
 ];
