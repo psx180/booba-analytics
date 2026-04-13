@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import type { AnalyticsFilters } from './types';
 import { EMPTY_FILTERS, ALL_REGIMES, REGIME_LABELS, TRADE_TYPES, buildParams } from './types';
 import { useJournal } from '../JournalContext';
@@ -14,6 +14,11 @@ import RegimePerformance from './RegimePerformance';
 import PatternsSection from './PatternsSection';
 import EdgeFinder, { type CombinatorialSearchResult } from './EdgeFinder';
 import WartRadar, { type WartResult } from './WartRadar';
+import DisciplineGauge from './behavior/DisciplineGauge';
+import MarkovBars from './behavior/MarkovBars';
+import SessionDecayChart from './behavior/SessionDecayChart';
+import SizeAfterOutcomeScatter from './behavior/SizeAfterOutcomeScatter';
+import TiltEquityCurve, { type TiltEpisode } from './behavior/TiltEquityCurve';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -44,6 +49,30 @@ interface EloResult {
   peakElo: number;
   recentTrend: 'improving' | 'declining' | 'stable';
   tradeCount: number;
+}
+
+interface EntropyResult {
+  compositeScore: number;
+  rollingSeries: { date: string; score: number }[];
+}
+
+interface MarkovData {
+  transitionProbabilities: {
+    winAfterWin: number;
+    winAfterLoss: number;
+    lossAfterWin: number;
+    lossAfterLoss: number;
+  };
+  overallWinRate: number;
+  independenceTest: { pValue: number; isSignificant: boolean };
+}
+
+interface BehaviorPosition {
+  id: string;
+  kind: 'position' | 'linked_strategy';
+  pnl: number | null;
+  totalSize: number | null;
+  firstEntryTime: string | null;
 }
 
 // ── Tab config ─────────────────────────────────────────────────────────────────
@@ -547,13 +576,83 @@ function ExitsTab({
 function BehaviorTab({
   insights,
   onSwitchTab,
+  entropyResult,
+  behaviorPositions,
+  equitySeries,
 }: {
   insights: Insight[];
   onSwitchTab: (tab: TabId) => void;
+  entropyResult: EntropyResult | null;
+  behaviorPositions: BehaviorPosition[];
+  equitySeries: { date: string; cumulativePnl: number }[];
 }) {
   const behaviorInsights = getInlineInsights('behavior', insights, 10);
+
+  // Extract Markov data from the ml-patterns-markov insight
+  const markovInsight = insights.find((i) => i.module === 'ml-patterns-markov');
+  const markovData = markovInsight?.data?.markov as MarkovData | undefined;
+
+  // Extract tilt episode data
+  const tiltInsight = insights.find((i) => i.module === 'tilt-episodes');
+  const tiltEpisodes = (tiltInsight?.data?.episodes as TiltEpisode[] | undefined) ?? [];
+  const totalEpisodes = (tiltInsight?.data?.totalEpisodes as number | undefined) ?? 0;
+  const counterfactualImprovement =
+    (tiltInsight?.data?.counterfactualImprovement as number | undefined) ?? 0;
+
   return (
     <div className="space-y-4">
+      {/* ── Row 1: DisciplineGauge · MarkovBars · SessionDecayChart ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
+          {entropyResult ? (
+            <DisciplineGauge
+              compositeScore={entropyResult.compositeScore}
+              rollingSeries={entropyResult.rollingSeries}
+            />
+          ) : (
+            <div className="flex items-center justify-center h-[180px] text-xs text-[#4a5568] italic">
+              Discipline score not yet computed
+            </div>
+          )}
+        </div>
+
+        <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
+          {markovData ? (
+            <MarkovBars
+              winAfterWin={markovData.transitionProbabilities.winAfterWin}
+              winAfterLoss={markovData.transitionProbabilities.winAfterLoss}
+              overallWinRate={markovData.overallWinRate}
+              pValue={markovData.independenceTest?.pValue ?? null}
+              isSignificant={markovData.independenceTest?.isSignificant ?? false}
+            />
+          ) : (
+            <div className="flex items-center justify-center h-[180px] text-xs text-[#4a5568] italic">
+              Markov analysis not yet computed
+            </div>
+          )}
+        </div>
+
+        <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
+          <SessionDecayChart positions={behaviorPositions} />
+        </div>
+      </div>
+
+      {/* ── Row 2: TiltEquityCurve (full width) ───────────────────── */}
+      <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
+        <TiltEquityCurve
+          series={equitySeries}
+          episodes={tiltEpisodes}
+          totalEpisodes={totalEpisodes}
+          counterfactualImprovement={counterfactualImprovement}
+        />
+      </div>
+
+      {/* ── Row 3: SizeAfterOutcomeScatter ────────────────────────── */}
+      <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
+        <SizeAfterOutcomeScatter positions={behaviorPositions} />
+      </div>
+
+      {/* ── Existing insight cards ─────────────────────────────────── */}
       {behaviorInsights.length > 0 ? (
         <div className="space-y-2">
           {behaviorInsights.map((ins, i) => (
@@ -567,7 +666,6 @@ function BehaviorTab({
           </p>
         </div>
       )}
-      {/* ML patterns also contain behavioral data */}
       <PatternsSection />
     </div>
   );
@@ -767,8 +865,14 @@ export default function AnalyticsClient() {
   const [insights, setInsights] = useState<Insight[]>([]);
   const [wartResult, setWartResult] = useState<WartResult | null>(null);
   const [eloResult, setEloResult] = useState<EloResult | null>(null);
+  const [entropyResult, setEntropyResult] = useState<EntropyResult | null>(null);
   const [missingExitMetricsCount, setMissingExitMetricsCount] = useState(0);
   const [runningDeepAnalysis, setRunningDeepAnalysis] = useState(false);
+  // Behavior-tab-specific data — fetched lazily when the tab first becomes active.
+  const [behaviorPositions, setBehaviorPositions] = useState<BehaviorPosition[]>([]);
+  const [equitySeries, setEquitySeries] = useState<{ date: string; cumulativePnl: number }[]>([]);
+  // Track the last fetch key so we re-fetch when journalId or filters change.
+  const behaviorLoadedRef = useRef<string>('');
 
   const set = useCallback(<K extends keyof AnalyticsFilters>(key: K, value: string) => {
     setFilters((f) => ({ ...f, [key]: value }));
@@ -810,10 +914,56 @@ export default function AnalyticsClient() {
       .then((d) => {
         setWartResult(d.wartResult ?? null);
         setEloResult(d.eloResult ?? null);
+        setEntropyResult(d.entropyResult ?? null);
         setMissingExitMetricsCount(d.missingExitMetricsCount ?? 0);
+        // Invalidate behavior data so it re-fetches with the new filters.
+        behaviorLoadedRef.current = '';
       })
       .catch(() => {});
   }, [filters, journalId, authFetch]);
+
+  // Lazy-load behavior-tab data (positions + equity curve) when the tab is first opened.
+  useEffect(() => {
+    if (activeTab !== 'behavior' || !journalId) return;
+    const key = `${journalId}|${JSON.stringify(filters)}`;
+    if (behaviorLoadedRef.current === key) return;
+    behaviorLoadedRef.current = key;
+
+    const params = buildParams(filters, journalId);
+
+    async function loadPositions() {
+      let all: BehaviorPosition[] = [];
+      let page = 1;
+      while (all.length < 2000) {
+        const p = new URLSearchParams(params);
+        p.set('pageSize', '200');
+        p.set('page', String(page));
+        p.set('status', 'closed');
+        p.set('sortBy', 'firstEntryTime');
+        p.set('sortDir', 'asc');
+        const d = await authFetch(`/api/trade-units?${p}`).then((r) => r.json());
+        const units: BehaviorPosition[] = d.tradeUnits ?? [];
+        const positions = units.filter((u) => u.kind === 'position');
+        all = [...all, ...positions];
+        const { totalPages, page: pg } = d.pagination ?? {};
+        if (!totalPages || pg >= totalPages) break;
+        page++;
+      }
+      return all;
+    }
+
+    async function loadEquityCurve() {
+      const d = await authFetch(`/api/analytics/equity-curve?${params}`).then((r) => r.json());
+      return (d.series ?? []) as { date: string; cumulativePnl: number }[];
+    }
+
+    Promise.all([loadPositions(), loadEquityCurve()])
+      .then(([positions, curve]) => {
+        setBehaviorPositions(positions);
+        setEquitySeries(curve);
+      })
+      .catch(() => {});
+  }, [activeTab, journalId, filters, authFetch]);
 
   const handleRunDeepAnalysis = useCallback(async () => {
     if (!journalId || runningDeepAnalysis) return;
@@ -934,6 +1084,9 @@ export default function AnalyticsClient() {
           <BehaviorTab
             insights={insightsForCards}
             onSwitchTab={setActiveTab}
+            entropyResult={entropyResult}
+            behaviorPositions={behaviorPositions}
+            equitySeries={equitySeries}
           />
         )}
         {activeTab === 'strategy' && (
