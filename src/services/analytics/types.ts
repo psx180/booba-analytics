@@ -135,6 +135,7 @@ export interface Insight {
   category: InsightCategory;
   isSignificant: boolean;     // true if ALL backing tests are significant
   sampleSize: number;         // total trades this insight is based on
+  tier?: 'significant' | 'preliminary' | 'descriptive' | 'not_detected';
 }
 
 export interface InsightDetector {

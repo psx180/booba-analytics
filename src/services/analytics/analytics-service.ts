@@ -358,6 +358,28 @@ export class AnalyticsService {
       `[analytics] BH correction applied: ${significantTests} of ${totalTests} tests remain significant at FDR=0.10`,
     );
 
+    // Assign tier classification after BH correction.
+    // 'descriptive' modules produce facts about the data (not hypothesis tests)
+    // and are always shown in the actionable section regardless of significance.
+    const DESCRIPTIVE_MODULES = new Set([
+      'exit-optimizer',
+      'time-of-day-edge',
+      'hold-time-optimizer',
+      'outlier-dependency',
+    ]);
+    for (const insight of insights) {
+      const primaryTest = insight.statistics[0];
+      if (primaryTest?.testName === 'descriptive' || DESCRIPTIVE_MODULES.has(insight.module)) {
+        insight.tier = 'descriptive';
+      } else if (insight.isSignificant) {
+        insight.tier = 'significant';
+      } else if (primaryTest && primaryTest.pValue < 0.10) {
+        insight.tier = 'preliminary';
+      } else {
+        insight.tier = 'not_detected';
+      }
+    }
+
     // Sort by impactScore descending — highest-impact insights first
     insights.sort((a, b) => b.impactScore - a.impactScore);
 

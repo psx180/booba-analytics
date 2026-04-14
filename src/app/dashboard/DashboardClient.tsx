@@ -746,8 +746,28 @@ export default function DashboardClient() {
     fetchData(null);
   };
 
+  // ── Loading skeleton — shown until the first fetch completes ────────────
+  // Never render an empty dashboard first: show a skeleton while we check
+  // whether the wallet has any trades.
+  if (loading) {
+    return (
+      <div className="space-y-6 animate-pulse">
+        <div className="h-6 w-32 bg-[#21262d] rounded" />
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="bg-[#161b22] border border-[#21262d] rounded-lg px-4 py-3 space-y-2">
+              <div className="h-2.5 w-16 bg-[#21262d] rounded" />
+              <div className="h-6 w-20 bg-[#21262d] rounded" />
+            </div>
+          ))}
+        </div>
+        <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4 h-48" />
+      </div>
+    );
+  }
+
   // ── Onboarding screen (first-time user, no data) ──────────────────────
-  if (!loading && !hasData && !importDone) {
+  if (!hasData && !importDone) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
         <h1 className="text-3xl font-bold text-white tracking-wider mb-2">Welcome to Booba!</h1>

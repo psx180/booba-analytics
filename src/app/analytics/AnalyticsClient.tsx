@@ -53,6 +53,7 @@ interface Insight {
   category: string;
   isSignificant: boolean;
   sampleSize: number;
+  tier?: 'significant' | 'preliminary' | 'descriptive' | 'not_detected';
 }
 
 interface EloResult {
@@ -349,24 +350,83 @@ function deriveImpactHeadline(insight: Insight): string {
     case 'hold-time-optimizer': {
       const impact = num(d.dollarImpact);
       if (impact && impact > 0) return `Hold-time tuning could gain ${formatDollar(impact)}`;
-      return insight.title;
+      return 'Hold time analysis: no clear optimal window yet';
     }
     case 'streak-behavior': {
-      const impact = num(d.dollarImpact);
-      if (impact && impact > 0) return `Streak-state effect worth ${formatDollar(impact)}`;
-      return insight.title;
+      const winPnl  = num(d.winStreakTotalPnl)  ?? 0;
+      const lossPnl = num(d.lossStreakTotalPnl) ?? 0;
+      const totalStreakPnl = winPnl + lossPnl;
+      if (totalStreakPnl < -100) return `Streak-influenced trades cost ${formatDollar(Math.abs(totalStreakPnl))}`;
+      if (totalStreakPnl > 100)  return `Streak-influenced trades earned ${formatDollar(totalStreakPnl)}`;
+      return 'No significant streak-state behaviour detected';
     }
-    case 'social-correlation':
-      return insight.title;
+    case 'social-correlation': {
+      const gap = num(d.winRateGap);
+      const betterGroup = d.betterGroup as string | undefined;
+      if (gap != null && gap > 0 && betterGroup) {
+        const label = betterGroup === 'high' ? 'high-buzz' : 'low-buzz';
+        return `You win ${Math.round(gap)}% more on ${label} trades`;
+      }
+      return 'Social attention has no clear effect on your win rate';
+    }
     case 'xpnl': {
       const luck = num(d.luckScore);
       if (luck != null) {
         const pct = Math.round(luck * 100);
         if (pct > 20)  return `Your P&L is ${pct}% above expected — likely luck`;
         if (pct < -20) return `Your P&L is ${Math.abs(pct)}% below expected — likely unlucky`;
-        return 'Your P&L matches expected';
+        return 'Your P&L matches expected skill level';
       }
-      return insight.title;
+      return 'Expected P&L analysis pending';
+    }
+    case 'outlier-dependency': {
+      const topPct = num(d.topPct);
+      const top10Count = num(d.top10Count);
+      if (topPct != null && top10Count != null) {
+        if (topPct > 50) return `${top10Count} trades drive ${Math.round(topPct)}% of your total P&L`;
+        return `Your P&L is well-distributed across ${num(d.tradeCount) ?? 'your'} trades`;
+      }
+      return 'Outlier dependency analysis pending';
+    }
+    case 'entropy': {
+      const score = num(d.compositeScore);
+      if (score != null) {
+        if (score >= 65) return `Discipline score: ${Math.round(score)}/100 — focused, rule-driven trading`;
+        if (score >= 40) return `Discipline score: ${Math.round(score)}/100 — mixed consistency`;
+        return `Discipline score: ${Math.round(score)}/100 — scattered across dimensions`;
+      }
+      return 'Trading discipline score pending';
+    }
+    case 'wart': {
+      const composite = num(d.composite);
+      const tier = d.tier as string | undefined;
+      if (composite != null) {
+        const sign = composite >= 0 ? '+' : '';
+        return `Trader score: ${sign}${composite.toFixed(1)} WART${tier ? ` (${tier})` : ''}`;
+      }
+      return 'WART score pending (need 50+ trades)';
+    }
+    case 'ml-patterns-clustering': {
+      const clustering = d.clustering as { clusters?: { label: string; avgPnl: number }[] } | undefined;
+      const best = clustering?.clusters?.sort((a, b) => b.avgPnl - a.avgPnl)[0];
+      if (best) return `Your best pattern: ${best.label} (avg $${Math.round(best.avgPnl)}/trade)`;
+      return 'No distinct trading pattern clusters found';
+    }
+    case 'ml-patterns-anomaly': {
+      const count = num(d.anomalyCount ?? d.anomalies?.length);
+      if (count != null && count > 0) return `${count} anomalous trade${count === 1 ? '' : 's'} detected`;
+      return 'No significant trade anomalies detected';
+    }
+    case 'ml-patterns-markov': {
+      const markov = d.markov as { transitionProbabilities?: { winAfterWin: number; winAfterLoss: number } } | undefined;
+      if (markov?.transitionProbabilities) {
+        const diff = markov.transitionProbabilities.winAfterWin - markov.transitionProbabilities.winAfterLoss;
+        const pct = Math.round(Math.abs(diff) * 100);
+        if (diff > 0.02) return `Performance drops ${pct}% after a loss`;
+        if (diff < -0.02) return `You recover well — win rate up ${pct}% after losses`;
+        return 'Your outcomes are independent of prior results';
+      }
+      return 'Serial dependence analysis pending';
     }
     default:
       return insight.title;
@@ -775,9 +835,11 @@ function InsightsVerdict({
   insights: Insight[];
   tradeCount: number;
 }) {
-  const total = insights.length;
-  const significant = insights.filter((i) => i.isSignificant).length;
-  const text = `${total} pattern${total === 1 ? '' : 's'} detected across ${tradeCount} trades. ${significant} ${significant === 1 ? 'is' : 'are'} statistically significant.`;
+  const actionable = insights.filter(
+    (i) => i.tier === 'significant' || i.tier === 'descriptive',
+  ).length;
+  const preliminary = insights.filter((i) => i.tier === 'preliminary').length;
+  const text = `${actionable} actionable finding${actionable === 1 ? '' : 's'}, ${preliminary} preliminary pattern${preliminary === 1 ? '' : 's'} across ${tradeCount} trades`;
   return <Verdict tone="neutral" text={text} />;
 }
 
@@ -1501,6 +1563,54 @@ const INSIGHT_CATEGORIES = [
   { value: 'pacifica', label: 'Pacifica' },
 ];
 
+function InsightGroup({
+  title,
+  insights,
+  onSwitchTab,
+  defaultCollapsed = false,
+  count,
+}: {
+  title: string;
+  insights: Insight[];
+  onSwitchTab: (tab: TabId) => void;
+  defaultCollapsed?: boolean;
+  count?: number;
+}) {
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
+
+  if (insights.length === 0 && count == null) return null;
+
+  const displayCount = count ?? insights.length;
+
+  return (
+    <div className="space-y-2">
+      <button
+        type="button"
+        onClick={() => setCollapsed((c) => !c)}
+        className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-[#6e7681] hover:text-[#c9d1d9] transition-colors w-full text-left"
+      >
+        <span>{collapsed ? '▶' : '▼'}</span>
+        <span>{title}</span>
+        <span className="ml-1 bg-[#21262d] px-1.5 py-0.5 rounded text-[9px]">{displayCount}</span>
+      </button>
+      {!collapsed && insights.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          {insights.map((insight, i) => (
+            <FullInsightCard
+              key={`${insight.module}-${i}`}
+              insight={insight}
+              onDigDeeper={onSwitchTab}
+            />
+          ))}
+        </div>
+      )}
+      {!collapsed && insights.length === 0 && (
+        <p className="text-xs text-[#6e7681] px-1">No insights in this group.</p>
+      )}
+    </div>
+  );
+}
+
 function InsightsTab({
   insights,
   tradeCount,
@@ -1511,85 +1621,70 @@ function InsightsTab({
   onSwitchTab: (tab: TabId) => void;
 }) {
   const [catFilter, setCatFilter] = useState('');
-  const [sigFilter, setSigFilter] = useState<'all' | 'significant' | 'non-significant'>('all');
-  const [sortBy, setSortBy] = useState<'impact' | 'pvalue' | 'tradeCount'>('impact');
 
   const deduped = deduplicateByTitle(insights);
 
   const filtered = deduped.filter((i) => {
     if (catFilter && i.category !== catFilter) return false;
-    if (sigFilter === 'significant' && !i.isSignificant) return false;
-    if (sigFilter === 'non-significant' && i.isSignificant) return false;
     return true;
   });
 
-  const sorted = [...filtered].sort((a, b) => {
-    if (sortBy === 'impact') return b.impactScore - a.impactScore;
-    if (sortBy === 'pvalue') {
-      const pA = a.statistics?.[0]?.pValue ?? 1;
-      const pB = b.statistics?.[0]?.pValue ?? 1;
-      return pA - pB;
-    }
-    if (sortBy === 'tradeCount') return (b.sampleSize ?? 0) - (a.sampleSize ?? 0);
-    return 0;
-  });
+  // Group by tier
+  const actionable = filtered
+    .filter((i) => i.tier === 'significant' || i.tier === 'descriptive' || (!i.tier && i.isSignificant))
+    .sort((a, b) => b.impactScore - a.impactScore);
 
-  const significantCount = deduped.filter((i) => i.isSignificant).length;
+  const preliminary = filtered
+    .filter((i) => i.tier === 'preliminary' || (!i.tier && !i.isSignificant && (i.statistics?.[0]?.pValue ?? 1) < 0.10))
+    .sort((a, b) => (a.statistics?.[0]?.pValue ?? 1) - (b.statistics?.[0]?.pValue ?? 1));
+
+  const notDetected = filtered
+    .filter((i) => i.tier === 'not_detected' || (!i.tier && !i.isSignificant && (i.statistics?.[0]?.pValue ?? 1) >= 0.10))
+    .sort((a, b) => b.impactScore - a.impactScore);
 
   return (
     <div className="space-y-4">
       <InsightsVerdict insights={deduped} tradeCount={tradeCount} />
-      {/* Header + controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+
+      {/* Category filter */}
+      <div className="flex flex-wrap gap-2 items-center justify-between">
         <p className="text-xs text-[#6e7681]">
           {deduped.length} pattern{deduped.length !== 1 ? 's' : ''} detected
-          {' · '}
-          <span className="text-emerald-400">{significantCount} statistically significant</span>
         </p>
-        <div className="flex flex-wrap gap-2 items-center">
-          <select
-            value={catFilter}
-            onChange={(e) => setCatFilter(e.target.value)}
-            className="bg-[#21262d] border border-[#30363d] text-xs text-[#e6edf3] rounded px-2 py-1.5 focus:outline-none focus:border-blue-500"
-          >
-            {INSIGHT_CATEGORIES.map((c) => (
-              <option key={c.value} value={c.value}>{c.label}</option>
-            ))}
-          </select>
-          <select
-            value={sigFilter}
-            onChange={(e) => setSigFilter(e.target.value as any)}
-            className="bg-[#21262d] border border-[#30363d] text-xs text-[#e6edf3] rounded px-2 py-1.5 focus:outline-none focus:border-blue-500"
-          >
-            <option value="all">All significance</option>
-            <option value="significant">Significant only</option>
-            <option value="non-significant">Preliminary only</option>
-          </select>
-          <select
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as any)}
-            className="bg-[#21262d] border border-[#30363d] text-xs text-[#e6edf3] rounded px-2 py-1.5 focus:outline-none focus:border-blue-500"
-          >
-            <option value="impact">Sort: impact score</option>
-            <option value="pvalue">Sort: p-value</option>
-            <option value="tradeCount">Sort: trade count</option>
-          </select>
-        </div>
+        <select
+          value={catFilter}
+          onChange={(e) => setCatFilter(e.target.value)}
+          className="bg-[#21262d] border border-[#30363d] text-xs text-[#e6edf3] rounded px-2 py-1.5 focus:outline-none focus:border-blue-500"
+        >
+          {INSIGHT_CATEGORIES.map((c) => (
+            <option key={c.value} value={c.value}>{c.label}</option>
+          ))}
+        </select>
       </div>
 
-      {sorted.length === 0 ? (
+      {filtered.length === 0 ? (
         <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-6 text-center">
           <p className="text-sm text-[#6e7681]">No insights match the current filters.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          {sorted.map((insight, i) => (
-            <FullInsightCard
-              key={`${insight.module}-${i}`}
-              insight={insight}
-              onDigDeeper={onSwitchTab}
-            />
-          ))}
+        <div className="space-y-6">
+          <InsightGroup
+            title="Actionable Findings"
+            insights={actionable}
+            onSwitchTab={onSwitchTab}
+          />
+          <InsightGroup
+            title="Preliminary Patterns"
+            insights={preliminary}
+            onSwitchTab={onSwitchTab}
+          />
+          <InsightGroup
+            title="No Pattern Detected"
+            insights={notDetected}
+            onSwitchTab={onSwitchTab}
+            defaultCollapsed
+            count={notDetected.length}
+          />
         </div>
       )}
     </div>
