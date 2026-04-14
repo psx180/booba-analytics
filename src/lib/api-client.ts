@@ -64,6 +64,12 @@ export function useAuthFetch(): typeof fetch {
       if (!headers.has('Content-Type')) {
         headers.set('Content-Type', 'application/json');
       }
+      // Forward the selected network so server-side Pacifica client can use it.
+      const network =
+        typeof window !== 'undefined'
+          ? (localStorage.getItem('pacifica-network') ?? 'mainnet')
+          : 'mainnet';
+      headers.set('X-Pacifica-Network', network);
       return fetch(input, { ...init, headers });
     },
     [devBypass],

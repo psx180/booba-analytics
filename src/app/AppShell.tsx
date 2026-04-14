@@ -37,6 +37,7 @@ import { JournalProvider } from './JournalContext';
 import { LiveProvider } from './LiveContext';
 import NavBar from './NavBar';
 import { isDevBypass, DEV_WALLET } from './privy-env';
+import { AccountProvider } from '@/contexts/AccountContext';
 
 const CONNECT_PATH = '/connect';
 
@@ -106,12 +107,14 @@ function AuthedShell({
   children: React.ReactNode;
 }) {
   return (
-    <JournalProvider walletAddress={walletAddress}>
-      <LiveProvider>
-        <NavBar />
-        <main className="max-w-[1400px] mx-auto px-4 py-6">{children}</main>
-      </LiveProvider>
-    </JournalProvider>
+    <AccountProvider walletAddress={walletAddress}>
+      <JournalProvider walletAddress={walletAddress}>
+        <LiveProvider>
+          <NavBar />
+          <main className="max-w-[1400px] mx-auto px-4 py-6">{children}</main>
+        </LiveProvider>
+      </JournalProvider>
+    </AccountProvider>
   );
 }
 

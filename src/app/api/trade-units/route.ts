@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
   const dateTo = sp.get('dateTo');
 
   const page = Math.max(1, parseInt(sp.get('page') ?? '1'));
-  const pageSize = Math.min(200, Math.max(1, parseInt(sp.get('pageSize') ?? '50')));
+  const pageSize = Math.min(1000, Math.max(1, parseInt(sp.get('pageSize') ?? '50')));
   const sortBy = sp.get('sortBy') ?? 'firstEntryTime';
   const sortDir = sp.get('sortDir') === 'asc' ? 'asc' : 'desc';
 
@@ -114,6 +114,8 @@ export async function GET(req: NextRequest) {
     invalidationPrice?: number | null;
     targetPrice?: string | null;
     mistakes?: string | null;
+    playbookId?: string | null;
+    adherenceScore?: number | null;
     // Linked strategy extras
     strategyType?: string;
     netDelta?: number | null;
@@ -151,6 +153,8 @@ export async function GET(req: NextRequest) {
       invalidationPrice: p.invalidationPrice,
       targetPrice: p.targetPrice,
       mistakes: p.mistakes,
+      playbookId: p.playbookId,
+      adherenceScore: p.adherenceScore,
     });
   }
 

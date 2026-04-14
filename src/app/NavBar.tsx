@@ -3,10 +3,12 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { usePrivy, useLogout } from '@privy-io/react-auth';
+import { useRef, useEffect, useState } from 'react';
 import { useJournal } from './JournalContext';
 import { useLive } from './LiveContext';
 import { isDevBypass } from './privy-env';
 import JournalSelector from './JournalSelector';
+import { useAccount, type Network } from '@/contexts/AccountContext';
 
 const tabs = [
   { href: '/dashboard', label: 'Dashboard' },
@@ -25,46 +27,182 @@ function truncate(addr: string): string {
 
 export default function NavBar() {
   const pathname = usePathname();
+  const { network } = useAccount();
+  const isTestnet = network === 'testnet';
 
   return (
-    <nav className="border-b border-[#21262d] bg-[#161b22]">
-      <div className="max-w-[1400px] mx-auto px-4">
-        <div className="flex items-center gap-1 h-12">
-          <span className="text-sm font-bold text-white mr-4 tracking-wider">BOOBA</span>
-          {tabs.map((tab) => {
-            const isActive = !tab.disabled && pathname.startsWith(tab.href);
-            return tab.disabled ? (
-              <span
-                key={tab.label}
-                className="px-4 py-2 text-sm text-[#6e7681] cursor-not-allowed select-none"
-              >
-                {tab.label}
-              </span>
-            ) : (
-              <Link
-                key={tab.href}
-                href={tab.href}
-                className={`px-4 py-2 text-sm transition-colors ${
-                  isActive
-                    ? 'text-white border-b-2 border-blue-400 -mb-px'
-                    : 'text-[#8b949e] hover:text-white'
-                }`}
-              >
-                {tab.label}
-              </Link>
-            );
-          })}
-          {/* Right edge: journal selector + wallet badge. JournalSelector
-              stays nearest the tabs; wallet badge is the rightmost element
-              so it never moves when the journal name length changes. */}
-          <div className="ml-auto flex items-center gap-3">
-            <LiveIndicator />
-            <JournalSelector />
-            <WalletBadge />
+    <>
+      <nav className="border-b border-[#21262d] bg-[#161b22]">
+        <div className="max-w-[1400px] mx-auto px-4">
+          <div className="flex items-center gap-1 h-12">
+            <span className="text-sm font-bold text-white mr-4 tracking-wider">BOOBA</span>
+            {tabs.map((tab) => {
+              const isActive = !tab.disabled && pathname.startsWith(tab.href);
+              return tab.disabled ? (
+                <span
+                  key={tab.label}
+                  className="px-4 py-2 text-sm text-[#6e7681] cursor-not-allowed select-none"
+                >
+                  {tab.label}
+                </span>
+              ) : (
+                <Link
+                  key={tab.href}
+                  href={tab.href}
+                  className={`px-4 py-2 text-sm transition-colors ${
+                    isActive
+                      ? 'text-white border-b-2 border-blue-400 -mb-px'
+                      : 'text-[#8b949e] hover:text-white'
+                  }`}
+                >
+                  {tab.label}
+                </Link>
+              );
+            })}
+            {/* Right edge: network → sub-account → journal → wallet */}
+            <div className="ml-auto flex items-center gap-2">
+              <LiveIndicator />
+              <NetworkSelector />
+              <SubAccountSelector />
+              <JournalSelector />
+              <WalletBadge />
+            </div>
           </div>
         </div>
-      </div>
-    </nav>
+      </nav>
+      {/* Testnet banner — always visible so the user never forgets they're in
+          test mode. Keeps the same max-width as the nav content. */}
+      {isTestnet && (
+        <div className="bg-orange-900/30 border-b border-orange-700/50 text-orange-300 text-[10px] uppercase tracking-widest text-center py-0.5">
+          Testnet — data is not real
+        </div>
+      )}
+    </>
+  );
+}
+
+// ── Network selector ───────────────────────────────────────────────────────
+
+function NetworkSelector() {
+  const { network, setNetwork } = useAccount();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const isTestnet = network === 'testnet';
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] text-[#e6edf3] transition-colors"
+        title="Switch network"
+      >
+        <span
+          className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+            isTestnet ? 'bg-orange-400' : 'bg-green-400'
+          }`}
+        />
+        {isTestnet ? 'Testnet' : 'Mainnet'}
+        <span className="text-[10px] text-[#6e7681]">▾</span>
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-1 bg-[#1c2128] border border-[#30363d] rounded shadow-xl z-30 min-w-[140px]">
+          {(['mainnet', 'testnet'] as Network[]).map((n) => (
+            <button
+              key={n}
+              onClick={() => { setNetwork(n); setOpen(false); }}
+              className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 transition-colors ${
+                network === n
+                  ? 'bg-blue-900/30 text-white'
+                  : 'text-[#e6edf3] hover:bg-[#21262d]'
+              }`}
+            >
+              <span
+                className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                  n === 'testnet' ? 'bg-orange-400' : 'bg-green-400'
+                }`}
+              />
+              {n === 'mainnet' ? 'Mainnet' : 'Testnet'}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Sub-account selector ────────────────────────────────────────────────────
+
+function SubAccountSelector() {
+  const { subAccounts, subAccountId, setSubAccountId } = useAccount();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  // Only render when sub-accounts exist (after hooks — Rules of Hooks)
+  if (subAccounts.length === 0) return null;
+
+  const activeLabel =
+    subAccountId == null
+      ? 'Main Account'
+      : (subAccounts.find((sa) => sa.id === subAccountId)?.label ?? subAccountId);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium bg-[#21262d] hover:bg-[#30363d] text-[#e6edf3] border border-[#30363d] transition-colors"
+        title="Switch sub-account"
+      >
+        <span className="text-[#6e7681] uppercase tracking-widest text-[9px]">Account</span>
+        <span className="text-white max-w-[120px] truncate">{activeLabel}</span>
+        <span className="text-[10px] text-[#6e7681]">▾</span>
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-1 bg-[#1c2128] border border-[#30363d] rounded shadow-xl z-30 min-w-[180px]">
+          <button
+            onClick={() => { setSubAccountId(null); setOpen(false); }}
+            className={`w-full text-left px-3 py-2 text-xs transition-colors ${
+              subAccountId == null
+                ? 'bg-blue-900/30 text-white'
+                : 'text-[#e6edf3] hover:bg-[#21262d]'
+            }`}
+          >
+            Main Account
+          </button>
+          {subAccounts.map((sa) => (
+            <button
+              key={sa.id}
+              onClick={() => { setSubAccountId(sa.id); setOpen(false); }}
+              className={`w-full text-left px-3 py-2 text-xs transition-colors ${
+                subAccountId === sa.id
+                  ? 'bg-blue-900/30 text-white'
+                  : 'text-[#e6edf3] hover:bg-[#21262d]'
+              }`}
+            >
+              {sa.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

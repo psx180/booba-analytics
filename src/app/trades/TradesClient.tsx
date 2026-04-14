@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from 'react';
 import TradeDetailModal from './TradeDetailModal';
 import TradeAnnotationPopup, { type PopupPosition } from '@/app/components/trade-popup/TradeAnnotationPopup';
 import BoobaAvatar from '@/app/components/booba/BoobaAvatar';
@@ -8,6 +8,15 @@ import BoobaChat from '@/app/components/booba/BoobaChat';
 import { useJournal } from '../JournalContext';
 import { useLive } from '../LiveContext';
 import { useAuthFetch } from '@/lib/api-client';
+import {
+  useTradesFilter,
+  type TradesFilter,
+  EMPTY_TRADES_FILTER,
+  isFilterActive,
+  serializeFilterToUrl,
+  parseFilterFromUrl,
+} from '@/contexts/TradesFilterContext';
+import MultiSelectDropdown from '@/app/components/ui/MultiSelectDropdown';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -39,6 +48,8 @@ interface TradeUnit {
   invalidationPrice?: number | null;
   targetPrice?: string | null;
   mistakes?: string | null;
+  playbookId?: string | null;
+  adherenceScore?: number | null;
   // Linked strategy extras
   strategyType?: string;
   netDelta?: number | null;
@@ -744,21 +755,30 @@ function ReclassifyDialog({
 // ── Filter Select ─────────────────────────────────────────────────────────────
 
 function FilterSelect({
-  label, value, onChange, options,
+  label, value, onChange, options, optionLabels,
 }: {
-  label: string; value: string; onChange: (v: string) => void; options: string[];
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: string[];
+  optionLabels?: Record<string, string>;
 }) {
+  const hasSelection = value !== '';
   return (
     <div className="flex flex-col gap-1">
       <label className="text-[10px] uppercase tracking-widest text-[#6e7681]">{label}</label>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="bg-[#21262d] border border-[#30363d] text-sm text-[#e6edf3] rounded px-2 py-1.5 focus:outline-none focus:border-blue-500 min-w-[120px]"
+        className={`bg-[#21262d] border text-sm text-[#e6edf3] rounded px-2 py-1.5 focus:outline-none focus:border-blue-500 min-w-[120px] transition-colors ${
+          hasSelection ? 'border-blue-500/60' : 'border-[#30363d]'
+        }`}
       >
         <option value="">All</option>
         {options.map((o) => (
-          <option key={o} value={o}>{o.replace(/_/g, ' ')}</option>
+          <option key={o} value={o}>
+            {optionLabels?.[o] ?? o.replace(/_/g, ' ')}
+          </option>
         ))}
       </select>
     </div>
@@ -939,15 +959,152 @@ function OrdersPanel({ positionId }: { positionId: string }) {
   );
 }
 
-// ── Main Component ────────────────────────────────────────────────────────────
+// ── Client-side filter logic ──────────────────────────────────────────────────
 
-interface Filters {
-  tradeType: string;
-  asset: string;
-  status: string;
+const CLIENT_PAGE_SIZE = 50;
+
+function getPresetDates(preset: string): { dateFrom: string; dateTo: string } {
+  const now = new Date();
+  const today = now.toISOString().split('T')[0];
+  switch (preset) {
+    case 'today': return { dateFrom: today, dateTo: today };
+    case 'week': {
+      const d = new Date(now);
+      d.setDate(now.getDate() - now.getDay());
+      return { dateFrom: d.toISOString().split('T')[0], dateTo: today };
+    }
+    case 'month': {
+      const d = new Date(now.getFullYear(), now.getMonth(), 1);
+      return { dateFrom: d.toISOString().split('T')[0], dateTo: today };
+    }
+    case '30d': {
+      const d = new Date(now);
+      d.setDate(d.getDate() - 30);
+      return { dateFrom: d.toISOString().split('T')[0], dateTo: today };
+    }
+    case '90d': {
+      const d = new Date(now);
+      d.setDate(d.getDate() - 90);
+      return { dateFrom: d.toISOString().split('T')[0], dateTo: today };
+    }
+    default: return { dateFrom: '', dateTo: '' };
+  }
 }
 
-const EMPTY_FILTERS: Filters = { tradeType: '', asset: '', status: '' };
+function applyTradesFilter(units: TradeUnit[], f: TradesFilter): TradeUnit[] {
+  return units.filter((u) => {
+    // Direction
+    if (f.direction && u.direction.toLowerCase() !== f.direction) return false;
+    // Trade types (multi-select)
+    if (f.tradeTypes.length > 0) {
+      if (!u.tradeType || !f.tradeTypes.includes(u.tradeType)) return false;
+    }
+    // Assets (multi-select) — linked strategies have "BTC / ETH" so check each part
+    if (f.assets.length > 0) {
+      const unitAssets = u.asset.split(' / ');
+      if (!f.assets.some((a) => unitAssets.includes(a))) return false;
+    }
+    // Regimes (multi-select)
+    if (f.regimes.length > 0) {
+      if (!u.regimeAtEntry || !f.regimes.includes(u.regimeAtEntry)) return false;
+    }
+    // Status
+    if (f.status && u.status !== f.status) return false;
+    // Strategy (multi-select by ID)
+    if (f.strategyIds.length > 0) {
+      if (!u.strategyId || !f.strategyIds.includes(u.strategyId)) return false;
+    }
+    // Playbook
+    if (f.playbookId) {
+      if (u.playbookId !== f.playbookId) return false;
+      if (f.playbookAdherence === 'high' && (u.adherenceScore ?? 0) < 80) return false;
+      if (f.playbookAdherence === 'low' && (u.adherenceScore ?? 100) >= 50) return false;
+    }
+    // Date range — compare against exit time (or entry time for open positions)
+    const ts = u.lastExitTime ?? u.firstEntryTime;
+    if (f.dateFrom && ts && new Date(ts) < new Date(f.dateFrom)) return false;
+    if (f.dateTo && ts) {
+      const toEnd = new Date(f.dateTo);
+      toEnd.setHours(23, 59, 59, 999);
+      if (new Date(ts) > toEnd) return false;
+    }
+    // P&L filter
+    if (f.pnlFilter === 'winners' && (u.pnl ?? 0) <= 0) return false;
+    if (f.pnlFilter === 'losers' && (u.pnl ?? 0) >= 0) return false;
+    if (f.pnlFilter === 'custom') {
+      const lo = parseFloat(f.pnlMin);
+      const hi = parseFloat(f.pnlMax);
+      if (!isNaN(lo) && (u.pnl ?? 0) < lo) return false;
+      if (!isNaN(hi) && (u.pnl ?? 0) > hi) return false;
+    }
+    // Signal source
+    if (f.signalSource === 'has_signal' && !u.sourceTag) return false;
+    if (f.signalSource === 'no_signal' && u.sourceTag) return false;
+    if (f.signalSource === 'has_signal' && f.signalCaller && u.sourceTag !== f.signalCaller) return false;
+    return true;
+  });
+}
+
+interface SavedFilter {
+  name: string;
+  filter: TradesFilter;
+}
+
+function savedFiltersKey(wallet: string) { return `savedTradesFilters:${wallet}`; }
+function loadSavedFilters(wallet: string): SavedFilter[] {
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem(savedFiltersKey(wallet)) : null;
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+function persistSavedFilters(wallet: string, filters: SavedFilter[]) {
+  localStorage.setItem(savedFiltersKey(wallet), JSON.stringify(filters));
+}
+
+// ── Save Filter Modal ─────────────────────────────────────────────────────────
+
+function SaveFilterModal({
+  onSave,
+  onCancel,
+}: {
+  onSave: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState('');
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+      <div className="bg-[#0d1117] border border-[#21262d] rounded-xl shadow-2xl p-5 w-full max-w-xs">
+        <h3 className="text-base font-semibold text-white mb-3">Save Current Filters</h3>
+        <input
+          autoFocus
+          type="text"
+          placeholder="Filter name…"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) onSave(name.trim()); }}
+          className="w-full bg-[#21262d] border border-[#30363d] rounded px-3 py-2 text-sm text-[#e6edf3] placeholder-[#6e7681] focus:outline-none focus:border-blue-500 mb-4"
+        />
+        <div className="flex gap-3 justify-end">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 text-sm text-[#e6edf3] bg-[#21262d] border border-[#30363d] rounded hover:bg-[#30363d] transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => { if (name.trim()) onSave(name.trim()); }}
+            disabled={!name.trim()}
+            className="px-4 py-2 text-sm text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-40 rounded transition-colors"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main Component ────────────────────────────────────────────────────────────
 
 export default function TradesClient() {
   // Active wallet + journal scope, both sourced from JournalContext. Every
@@ -955,21 +1112,19 @@ export default function TradesClient() {
   // grouping output, and analytics fetches all stay bound to the same
   // journal — and the wallet itself is the Privy-authenticated one (or
   // the dev wallet in dev-bypass mode).
-  const { journalId, journals, buildParams, refresh: refreshJournals } = useJournal();
+  const { journalId, journals, buildParams, refresh: refreshJournals, walletAddress } = useJournal();
   const { lastSyncImport } = useLive();
   const authFetch = useAuthFetch();
+  const { filter, setFilter } = useTradesFilter();
   const [chatOpen, setChatOpen] = useState(false);
-  const [tradeUnits, setTradeUnits] = useState<TradeUnit[]>([]);
-  const [pagination, setPagination] = useState<Pagination | null>(null);
-  const [summary, setSummary] = useState<Summary | null>(null);
-  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  // All trade units fetched from server — filtering/sorting done client-side.
+  const [allTradeUnits, setAllTradeUnits] = useState<TradeUnit[]>([]);
   const [sortBy, setSortBy] = useState('firstEntryTime');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [page, setPage] = useState(1);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [detailPositionId, setDetailPositionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [assetOptions, setAssetOptions] = useState<string[]>([]);
   // Group editing state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -988,55 +1143,46 @@ export default function TradesClient() {
   const [syncCooldown, setSyncCooldown] = useState(false);
   const hasMountSynced = useRef(false);
   const syncCooldownTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Filter dropdown data
+  const [strategies, setStrategies] = useState<{ id: string; name: string }[]>([]);
+  const [sourceTags, setSourceTags] = useState<string[]>([]);
+  const [playbooks, setPlaybooks] = useState<{ id: string; name: string }[]>([]);
+  // Saved filters (localStorage)
+  const [savedFilters, setSavedFilters] = useState<SavedFilter[]>(() =>
+    loadSavedFilters(walletAddress),
+  );
+  const [saveFilterOpen, setSaveFilterOpen] = useState(false);
+  const [savedFilterDropOpen, setSavedFilterDropOpen] = useState(false);
+  const savedFilterDropRef = useRef<HTMLDivElement>(null);
 
+  // ── Fetch all trade units (no filter params — filtered client-side) ──────────
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const p = buildParams({
-        sortBy,
-        sortDir,
-        page: String(page),
-        ...(filters.tradeType ? { tradeType: filters.tradeType } : {}),
-        ...(filters.asset ? { asset: filters.asset } : {}),
-        ...(filters.status ? { status: filters.status } : {}),
-      });
-      const summaryParams = buildParams();
+      const p = buildParams({ pageSize: '1000', page: '1' });
 
-      const [unitsRes, summaryRes, untaggedRes] = await Promise.all([
+      const [unitsRes, untaggedRes] = await Promise.all([
         authFetch(`/api/trade-units?${p}`),
-        authFetch(`/api/analytics/summary?${summaryParams}`),
         authFetch('/api/positions/untagged-count'),
       ]);
-      const [unitsData, summaryData, untaggedData] = await Promise.all([
+      const [unitsData, untaggedData] = await Promise.all([
         unitsRes.json(),
-        summaryRes.json(),
         untaggedRes.json(),
       ]);
 
-      setTradeUnits(unitsData.tradeUnits ?? []);
-      setPagination(unitsData.pagination ?? null);
-      setSummary(summaryData?.data ?? null);
+      setAllTradeUnits(unitsData.tradeUnits ?? []);
       setUntaggedCount(untaggedData.count ?? 0);
       setUntaggedIds(untaggedData.ids ?? []);
-
-      if (!filters.tradeType && !filters.asset && !filters.status) {
-        const assets = [...new Set<string>(
-          (unitsData.tradeUnits ?? [])
-            .map((u: TradeUnit) => u.asset)
-            .flatMap((a: string) => a.split(' / ')),
-        )];
-        setAssetOptions(assets.sort());
-      }
     } finally {
       setLoading(false);
     }
-  }, [sortBy, sortDir, page, filters, buildParams, authFetch]);
+  }, [buildParams, authFetch]);
 
   useEffect(() => {
     if (!journalId) return;
     fetchData();
   }, [fetchData, journalId]);
-  useEffect(() => { setPage(1); }, [filters, sortBy, sortDir]);
+  useEffect(() => { setPage(1); }, [filter, sortBy, sortDir]);
 
   // ── Mount-time sync ─────────────────────────────────────────────────────
   // Non-blocking: page data loads from cache/DB immediately, then this runs
@@ -1073,6 +1219,110 @@ export default function TradesClient() {
     else { setSortBy(field); setSortDir('desc'); }
   };
 
+  // ── Strategies & playbooks for filter dropdowns ─────────────────────────────
+  useEffect(() => {
+    authFetch('/api/strategies')
+      .then((r) => r.json())
+      .then((d) => { setStrategies(d.strategies ?? []); setSourceTags(d.sourceTags ?? []); })
+      .catch(() => {});
+  // authFetch is stable
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    authFetch('/api/playbooks')
+      .then((r) => r.json())
+      .then((d) => setPlaybooks(d.playbooks ?? []))
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── URL sync: parse on mount, serialize on filter change ──────────────────
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const parsed = parseFilterFromUrl(new URLSearchParams(window.location.search));
+    if (Object.keys(parsed).length > 0) {
+      setFilter({ ...EMPTY_TRADES_FILTER, ...parsed });
+    }
+  // Run once on mount only.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const qs = serializeFilterToUrl(filter).toString();
+    const newUrl = qs
+      ? `${window.location.pathname}?${qs}`
+      : window.location.pathname;
+    window.history.replaceState({}, '', newUrl);
+  }, [filter]);
+
+  // ── Close saved-filter dropdown on outside click ───────────────────────────
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (savedFilterDropRef.current && !savedFilterDropRef.current.contains(e.target as Node)) {
+        setSavedFilterDropOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  // ── Client-side derived data ───────────────────────────────────────────────
+
+  // Sorted + filtered + paginated views of allTradeUnits.
+  const sortedAllUnits = useMemo(() => {
+    return [...allTradeUnits].sort((a, b) => {
+      const av = (a as unknown as Record<string, unknown>)[sortBy] ?? '';
+      const bv = (b as unknown as Record<string, unknown>)[sortBy] ?? '';
+      if (av < bv) return sortDir === 'asc' ? -1 : 1;
+      if (av > bv) return sortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [allTradeUnits, sortBy, sortDir]);
+
+  const filteredUnits = useMemo(
+    () => applyTradesFilter(sortedAllUnits, filter),
+    [sortedAllUnits, filter],
+  );
+
+  const displayedUnits = useMemo(
+    () => filteredUnits.slice((page - 1) * CLIENT_PAGE_SIZE, page * CLIENT_PAGE_SIZE),
+    [filteredUnits, page],
+  );
+
+  const clientPagination = useMemo(() => ({
+    total: filteredUnits.length,
+    page,
+    pageSize: CLIENT_PAGE_SIZE,
+    totalPages: Math.ceil(filteredUnits.length / CLIENT_PAGE_SIZE),
+  }), [filteredUnits.length, page]);
+
+  // Stats bar reflects the filtered view, not the whole journal.
+  const filteredSummary = useMemo<Summary | null>(() => {
+    if (filteredUnits.length === 0) return null;
+    const closed = filteredUnits.filter((u) => u.status === 'closed' && u.pnl != null);
+    const winners = closed.filter((u) => (u.pnl ?? 0) > 0);
+    const losses = closed.filter((u) => (u.pnl ?? 0) < 0);
+    const grossWins = winners.reduce((s, u) => s + (u.pnl ?? 0), 0);
+    const grossLosses = Math.abs(losses.reduce((s, u) => s + (u.pnl ?? 0), 0));
+    return {
+      tradeCount: filteredUnits.length,
+      totalPnl: filteredUnits.reduce((s, u) => s + (u.pnl ?? 0), 0),
+      winRate: closed.length ? winners.length / closed.length : 0,
+      expectancy: closed.length
+        ? closed.reduce((s, u) => s + (u.pnl ?? 0), 0) / closed.length
+        : 0,
+      profitFactor: grossLosses ? grossWins / grossLosses : grossWins > 0 ? 999 : 0,
+    };
+  }, [filteredUnits]);
+
+  // Asset options derived from all loaded units (not filtered set).
+  const assetOptions = useMemo(() => {
+    return [
+      ...new Set(allTradeUnits.flatMap((u) => u.asset.split(' / '))),
+    ].sort();
+  }, [allTradeUnits]);
 
   // ── Toast helpers ───────────────────────────────────────────────────────────
 
@@ -1105,7 +1355,7 @@ export default function TradesClient() {
 
   const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
-  const selectedUnits = tradeUnits.filter((u) => selectedIds.has(u.id));
+  const selectedUnits = allTradeUnits.filter((u) => selectedIds.has(u.id));
 
   // ── Group edit operations ───────────────────────────────────────────────────
 
@@ -1138,7 +1388,7 @@ export default function TradesClient() {
   }, [selectedIds, clearSelection, fetchData, showToast, flashRows]);
 
   const handleLink = useCallback(async (strategyType: 'delta_neutral' | 'pairs_trade' | 'basis_trade') => {
-    const ids = [...selectedIds].filter((id) => tradeUnits.find((u) => u.id === id)?.kind === 'position');
+    const ids = [...selectedIds].filter((id) => allTradeUnits.find((u) => u.id === id)?.kind === 'position');
     if (ids.length < 2) return;
     try {
       const res = await authFetch('/api/positions/link', {
@@ -1163,7 +1413,7 @@ export default function TradesClient() {
     } catch (err) {
       console.error('Link failed', err);
     }
-  }, [selectedIds, tradeUnits, clearSelection, fetchData, showToast]);
+  }, [selectedIds, allTradeUnits, clearSelection, fetchData, showToast]);
 
   const handleSplit = useCallback(async (splitTime: string) => {
     const positionId = splitPositionId!;
@@ -1346,7 +1596,7 @@ export default function TradesClient() {
     invalidationPrice: unit.invalidationPrice ?? null,
     targetPrice: unit.targetPrice ?? null,
     mistakes: unit.mistakes ?? null,
-    playbookId: (unit as { playbookId?: string | null }).playbookId ?? null,
+    playbookId: unit.playbookId ?? null,
   });
 
   // Resolve annotatePositionId → PopupPosition.
@@ -1359,7 +1609,7 @@ export default function TradesClient() {
       setAnnotatePosition(null);
       return;
     }
-    const inPage = tradeUnits.find((u) => u.id === annotatePositionId);
+    const inPage = allTradeUnits.find((u) => u.id === annotatePositionId);
     if (inPage) {
       setAnnotatePosition(toPopupPosition(inPage));
       return;
@@ -1446,20 +1696,20 @@ export default function TradesClient() {
         />
       )}
 
-      {/* ── Stats Bar ──────────────────────────────────────────────── */}
+      {/* ── Stats Bar — reflects currently filtered view ──────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         {[
-          { label: 'Positions', value: summary?.tradeCount ?? '—' },
+          { label: 'Positions', value: filteredSummary?.tradeCount ?? allTradeUnits.length ?? '—' },
           {
             label: 'Total P&L',
-            value: <span className={pnlColor(summary?.totalPnl ?? null)}>{summary ? fmt$(summary.totalPnl) : '—'}</span>,
+            value: <span className={pnlColor(filteredSummary?.totalPnl ?? null)}>{filteredSummary ? fmt$(filteredSummary.totalPnl) : '—'}</span>,
           },
-          { label: 'Win Rate', value: summary ? `${(summary.winRate * 100).toFixed(1)}%` : '—' },
+          { label: 'Win Rate', value: filteredSummary ? `${(filteredSummary.winRate * 100).toFixed(1)}%` : '—' },
           {
             label: 'Expectancy',
-            value: <span className={pnlColor(summary?.expectancy ?? null)}>{summary ? fmt$(summary.expectancy) : '—'}</span>,
+            value: <span className={pnlColor(filteredSummary?.expectancy ?? null)}>{filteredSummary ? fmt$(filteredSummary.expectancy) : '—'}</span>,
           },
-          { label: 'Profit Factor', value: summary ? summary.profitFactor.toFixed(2) : '—' },
+          { label: 'Profit Factor', value: filteredSummary ? (filteredSummary.profitFactor >= 999 ? '∞' : filteredSummary.profitFactor.toFixed(2)) : '—' },
         ].map(({ label, value }) => (
           <div key={label} className="bg-[#161b22] border border-[#21262d] rounded-lg px-4 py-3">
             <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">{label}</div>
@@ -1485,56 +1735,271 @@ export default function TradesClient() {
       )}
 
       {/* ── Filter Bar ─────────────────────────────────────────────── */}
-      <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
-        <div className="flex flex-wrap gap-4 items-end">
+      {saveFilterOpen && (
+        <SaveFilterModal
+          onSave={(name) => {
+            const next = [...savedFilters.filter((sf) => sf.name !== name), { name, filter }];
+            setSavedFilters(next);
+            persistSavedFilters(walletAddress, next);
+            setSaveFilterOpen(false);
+          }}
+          onCancel={() => setSaveFilterOpen(false)}
+        />
+      )}
+      <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4 space-y-3">
+        {/* Row 1 */}
+        <div className="flex flex-wrap gap-3 items-end">
+          {/* Direction — single-select */}
           <FilterSelect
-            label="Trade Type"
-            value={filters.tradeType}
-            onChange={(v) => setFilters((f) => ({ ...f, tradeType: v }))}
-            options={[...POSITION_TYPES, 'delta_neutral', 'pairs_trade', 'basis_trade']}
+            label="Direction"
+            value={filter.direction}
+            onChange={(v) => setFilter({ ...filter, direction: v as TradesFilter['direction'] })}
+            options={['long', 'short']}
           />
-          <FilterSelect
+          {/* Regime — multi-select */}
+          <MultiSelectDropdown
+            label="Regime"
+            options={Object.entries(REGIME_BADGE).map(([value, { label }]) => ({ value, label }))}
+            selected={filter.regimes}
+            onChange={(v) => setFilter({ ...filter, regimes: v })}
+          />
+          {/* Asset — multi-select */}
+          <MultiSelectDropdown
             label="Asset"
-            value={filters.asset}
-            onChange={(v) => setFilters((f) => ({ ...f, asset: v }))}
-            options={assetOptions}
+            options={assetOptions.map((a) => ({ value: a, label: a }))}
+            selected={filter.assets}
+            onChange={(v) => setFilter({ ...filter, assets: v })}
+            minWidth="130px"
           />
+          {/* Trade Type — multi-select */}
+          <MultiSelectDropdown
+            label="Trade Type"
+            options={[...POSITION_TYPES, 'delta_neutral', 'pairs_trade', 'basis_trade'].map((t) => ({
+              value: t,
+              label: t.replace(/_/g, ' '),
+            }))}
+            selected={filter.tradeTypes}
+            onChange={(v) => setFilter({ ...filter, tradeTypes: v })}
+            minWidth="140px"
+          />
+          {/* Status — single-select */}
           <FilterSelect
             label="Status"
-            value={filters.status}
-            onChange={(v) => setFilters((f) => ({ ...f, status: v }))}
+            value={filter.status}
+            onChange={(v) => setFilter({ ...filter, status: v as TradesFilter['status'] })}
             options={['open', 'closed']}
           />
-          {Object.values(filters).some(Boolean) && (
-            <button
-              onClick={() => setFilters(EMPTY_FILTERS)}
-              className="text-xs text-[#6e7681] hover:text-white bg-[#21262d] border border-[#30363d] rounded px-3 py-1.5 transition-colors self-end"
+          {/* Date range */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] uppercase tracking-widest text-[#6e7681]">From</label>
+            <input
+              type="date"
+              value={filter.dateFrom}
+              onChange={(e) => setFilter({ ...filter, dateFrom: e.target.value })}
+              className="bg-[#21262d] border border-[#30363d] text-sm text-[#e6edf3] rounded px-2 py-1.5 focus:outline-none focus:border-blue-500 w-[140px]"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] uppercase tracking-widest text-[#6e7681]">To</label>
+            <input
+              type="date"
+              value={filter.dateTo}
+              onChange={(e) => setFilter({ ...filter, dateTo: e.target.value })}
+              className="bg-[#21262d] border border-[#30363d] text-sm text-[#e6edf3] rounded px-2 py-1.5 focus:outline-none focus:border-blue-500 w-[140px]"
+            />
+          </div>
+          {/* Date presets */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] uppercase tracking-widest text-[#6e7681]">Preset</label>
+            <select
+              value=""
+              onChange={(e) => {
+                if (!e.target.value) return;
+                const { dateFrom, dateTo } = getPresetDates(e.target.value);
+                setFilter({ ...filter, dateFrom, dateTo });
+              }}
+              className="bg-[#21262d] border border-[#30363d] text-sm text-[#e6edf3] rounded px-2 py-1.5 focus:outline-none focus:border-blue-500 w-[130px]"
             >
-              Clear filters
-            </button>
-          )}
-          {/* Manual sync button */}
-          <button
-            onClick={handleManualSync}
-            disabled={syncLoading || syncCooldown}
-            title={syncCooldown ? 'Up to date' : 'Sync new trades from Pacifica'}
-            className={`ml-auto self-end flex items-center gap-1.5 px-3 py-1.5 rounded text-xs border transition-colors ${
-              syncCooldown
-                ? 'text-emerald-400 border-emerald-800/50 bg-emerald-900/20 cursor-default'
-                : syncLoading
-                ? 'text-[#6e7681] border-[#30363d] bg-[#21262d] cursor-wait'
-                : 'text-[#8b949e] border-[#30363d] bg-[#21262d] hover:text-white hover:border-[#6e7681]'
-            }`}
-          >
-            <span
-              className={`text-sm leading-none ${syncLoading ? 'animate-spin' : ''}`}
-              style={syncLoading ? { display: 'inline-block' } : undefined}
-            >
-              {syncCooldown ? '✓' : '↻'}
-            </span>
-            <span>{syncLoading ? 'Syncing…' : syncCooldown ? 'Up to date' : 'Sync'}</span>
-          </button>
+              <option value="">— Quick pick —</option>
+              <option value="today">Today</option>
+              <option value="week">This Week</option>
+              <option value="month">This Month</option>
+              <option value="30d">Last 30 Days</option>
+              <option value="90d">Last 90 Days</option>
+            </select>
+          </div>
         </div>
+        {/* Row 2 */}
+        <div className="flex flex-wrap gap-3 items-end">
+          {/* Strategy — multi-select */}
+          <MultiSelectDropdown
+            label="Strategy"
+            options={strategies.map((s) => ({ value: s.id, label: s.name }))}
+            selected={filter.strategyIds}
+            onChange={(v) => setFilter({ ...filter, strategyIds: v })}
+            minWidth="140px"
+          />
+          {/* Playbook — single-select + optional adherence */}
+          <div className="flex items-end gap-2">
+            <FilterSelect
+              label="Playbook"
+              value={filter.playbookId}
+              onChange={(v) => setFilter({ ...filter, playbookId: v, playbookAdherence: '' })}
+              options={playbooks.map((p) => p.id)}
+              optionLabels={playbooks.reduce<Record<string, string>>((acc, p) => { acc[p.id] = p.name; return acc; }, {})}
+            />
+            {filter.playbookId && (
+              <FilterSelect
+                label="Adherence"
+                value={filter.playbookAdherence}
+                onChange={(v) => setFilter({ ...filter, playbookAdherence: v as TradesFilter['playbookAdherence'] })}
+                options={['high', 'low']}
+                optionLabels={{ high: '>80%', low: '<50%' }}
+              />
+            )}
+          </div>
+          {/* P&L filter */}
+          <div className="flex items-end gap-2">
+            <FilterSelect
+              label="P&L"
+              value={filter.pnlFilter}
+              onChange={(v) => setFilter({ ...filter, pnlFilter: v as TradesFilter['pnlFilter'], pnlMin: '', pnlMax: '' })}
+              options={['winners', 'losers', 'custom']}
+              optionLabels={{ winners: 'Winners', losers: 'Losers', custom: 'Custom…' }}
+            />
+            {filter.pnlFilter === 'custom' && (
+              <>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] uppercase tracking-widest text-[#6e7681]">Min $</label>
+                  <input
+                    type="number"
+                    placeholder="-∞"
+                    value={filter.pnlMin}
+                    onChange={(e) => setFilter({ ...filter, pnlMin: e.target.value })}
+                    className="bg-[#21262d] border border-[#30363d] text-sm text-[#e6edf3] rounded px-2 py-1.5 focus:outline-none focus:border-blue-500 w-[80px]"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] uppercase tracking-widest text-[#6e7681]">Max $</label>
+                  <input
+                    type="number"
+                    placeholder="+∞"
+                    value={filter.pnlMax}
+                    onChange={(e) => setFilter({ ...filter, pnlMax: e.target.value })}
+                    className="bg-[#21262d] border border-[#30363d] text-sm text-[#e6edf3] rounded px-2 py-1.5 focus:outline-none focus:border-blue-500 w-[80px]"
+                  />
+                </div>
+              </>
+            )}
+          </div>
+          {/* Signal source */}
+          <div className="flex items-end gap-2">
+            <FilterSelect
+              label="Signal"
+              value={filter.signalSource}
+              onChange={(v) => setFilter({ ...filter, signalSource: v as TradesFilter['signalSource'], signalCaller: '' })}
+              options={['has_signal', 'no_signal']}
+              optionLabels={{ has_signal: 'Has Signal', no_signal: 'No Signal' }}
+            />
+            {filter.signalSource === 'has_signal' && sourceTags.length > 0 && (
+              <FilterSelect
+                label="Caller"
+                value={filter.signalCaller}
+                onChange={(v) => setFilter({ ...filter, signalCaller: v })}
+                options={sourceTags}
+              />
+            )}
+          </div>
+          {/* Row 2 right: clear + save + sync */}
+          <div className="ml-auto flex items-end gap-2">
+            {isFilterActive(filter) && (
+              <button
+                onClick={() => setFilter(EMPTY_TRADES_FILTER)}
+                className="text-xs text-[#6e7681] hover:text-white bg-[#21262d] border border-[#30363d] rounded px-3 py-1.5 transition-colors"
+              >
+                Clear All
+              </button>
+            )}
+            {/* Saved filters */}
+            {savedFilters.length === 0 ? (
+              <button
+                onClick={() => setSaveFilterOpen(true)}
+                className="text-xs text-[#8b949e] hover:text-white bg-[#21262d] border border-[#30363d] rounded px-3 py-1.5 transition-colors"
+              >
+                Save Filter
+              </button>
+            ) : (
+              <div className="relative" ref={savedFilterDropRef}>
+                <button
+                  onClick={() => setSavedFilterDropOpen((o) => !o)}
+                  className="text-xs text-[#8b949e] hover:text-white bg-[#21262d] border border-[#30363d] rounded px-3 py-1.5 transition-colors flex items-center gap-1.5"
+                >
+                  Saved <span className="text-[10px]">▾</span>
+                </button>
+                {savedFilterDropOpen && (
+                  <div className="absolute right-0 top-full mt-1 bg-[#1c2128] border border-[#30363d] rounded shadow-xl z-30 min-w-[200px]">
+                    {savedFilters.map((sf) => (
+                      <div key={sf.name} className="flex items-center group">
+                        <button
+                          onClick={() => { setFilter(sf.filter); setPage(1); setSavedFilterDropOpen(false); }}
+                          className="flex-1 text-left px-3 py-2 text-xs text-[#e6edf3] hover:bg-[#21262d] truncate transition-colors"
+                        >
+                          {sf.name}
+                        </button>
+                        <button
+                          onClick={() => {
+                            const next = savedFilters.filter((s) => s.name !== sf.name);
+                            setSavedFilters(next);
+                            persistSavedFilters(walletAddress, next);
+                          }}
+                          className="px-2 py-2 text-xs text-[#6e7681] hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
+                          title="Delete"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                    <div className="border-t border-[#30363d]">
+                      <button
+                        onClick={() => { setSaveFilterOpen(true); setSavedFilterDropOpen(false); }}
+                        className="w-full text-left px-3 py-2 text-xs text-[#8b949e] hover:text-white hover:bg-[#21262d] transition-colors"
+                      >
+                        Save current filters…
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            {/* Manual sync button */}
+            <button
+              onClick={handleManualSync}
+              disabled={syncLoading || syncCooldown}
+              title={syncCooldown ? 'Up to date' : 'Sync new trades from Pacifica'}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs border transition-colors ${
+                syncCooldown
+                  ? 'text-emerald-400 border-emerald-800/50 bg-emerald-900/20 cursor-default'
+                  : syncLoading
+                  ? 'text-[#6e7681] border-[#30363d] bg-[#21262d] cursor-wait'
+                  : 'text-[#8b949e] border-[#30363d] bg-[#21262d] hover:text-white hover:border-[#6e7681]'
+              }`}
+            >
+              <span
+                className={`text-sm leading-none ${syncLoading ? 'animate-spin' : ''}`}
+                style={syncLoading ? { display: 'inline-block' } : undefined}
+              >
+                {syncCooldown ? '✓' : '↻'}
+              </span>
+              <span>{syncLoading ? 'Syncing…' : syncCooldown ? 'Up to date' : 'Sync'}</span>
+            </button>
+          </div>
+        </div>
+        {/* Active-filter summary line */}
+        {isFilterActive(filter) && (
+          <div className="text-[10px] text-[#6e7681] border-t border-[#21262d] pt-2">
+            Showing {filteredUnits.length} of {allTradeUnits.length} trades
+          </div>
+        )}
       </div>
 
       {/* ── Floating Toolbar ───────────────────────────────────────── */}
@@ -1553,13 +2018,13 @@ export default function TradesClient() {
           }}
           onReclassify={() => {
             const id = [...selectedIds][0];
-            const unit = tradeUnits.find((u) => u.id === id);
+            const unit = allTradeUnits.find((u) => u.id === id);
             if (unit) setReclassifyUnit(unit);
           }}
           onMoveJournal={(targetJournalId) =>
             handleMoveJournal(
               [...selectedIds].filter(
-                (id) => tradeUnits.find((u) => u.id === id)?.kind === 'position',
+                (id) => allTradeUnits.find((u) => u.id === id)?.kind === 'position',
               ),
               targetJournalId,
             )
@@ -1571,9 +2036,19 @@ export default function TradesClient() {
       <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
         {loading ? (
           <div className="h-48 flex items-center justify-center text-[#6e7681] text-sm">Loading...</div>
-        ) : tradeUnits.length === 0 ? (
+        ) : allTradeUnits.length === 0 ? (
           <div className="h-48 flex flex-col items-center justify-center text-[#6e7681] text-sm gap-2">
             <span>No trade units found. Run the grouping pipeline first.</span>
+          </div>
+        ) : filteredUnits.length === 0 ? (
+          <div className="h-48 flex flex-col items-center justify-center text-[#6e7681] text-sm gap-2">
+            <span>No trades match the active filters.</span>
+            <button
+              onClick={() => setFilter(EMPTY_TRADES_FILTER)}
+              className="text-xs text-blue-400 hover:text-blue-300 underline transition-colors"
+            >
+              Clear filters
+            </button>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -1599,7 +2074,7 @@ export default function TradesClient() {
                 </tr>
               </thead>
               <tbody>
-                {tradeUnits.map((unit) => {
+                {displayedUnits.map((unit) => {
                   const isExpanded = expandedId === unit.id;
                   const isSelected = selectedIds.has(unit.id);
                   const isFlashing = flashIds.has(unit.id);
@@ -1780,10 +2255,10 @@ export default function TradesClient() {
         )}
 
         {/* ── Pagination ─────────────────────────────────────────── */}
-        {pagination && pagination.totalPages > 1 && (
+        {clientPagination.totalPages > 1 && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-[#21262d] text-xs text-[#6e7681]">
             <span>
-              {pagination.total} trade units · page {pagination.page} of {pagination.totalPages}
+              {clientPagination.total} trade units · page {clientPagination.page} of {clientPagination.totalPages}
             </span>
             <div className="flex gap-2">
               <button
@@ -1794,7 +2269,7 @@ export default function TradesClient() {
                 Prev
               </button>
               <button
-                disabled={page >= pagination.totalPages}
+                disabled={page >= clientPagination.totalPages}
                 onClick={() => setPage((p) => p + 1)}
                 className="px-3 py-1 bg-[#21262d] rounded disabled:opacity-30 hover:text-white transition-colors"
               >
