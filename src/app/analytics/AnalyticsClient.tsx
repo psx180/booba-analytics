@@ -22,6 +22,7 @@ import TiltEquityCurve, { type TiltEpisode } from './behavior/TiltEquityCurve';
 import MonteCarloChart from './monte-carlo/MonteCarloChart';
 import WhatIfChart from './what-if/WhatIfChart';
 import WalkForwardChart from './walk-forward/WalkForwardChart';
+import PlaybookAnalyticsCard from '../playbooks/PlaybookAnalyticsCard';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -78,26 +79,43 @@ interface BehaviorPosition {
   firstEntryTime: string | null;
 }
 
+interface DrawdownAnalysis {
+  maxDrawdown: number;
+  maxDrawdownPercent: number;
+  currentDrawdown: number;
+  currentDrawdownDuration: number;
+  avgDrawdownDuration: number;
+  drawdownCount: number;
+  longestDrawdown: number;
+}
+
+interface FeeAttribution {
+  totalFees: number;
+  totalFunding: number;
+  directionalPnl: number;
+  feeImpact: number;
+  fundingImpact: number;
+}
+
 // ── Tab config ─────────────────────────────────────────────────────────────────
 
-type TabId = 'overview' | 'timing' | 'exits' | 'behavior' | 'strategy' | 'patterns' | 'insights';
+type TabId = 'overview' | 'strategy' | 'execution' | 'risk' | 'psychology' | 'insights';
 
 const TABS: { id: TabId; label: string }[] = [
-  { id: 'overview',  label: 'Overview' },
-  { id: 'timing',    label: 'Timing' },
-  { id: 'exits',     label: 'Exits' },
-  { id: 'behavior',  label: 'Behavior' },
-  { id: 'strategy',  label: 'Strategy' },
-  { id: 'patterns',  label: 'Patterns' },
-  { id: 'insights',  label: 'Insights' },
+  { id: 'overview',   label: 'Overview' },
+  { id: 'strategy',   label: 'Strategy' },
+  { id: 'execution',  label: 'Execution' },
+  { id: 'risk',       label: 'Risk' },
+  { id: 'psychology', label: 'Psychology' },
+  { id: 'insights',   label: 'Insights' },
 ];
 
 const CATEGORY_TO_TAB: Record<string, TabId> = {
-  timing:   'timing',
-  exit:     'exits',
-  behavior: 'behavior',
+  timing:   'execution',
+  exit:     'execution',
+  behavior: 'psychology',
   strategy: 'strategy',
-  risk:     'behavior',
+  risk:     'risk',
   entry:    'strategy',
   pacifica: 'strategy',
 };
@@ -183,24 +201,16 @@ function firstSentence(text: string): string {
 /** Derive one-liner for a category tab from the insights array. */
 function getCategoryOneliner(tabId: TabId, insights: Insight[]): string | null {
   const catMap: Record<string, string[]> = {
-    timing:   ['timing'],
-    exits:    ['exit'],
-    behavior: ['behavior', 'risk'],
-    strategy: ['strategy', 'entry', 'pacifica'],
-    patterns: [],
+    execution:  ['timing', 'exit'],
+    psychology: ['behavior'],
+    strategy:   ['strategy', 'entry', 'pacifica'],
+    risk:       ['risk'],
   };
   const cats = catMap[tabId] ?? [];
 
-  let match: Insight | undefined;
-  if (tabId === 'patterns') {
-    match = insights.find(
-      (i) => i.module === 'ml-patterns' || i.module === 'combinatorial-search',
-    );
-  } else {
-    match = insights
-      .filter((i) => cats.includes(i.category))
-      .sort((a, b) => b.impactScore - a.impactScore)[0];
-  }
+  const match = insights
+    .filter((i) => cats.includes(i.category))
+    .sort((a, b) => b.impactScore - a.impactScore)[0];
 
   return match ? firstSentence(match.description ?? match.title) : null;
 }
@@ -208,23 +218,13 @@ function getCategoryOneliner(tabId: TabId, insights: Insight[]): string | null {
 /** Top 2-3 insights for a given tab by category, for inline display. */
 function getInlineInsights(tabId: TabId, insights: Insight[], n = 3): Insight[] {
   const catMap: Record<string, string[]> = {
-    timing:   ['timing'],
-    exits:    ['exit'],
-    behavior: ['behavior', 'risk'],
-    strategy: ['strategy', 'entry', 'pacifica'],
-    patterns: [],
+    execution:  ['timing', 'exit'],
+    psychology: ['behavior'],
+    strategy:   ['strategy', 'entry', 'pacifica'],
+    risk:       ['risk'],
   };
   const cats = catMap[tabId] ?? [];
-
-  let filtered: Insight[];
-  if (tabId === 'patterns') {
-    filtered = insights.filter(
-      (i) => i.module === 'ml-patterns' || i.module === 'combinatorial-search',
-    );
-  } else {
-    filtered = insights.filter((i) => cats.includes(i.category));
-  }
-
+  const filtered = insights.filter((i) => cats.includes(i.category));
   return deduplicateByTitle(filtered)
     .sort((a, b) => b.impactScore - a.impactScore)
     .slice(0, n);
@@ -385,11 +385,10 @@ function OverviewTab({
   const top3 = pickTop3(insights);
 
   const SUMMARY_TABS: { id: TabId; label: string }[] = [
-    { id: 'timing',   label: 'Timing' },
-    { id: 'exits',    label: 'Exits' },
-    { id: 'behavior', label: 'Behavior' },
-    { id: 'strategy', label: 'Strategy' },
-    { id: 'patterns', label: 'Patterns' },
+    { id: 'strategy',   label: 'Strategy' },
+    { id: 'execution',  label: 'Execution' },
+    { id: 'risk',       label: 'Risk' },
+    { id: 'psychology', label: 'Psychology' },
   ];
 
   return (
@@ -480,7 +479,7 @@ function OverviewTab({
                 onClick={() => onSwitchTab(id)}
                 className="w-full flex items-baseline gap-3 text-left px-4 py-2.5 hover:bg-[#1c2128] transition-colors group"
               >
-                <span className="text-[10px] uppercase tracking-widest text-[#6e7681] shrink-0 w-16">
+                <span className="text-[10px] uppercase tracking-widest text-[#6e7681] shrink-0 w-20">
                   {label}
                 </span>
                 {summary ? (
@@ -499,40 +498,12 @@ function OverviewTab({
   );
 }
 
-// ── Tab: Timing ───────────────────────────────────────────────────────────────
+// ── Tab: Execution ────────────────────────────────────────────────────────────
 
-function TimingTab({
-  chartProps,
-  insights,
-  onSwitchTab,
-}: {
-  chartProps: any;
-  insights: Insight[];
-  onSwitchTab: (tab: TabId) => void;
-}) {
-  const inlineInsights = getInlineInsights('timing', insights);
-  return (
-    <div className="space-y-4">
-      {inlineInsights.length > 0 && (
-        <div className="space-y-1.5">
-          {inlineInsights.map((ins, i) => (
-            <InlineInsightCard key={`${ins.module}-${i}`} insight={ins} onDigDeeper={onSwitchTab} />
-          ))}
-        </div>
-      )}
-      <TimeAnalysis {...chartProps} />
-      <CalendarHeatmap {...chartProps} />
-    </div>
-  );
-}
-
-// ── Tab: Exits ────────────────────────────────────────────────────────────────
-
-function ExitsTab({
+function ExecutionTab({
   chartProps,
   insights,
   missingExitMetricsCount,
-  journalId,
   onSwitchTab,
   onRunDeepAnalysis,
   runningDeepAnalysis,
@@ -540,12 +511,11 @@ function ExitsTab({
   chartProps: any;
   insights: Insight[];
   missingExitMetricsCount: number;
-  journalId: string | undefined;
   onSwitchTab: (tab: TabId) => void;
   onRunDeepAnalysis: () => void;
   runningDeepAnalysis: boolean;
 }) {
-  const inlineInsights = getInlineInsights('exits', insights);
+  const inlineInsights = getInlineInsights('execution', insights);
   return (
     <div className="space-y-4">
       {missingExitMetricsCount > 0 && (
@@ -570,13 +540,15 @@ function ExitsTab({
         </div>
       )}
       <ExitAnalysis {...chartProps} />
+      <TimeAnalysis {...chartProps} />
+      <CalendarHeatmap {...chartProps} />
     </div>
   );
 }
 
-// ── Tab: Behavior ─────────────────────────────────────────────────────────────
+// ── Tab: Psychology ───────────────────────────────────────────────────────────
 
-function BehaviorTab({
+function PsychologyTab({
   insights,
   onSwitchTab,
   entropyResult,
@@ -589,7 +561,7 @@ function BehaviorTab({
   behaviorPositions: BehaviorPosition[];
   equitySeries: { date: string; cumulativePnl: number }[];
 }) {
-  const behaviorInsights = getInlineInsights('behavior', insights, 10);
+  const psychologyInsights = getInlineInsights('psychology', insights, 10);
 
   // Extract Markov data from the ml-patterns-markov insight
   const markovInsight = insights.find((i) => i.module === 'ml-patterns-markov');
@@ -656,9 +628,9 @@ function BehaviorTab({
       </div>
 
       {/* ── Existing insight cards ─────────────────────────────────── */}
-      {behaviorInsights.length > 0 ? (
+      {psychologyInsights.length > 0 ? (
         <div className="space-y-2">
-          {behaviorInsights.map((ins, i) => (
+          {psychologyInsights.map((ins, i) => (
             <FullInsightCard key={`${ins.module}-${i}`} insight={ins} onDigDeeper={onSwitchTab} />
           ))}
         </div>
@@ -679,10 +651,14 @@ function StrategyTab({
   chartProps,
   insights,
   onSwitchTab,
+  combinatorialResult,
+  playbooks,
 }: {
   chartProps: any;
   insights: Insight[];
   onSwitchTab: (tab: TabId) => void;
+  combinatorialResult: CombinatorialSearchResult | null;
+  playbooks: { id: string; name: string }[];
 }) {
   const inlineInsights = getInlineInsights('strategy', insights);
   return (
@@ -697,42 +673,6 @@ function StrategyTab({
       <StrategyBreakdown {...chartProps} />
       <RegimePerformance {...chartProps} />
       <WalkForwardChart journalId={chartProps.journalId} />
-      <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
-        <div className="px-4 py-3 border-b border-[#21262d]">
-          <h2 className="text-sm font-semibold text-white">What If?</h2>
-          <p className="text-xs text-[#6e7681] mt-0.5">Explore how your stats change under hypothetical filters.</p>
-        </div>
-        <div className="px-4 py-5">
-          <WhatIfExplorer {...chartProps} />
-        </div>
-      </div>
-      <WhatIfChart journalId={chartProps.journalId} />
-      <MonteCarloChart journalId={chartProps.journalId} />
-    </div>
-  );
-}
-
-// ── Tab: Patterns ─────────────────────────────────────────────────────────────
-
-function PatternsTab({
-  insights,
-  combinatorialResult,
-  onSwitchTab,
-}: {
-  insights: Insight[];
-  combinatorialResult: CombinatorialSearchResult | null;
-  onSwitchTab: (tab: TabId) => void;
-}) {
-  const inlineInsights = getInlineInsights('patterns', insights);
-  return (
-    <div className="space-y-4">
-      {inlineInsights.length > 0 && (
-        <div className="space-y-1.5">
-          {inlineInsights.map((ins, i) => (
-            <InlineInsightCard key={`${ins.module}-${i}`} insight={ins} onDigDeeper={onSwitchTab} />
-          ))}
-        </div>
-      )}
       <PatternsSection />
       <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
         <div className="px-4 py-3 border-b border-[#21262d]">
@@ -749,6 +689,210 @@ function PatternsTab({
           <EdgeFinder result={combinatorialResult} />
         </div>
       </div>
+      {playbooks.length > 0 && (
+        <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
+          <div className="px-4 py-3 border-b border-[#21262d]">
+            <h2 className="text-sm font-semibold text-white">Playbook Adherence</h2>
+            <p className="text-xs text-[#6e7681] mt-0.5">Rule adherence analytics across your saved playbooks.</p>
+          </div>
+          <div className="px-4 py-5 grid grid-cols-1 gap-3">
+            {playbooks.map((pb) => (
+              <PlaybookAnalyticsCard key={pb.id} playbookId={pb.id} playbookName={pb.name} />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Tab: Risk ─────────────────────────────────────────────────────────────────
+
+function fmtDollars(n: number): string {
+  const abs = Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  return n < 0 ? `-$${abs}` : `+$${abs}`;
+}
+
+function RiskTab({
+  chartProps,
+  sharpeRatio,
+  sortinoRatio,
+  payoffRatio,
+  drawdownAnalysis,
+  feeAttribution,
+  liquidationCount,
+  liquidationCost,
+}: {
+  chartProps: any;
+  sharpeRatio: number | null;
+  sortinoRatio: number | null;
+  payoffRatio: number | null;
+  drawdownAnalysis: DrawdownAnalysis | null;
+  feeAttribution: FeeAttribution | null;
+  liquidationCount: number;
+  liquidationCost: number;
+}) {
+  const hasRatios = sharpeRatio != null || sortinoRatio != null || payoffRatio != null;
+  const hasDrawdown = drawdownAnalysis != null && drawdownAnalysis.maxDrawdown < 0;
+
+  return (
+    <div className="space-y-4">
+      {/* ── Risk-Adjusted Performance ────────────────────────────── */}
+      {hasRatios && (
+        <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
+          <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-3">Risk-Adjusted Performance</div>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <div className="text-xs text-[#6e7681] mb-1">Sharpe Ratio</div>
+              <div className={`text-lg font-bold tabular-nums ${
+                sharpeRatio == null ? 'text-[#4a5568]'
+                : sharpeRatio >= 1 ? 'text-green-400'
+                : sharpeRatio >= 0.5 ? 'text-amber-400'
+                : 'text-red-400'
+              }`}>
+                {sharpeRatio != null ? sharpeRatio.toFixed(2) : '—'}
+              </div>
+              <div className="text-[10px] text-[#4a5568] mt-0.5">Returns per unit of volatility</div>
+            </div>
+            <div>
+              <div className="text-xs text-[#6e7681] mb-1">Sortino Ratio</div>
+              <div className={`text-lg font-bold tabular-nums ${
+                sortinoRatio == null ? 'text-[#4a5568]'
+                : sortinoRatio >= 1 ? 'text-green-400'
+                : sortinoRatio >= 0.5 ? 'text-amber-400'
+                : 'text-red-400'
+              }`}>
+                {sortinoRatio != null ? sortinoRatio.toFixed(2) : '—'}
+              </div>
+              <div className="text-[10px] text-[#4a5568] mt-0.5">Returns per unit of downside risk</div>
+            </div>
+            <div>
+              <div className="text-xs text-[#6e7681] mb-1">Payoff Ratio</div>
+              <div className={`text-lg font-bold tabular-nums ${
+                payoffRatio == null ? 'text-[#4a5568]'
+                : payoffRatio >= 1.5 ? 'text-green-400'
+                : payoffRatio >= 1 ? 'text-amber-400'
+                : 'text-red-400'
+              }`}>
+                {payoffRatio != null ? payoffRatio.toFixed(2) : '—'}
+              </div>
+              <div className="text-[10px] text-[#4a5568] mt-0.5">Avg winner / avg loser</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Drawdown Analysis ────────────────────────────────────── */}
+      {hasDrawdown && (
+        <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
+          <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-3">Drawdown Analysis</div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div>
+              <div className="text-xs text-[#6e7681] mb-1">Max Drawdown</div>
+              <div className="text-sm font-medium text-red-400 tabular-nums">
+                {fmtDollars(drawdownAnalysis!.maxDrawdown)}
+              </div>
+              <div className="text-[10px] text-[#4a5568]">
+                {drawdownAnalysis!.maxDrawdownPercent.toFixed(1)}% of peak
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-[#6e7681] mb-1">Current</div>
+              <div className={`text-sm font-medium tabular-nums ${
+                drawdownAnalysis!.currentDrawdown < 0 ? 'text-red-400' : 'text-green-400'
+              }`}>
+                {drawdownAnalysis!.currentDrawdown !== 0
+                  ? fmtDollars(drawdownAnalysis!.currentDrawdown)
+                  : 'At HWM'}
+              </div>
+              {drawdownAnalysis!.currentDrawdownDuration > 0 && (
+                <div className="text-[10px] text-[#4a5568]">
+                  {Math.round(drawdownAnalysis!.currentDrawdownDuration)}d in drawdown
+                </div>
+              )}
+            </div>
+            <div>
+              <div className="text-xs text-[#6e7681] mb-1">Avg Recovery</div>
+              <div className="text-sm font-medium text-white tabular-nums">
+                {drawdownAnalysis!.avgDrawdownDuration.toFixed(0)}d
+              </div>
+              <div className="text-[10px] text-[#4a5568]">
+                Longest: {Math.round(drawdownAnalysis!.longestDrawdown)}d
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-[#6e7681] mb-1">Episodes &gt; 5%</div>
+              <div className="text-sm font-medium text-white tabular-nums">
+                {drawdownAnalysis!.drawdownCount}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Monte Carlo ──────────────────────────────────────────── */}
+      <MonteCarloChart journalId={chartProps.journalId} />
+
+      {/* ── What-If equity curves ────────────────────────────────── */}
+      <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
+        <div className="px-4 py-3 border-b border-[#21262d]">
+          <h2 className="text-sm font-semibold text-white">What If?</h2>
+          <p className="text-xs text-[#6e7681] mt-0.5">Explore how your stats change under hypothetical filters.</p>
+        </div>
+        <div className="px-4 py-5">
+          <WhatIfExplorer {...chartProps} />
+        </div>
+      </div>
+      <WhatIfChart journalId={chartProps.journalId} />
+
+      {/* ── Fee & Funding Impact ─────────────────────────────────── */}
+      {feeAttribution && (
+        <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
+          <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-3">Fee & Funding Impact</div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div>
+              <div className="text-xs text-[#6e7681] mb-1">Total Fees</div>
+              <div className="text-sm font-medium text-red-400 tabular-nums">
+                {fmtDollars(feeAttribution.totalFees)}
+              </div>
+              <div className="text-[10px] text-[#4a5568]">
+                {feeAttribution.feeImpact.toFixed(1)}% of gross P&L
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-[#6e7681] mb-1">Net Funding</div>
+              <div className={`text-sm font-medium tabular-nums ${
+                feeAttribution.totalFunding >= 0 ? 'text-green-400' : 'text-red-400'
+              }`}>
+                {fmtDollars(feeAttribution.totalFunding)}
+              </div>
+              <div className="text-[10px] text-[#4a5568]">
+                {feeAttribution.fundingImpact.toFixed(1)}% of net P&L
+              </div>
+            </div>
+            <div>
+              <div className="text-xs text-[#6e7681] mb-1">Directional P&L</div>
+              <div className={`text-sm font-medium tabular-nums ${
+                feeAttribution.directionalPnl >= 0 ? 'text-green-400' : 'text-red-400'
+              }`}>
+                {fmtDollars(feeAttribution.directionalPnl)}
+              </div>
+              <div className="text-[10px] text-[#4a5568]">Price movement only</div>
+            </div>
+            {liquidationCount > 0 && (
+              <div>
+                <div className="text-xs text-[#6e7681] mb-1">Liquidations</div>
+                <div className="text-sm font-medium text-red-400 tabular-nums">
+                  {liquidationCount} event{liquidationCount !== 1 ? 's' : ''}
+                </div>
+                <div className="text-[10px] text-[#4a5568]">
+                  {fmtDollars(liquidationCost)} total cost
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -873,11 +1017,21 @@ export default function AnalyticsClient() {
   const [entropyResult, setEntropyResult] = useState<EntropyResult | null>(null);
   const [missingExitMetricsCount, setMissingExitMetricsCount] = useState(0);
   const [runningDeepAnalysis, setRunningDeepAnalysis] = useState(false);
+  const [sharpeRatio, setSharpeRatio] = useState<number | null>(null);
+  const [sortinoRatio, setSortinoRatio] = useState<number | null>(null);
+  const [payoffRatio, setPayoffRatio] = useState<number | null>(null);
+  const [drawdownAnalysis, setDrawdownAnalysis] = useState<DrawdownAnalysis | null>(null);
+  const [feeAttribution, setFeeAttribution] = useState<FeeAttribution | null>(null);
+  const [liquidationCount, setLiquidationCount] = useState(0);
+  const [liquidationCost, setLiquidationCost] = useState(0);
   // Behavior-tab-specific data — fetched lazily when the tab first becomes active.
   const [behaviorPositions, setBehaviorPositions] = useState<BehaviorPosition[]>([]);
   const [equitySeries, setEquitySeries] = useState<{ date: string; cumulativePnl: number }[]>([]);
   // Track the last fetch key so we re-fetch when journalId or filters change.
   const behaviorLoadedRef = useRef<string>('');
+  // Playbooks — fetched lazily when the Strategy tab first becomes active.
+  const [playbooks, setPlaybooks] = useState<{ id: string; name: string }[]>([]);
+  const playbooksLoadedRef = useRef(false);
 
   const set = useCallback(<K extends keyof AnalyticsFilters>(key: K, value: string) => {
     setFilters((f) => ({ ...f, [key]: value }));
@@ -910,7 +1064,7 @@ export default function AnalyticsClient() {
       .catch(() => {});
   }, [journalId, authFetch]);
 
-  // Summary (WART + Elo + missing exit count)
+  // Summary (WART + Elo + risk metrics + missing exit count)
   useEffect(() => {
     if (!journalId) return;
     const params = buildParams(filters, journalId);
@@ -921,6 +1075,13 @@ export default function AnalyticsClient() {
         setEloResult(d.eloResult ?? null);
         setEntropyResult(d.entropyResult ?? null);
         setMissingExitMetricsCount(d.missingExitMetricsCount ?? 0);
+        setSharpeRatio(d.sharpeRatio ?? null);
+        setSortinoRatio(d.sortinoRatio ?? null);
+        setPayoffRatio(d.payoffRatio ?? null);
+        setDrawdownAnalysis(d.drawdownAnalysis ?? null);
+        setFeeAttribution(d.feeAttribution ?? null);
+        setLiquidationCount(d.liquidationCount ?? 0);
+        setLiquidationCost(d.liquidationCost ?? 0);
         // Invalidate behavior data so it re-fetches with the new filters.
         behaviorLoadedRef.current = '';
       })
@@ -929,7 +1090,7 @@ export default function AnalyticsClient() {
 
   // Lazy-load behavior-tab data (positions + equity curve) when the tab is first opened.
   useEffect(() => {
-    if (activeTab !== 'behavior' || !journalId) return;
+    if (activeTab !== 'psychology' || !journalId) return;
     const key = `${journalId}|${JSON.stringify(filters)}`;
     if (behaviorLoadedRef.current === key) return;
     behaviorLoadedRef.current = key;
@@ -969,6 +1130,16 @@ export default function AnalyticsClient() {
       })
       .catch(() => {});
   }, [activeTab, journalId, filters, authFetch]);
+
+  // Lazy-load playbooks when the Strategy tab first becomes active.
+  useEffect(() => {
+    if (activeTab !== 'strategy' || playbooksLoadedRef.current) return;
+    playbooksLoadedRef.current = true;
+    authFetch('/api/playbooks')
+      .then((r) => r.json())
+      .then((d) => setPlaybooks(d.playbooks ?? []))
+      .catch(() => {});
+  }, [activeTab, authFetch]);
 
   const handleRunDeepAnalysis = useCallback(async () => {
     if (!journalId || runningDeepAnalysis) return;
@@ -1067,45 +1238,44 @@ export default function AnalyticsClient() {
             onSwitchTab={setActiveTab}
           />
         )}
-        {activeTab === 'timing' && (
-          <TimingTab
-            chartProps={chartProps}
-            insights={insightsForCards}
-            onSwitchTab={setActiveTab}
-          />
-        )}
-        {activeTab === 'exits' && (
-          <ExitsTab
-            chartProps={chartProps}
-            insights={insightsForCards}
-            missingExitMetricsCount={missingExitMetricsCount}
-            journalId={journalId ?? undefined}
-            onSwitchTab={setActiveTab}
-            onRunDeepAnalysis={handleRunDeepAnalysis}
-            runningDeepAnalysis={runningDeepAnalysis}
-          />
-        )}
-        {activeTab === 'behavior' && (
-          <BehaviorTab
-            insights={insightsForCards}
-            onSwitchTab={setActiveTab}
-            entropyResult={entropyResult}
-            behaviorPositions={behaviorPositions}
-            equitySeries={equitySeries}
-          />
-        )}
         {activeTab === 'strategy' && (
           <StrategyTab
             chartProps={chartProps}
             insights={insightsForCards}
             onSwitchTab={setActiveTab}
+            combinatorialResult={combinatorialResult}
+            playbooks={playbooks}
           />
         )}
-        {activeTab === 'patterns' && (
-          <PatternsTab
+        {activeTab === 'execution' && (
+          <ExecutionTab
+            chartProps={chartProps}
             insights={insightsForCards}
-            combinatorialResult={combinatorialResult}
+            missingExitMetricsCount={missingExitMetricsCount}
             onSwitchTab={setActiveTab}
+            onRunDeepAnalysis={handleRunDeepAnalysis}
+            runningDeepAnalysis={runningDeepAnalysis}
+          />
+        )}
+        {activeTab === 'risk' && (
+          <RiskTab
+            chartProps={chartProps}
+            sharpeRatio={sharpeRatio}
+            sortinoRatio={sortinoRatio}
+            payoffRatio={payoffRatio}
+            drawdownAnalysis={drawdownAnalysis}
+            feeAttribution={feeAttribution}
+            liquidationCount={liquidationCount}
+            liquidationCost={liquidationCost}
+          />
+        )}
+        {activeTab === 'psychology' && (
+          <PsychologyTab
+            insights={insightsForCards}
+            onSwitchTab={setActiveTab}
+            entropyResult={entropyResult}
+            behaviorPositions={behaviorPositions}
+            equitySeries={equitySeries}
           />
         )}
         {activeTab === 'insights' && (
