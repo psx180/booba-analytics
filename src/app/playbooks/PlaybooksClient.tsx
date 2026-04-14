@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useAuthFetch } from '@/lib/api-client';
-import { RULE_TYPES } from '@/services/playbooks/rule-checkers';
+import { RULE_TYPES } from '@/services/playbooks/rule-type-descriptors';
 import type { PlaybookRule } from '@/services/playbooks/types';
 import PlaybookAnalyticsCard from './PlaybookAnalyticsCard';
 
