@@ -103,7 +103,7 @@ interface ToastState {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const POSITION_TYPES = [
-  'scalp', 'directional', 'scaled_directional', 'carry_trade', 'market_making',
+  'scalp', 'directional', 'scaled_directional', 'carry_trade', 'market_making', 'liquidated',
 ];
 
 const ALL_TRADE_TYPES = [
@@ -175,8 +175,14 @@ function typeBadgeClass(type: string | null) {
     delta_neutral:      'text-teal-400 bg-teal-900/30',
     pairs_trade:        'text-pink-400 bg-pink-900/30',
     basis_trade:        'text-emerald-400 bg-emerald-900/30',
+    liquidated:         'text-red-400 bg-red-900/40 font-semibold',
   };
   return colors[type] ?? 'text-[#6e7681] bg-[#21262d]';
+}
+
+function typeBadgeLabel(type: string): string {
+  if (type === 'liquidated') return 'LIQUIDATED';
+  return type.replace(/_/g, ' ');
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
@@ -1679,8 +1685,8 @@ export default function TradesClient() {
                         </td>
                         <td className="py-2.5 pr-4">
                           {unit.tradeType ? (
-                            <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${typeBadgeClass(unit.tradeType)}`}>
-                              {unit.tradeType.replace(/_/g, ' ')}
+                            <span className={`inline-block px-1.5 py-0.5 rounded text-xs ${typeBadgeClass(unit.tradeType)}`}>
+                              {typeBadgeLabel(unit.tradeType)}
                             </span>
                           ) : (
                             <span className="text-[#6e7681]">—</span>

@@ -41,6 +41,7 @@ export type Fill = Pick<
   | 'rawData'
   | 'builderCode'
   | 'subaccount'
+  | 'cause'
   | 'tradeType'
   | 'regimeAtEntry'
   | 'sentimentAtEntry'

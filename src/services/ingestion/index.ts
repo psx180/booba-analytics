@@ -85,6 +85,7 @@ export async function ingestTrades(
           holdTimeSeconds: trade.holdTimeSeconds ?? null,
           captureMode: trade.captureMode,
           tradeType: trade.tradeType ?? null,
+          cause: trade.cause ?? null,
           fundingEarned: null,
           fundingPaid: null,
           rawData: trade.rawData,

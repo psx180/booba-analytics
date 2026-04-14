@@ -32,6 +32,7 @@ export interface TradeCreateInput {
   fees: number | null;
   captureMode: string;     // 'retroactive' | 'live'
   tradeType: string;       // 'directional' | 'liquidation_acquisition' etc.
+  cause: string | null;    // raw cause from Pacifica: 'normal' | 'market_liquidation' | 'backstop_liquidation' | 'settlement'
   rawData: string;         // full JSON of the original fill
   fundingEarned: number | null;
   fundingPaid: number | null;
@@ -106,6 +107,7 @@ export function mapFillToTrade(fill: TradeHistoryEntry, walletAddress: string): 
 
     captureMode: 'retroactive',
     tradeType: causeToTradeType(fill.cause),
+    cause: fill.cause ?? null,
 
     fundingEarned: null,
     fundingPaid: null,

@@ -22,7 +22,14 @@ export async function GET(req: NextRequest) {
   // to populate every stat card. The performance result keeps the legacy
   // top-level shape (`data`, `breakdowns`) the existing client expects;
   // additional results are nested under their own keys.
-  const [summary, missingExitCount] = await Promise.all([
+  const liquidationScope = {
+    walletAddress,
+    status: 'closed',
+    tradeType: 'liquidated',
+    ...(journalRes.id ? { journalId: journalRes.id } : {}),
+  };
+
+  const [summary, missingExitCount, liquidationAgg] = await Promise.all([
     service.getAdvancedSummary(walletAddress, filters),
     (prisma as any).position.count({
       where: {
@@ -31,6 +38,11 @@ export async function GET(req: NextRequest) {
         mfePnl: null,
         ...(journalRes.id ? { journalId: journalRes.id } : {}),
       },
+    }),
+    (prisma as any).position.aggregate({
+      where: liquidationScope,
+      _count: { id: true },
+      _sum:   { aggregatePnl: true },
     }),
   ]);
   const performance = summary.performance;
@@ -44,6 +56,8 @@ export async function GET(req: NextRequest) {
     equityCurveConsistency:  summary.equityCurveConsistency,
     wartResult:              summary.wartResult,
     missingExitMetricsCount: missingExitCount as number,
+    liquidationCount: (liquidationAgg._count.id as number) ?? 0,
+    liquidationCost:  Math.round(((liquidationAgg._sum.aggregatePnl as number) ?? 0) * 100) / 100,
   });
   });
 }

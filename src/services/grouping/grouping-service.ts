@@ -68,6 +68,7 @@ export class GroupingService {
       rawData: t.rawData,
       builderCode: t.builderCode,
       subaccount: t.subaccount,
+      cause: t.cause,
       tradeType: t.tradeType,
       regimeAtEntry: t.regimeAtEntry,
       sentimentAtEntry: t.sentimentAtEntry,
@@ -105,6 +106,22 @@ export class GroupingService {
       if (classification) {
         position.tradeType = classification.type;
       }
+    }
+
+    // Override tradeType to 'liquidated' for positions forcibly closed by a
+    // liquidation or settlement fill. This takes precedence over classifiers
+    // because it's a factual event, not an inferred pattern.
+    // Falls back to parseRawData() for fills ingested before the cause column
+    // was added (cause will be null on those rows but rawData still has it).
+    for (const position of positions) {
+      if (position.status !== 'closed') continue;
+      const allFills = position.orders.flatMap((o) => o.fills);
+      const wasLiquidated = allFills.some((f) => {
+        if (f.exitTime == null) return false; // only closing fills matter
+        const cause = f.cause ?? parseRawData(f).cause;
+        return cause != null && (cause.includes('liquidation') || cause === 'settlement');
+      });
+      if (wasLiquidated) position.tradeType = 'liquidated';
     }
 
     // Persist

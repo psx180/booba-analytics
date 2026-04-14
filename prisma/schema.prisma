@@ -225,6 +225,7 @@ model Trade {
   tradeType         String?     // directional | carry | delta_neutral | market_making | liquidation_acquisition
   subaccount        String?
   builderCode       String?
+  cause             String?     // normal | market_liquidation | backstop_liquidation | settlement (from Pacifica API)
   captureMode       String      @default("retroactive") // retroactive | live
 
   // Phase 2 popup fields
