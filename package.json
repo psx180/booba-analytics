@@ -32,6 +32,7 @@
     "autoprefixer": "^10.4.27",
     "better-sqlite3": "^12.8.0",
     "bs58": "^6.0.0",
+    "dotenv": "^17.4.2",
     "lightweight-charts": "^5.1.0",
     "ml-kmeans": "^7.0.0",
     "ml-pca": "^4.1.1",
