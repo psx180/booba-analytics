@@ -1,8 +1,10 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useContext } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAuthFetch } from '@/lib/api-client';
 import { useJournalOptional } from '@/app/JournalContext';
+import { TradesFilterContext, EMPTY_TRADES_FILTER, serializeFilterToUrl } from '@/contexts/TradesFilterContext';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -49,6 +51,9 @@ export default function BoobaChat({ isOpen, onClose }: BoobaChatProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const authFetch = useAuthFetch();
   const journalCtx = useJournalOptional();
+  const router = useRouter();
+  // Optional — only available when BoobaChat is rendered inside TradesFilterProvider
+  const filterCtx = useContext(TradesFilterContext);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -103,6 +108,41 @@ export default function BoobaChat({ isOpen, onClose }: BoobaChatProps) {
       };
 
       setMessages((prev) => [...prev, assistantMsg]);
+
+      // Handle UI action instructions returned by the server
+      if (Array.isArray(data.actions)) {
+        for (const action of data.actions) {
+          if (action.type === 'navigate_to') {
+            const page: string = action.page ?? '';
+            const tab: string | undefined = action.tab;
+            const path = '/' + page;
+            if (tab) {
+              router.push(`${path}?tab=${tab}`);
+            } else {
+              router.push(path);
+            }
+          } else if (action.type === 'set_trades_filter') {
+            const f = action.filter ?? {};
+            const partial: Partial<import('@/contexts/TradesFilterContext').TradesFilter> = {};
+            if (f.direction) partial.direction = f.direction.toLowerCase() as 'long' | 'short';
+            if (Array.isArray(f.assets) && f.assets.length > 0) partial.assets = f.assets;
+            if (Array.isArray(f.regimes) && f.regimes.length > 0) partial.regimes = f.regimes;
+            if (f.pnlFilter && f.pnlFilter !== 'all') partial.pnlFilter = f.pnlFilter as 'winners' | 'losers';
+            if (f.dateFrom) partial.dateFrom = f.dateFrom;
+            if (f.dateTo) partial.dateTo = f.dateTo;
+
+            if (filterCtx) {
+              // Already on trades page — apply filter directly
+              filterCtx.setTradesFilter(partial);
+            } else {
+              // Navigate to trades with filter serialised into URL
+              const full = { ...EMPTY_TRADES_FILTER, ...partial };
+              const params = serializeFilterToUrl(full);
+              router.push('/trades?' + params.toString());
+            }
+          }
+        }
+      }
     } catch (err) {
       console.error('[BoobaChat] Error:', err);
       setMessages((prev) => [

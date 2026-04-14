@@ -1,5 +1,10 @@
+import { Suspense } from 'react';
 import AnalyticsClient from './AnalyticsClient';
 
 export default function AnalyticsPage() {
-  return <AnalyticsClient />;
+  return (
+    <Suspense>
+      <AnalyticsClient />
+    </Suspense>
+  );
 }

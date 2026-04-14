@@ -5,7 +5,8 @@
       "WebFetch(domain:github.com)",
       "Bash(npx prisma:*)",
       "Bash(npx tsc:*)",
-      "Bash(npx next:*)"
+      "Bash(npx next:*)",
+      "Bash(node -e \"console.log\\(typeof AbortSignal.timeout\\)\")"
     ]
   }
 }

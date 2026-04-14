@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import type { AnalyticsFilters } from './types';
 import { EMPTY_FILTERS, ALL_REGIMES, REGIME_LABELS, TRADE_TYPES, buildParams } from './types';
 import { useJournal } from '../JournalContext';
@@ -1004,11 +1005,23 @@ function InsightsTab({
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
+const VALID_TABS: TabId[] = ['overview', 'strategy', 'execution', 'risk', 'psychology', 'insights'];
+
 export default function AnalyticsClient() {
   const { journalId } = useJournal();
   const authFetch = useAuthFetch();
+  const searchParams = useSearchParams();
 
   const [activeTab, setActiveTab] = useState<TabId>('overview');
+
+  // Sync tab from URL — lets Booba navigate directly to a tab via router.push('/analytics?tab=risk')
+  useEffect(() => {
+    const tab = searchParams.get('tab') as TabId | null;
+    if (tab && VALID_TABS.includes(tab)) {
+      setActiveTab(tab);
+    }
+  }, [searchParams]);
+
   const [filters, setFilters] = useState<AnalyticsFilters>(EMPTY_FILTERS);
   const [assetOptions, setAssetOptions] = useState<string[]>([]);
   const [insights, setInsights] = useState<Insight[]>([]);

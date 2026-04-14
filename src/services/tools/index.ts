@@ -17,6 +17,11 @@ import { computeXpnlResult } from '@/services/analytics/metrics/xpnl';
 import { computeEntropyResult } from '@/services/analytics/insights/entropy-insight';
 import type { Insight, Filters } from '@/services/analytics/types';
 import { resolveJournalFilterId } from '@/lib/journals';
+import { computeCallerAnalytics } from '@/services/signals/caller-analytics';
+import { getCarryOpportunities as fetchCarryOpportunities } from '@/services/pacifica/carry-service';
+import { runMonteCarloSimulation } from '@/services/analytics/monte-carlo';
+import { computeWalkForward } from '@/services/analytics/walk-forward';
+import { computeWhatIfCurves } from '@/services/analytics/what-if-curves';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -884,4 +889,549 @@ export async function executeProposal(
   } catch (err: any) {
     return { success: false, message: err.message ?? 'Execution failed.', affectedCount: 0 };
   }
+}
+
+// ─── New read tools: Signals & Callers ─────────────────────────────────────
+
+export async function getSignals(
+  wallet: string,
+  filters?: { status?: string; caller?: string; limit?: number },
+): Promise<{ signals: any[]; total: number }> {
+  const limit = Math.min(filters?.limit ?? 20, 100);
+  const where: any = { walletAddress: wallet };
+  if (filters?.status) where.status = filters.status;
+  if (filters?.caller) where.callerName = filters.caller;
+
+  const [signals, total] = await Promise.all([
+    prisma.signal.findMany({ where, orderBy: { createdAt: 'desc' }, take: limit }),
+    prisma.signal.count({ where }),
+  ]);
+
+  return { signals, total };
+}
+
+export async function getCallerLeaderboard(wallet: string): Promise<{ callers: any[] }> {
+  const signals = await prisma.signal.findMany({
+    where: { walletAddress: wallet },
+    select: {
+      callerName: true,
+      asset: true,
+      direction: true,
+      status: true,
+      outcomePnlPct: true,
+      outcomeRMultiple: true,
+      targetPricesHit: true,
+    },
+  });
+
+  const byCallerMap = new Map<string, typeof signals>();
+  for (const s of signals) {
+    const arr = byCallerMap.get(s.callerName) ?? [];
+    arr.push(s);
+    byCallerMap.set(s.callerName, arr);
+  }
+
+  const callers: any[] = [];
+  for (const [callerName, callerSignals] of byCallerMap) {
+    const hitTargets    = callerSignals.filter((s) => s.status === 'hit_target').length;
+    const hitStops      = callerSignals.filter((s) => s.status === 'hit_stop').length;
+    const partialTargets = callerSignals.filter((s) => s.status === 'partial_target').length;
+    const expired       = callerSignals.filter((s) => s.status === 'expired').length;
+    const open          = callerSignals.filter((s) => s.status === 'open').length;
+    const resolved      = hitTargets + hitStops + partialTargets + expired;
+
+    let hitPoints = hitTargets;
+    for (const s of callerSignals) {
+      if (s.status === 'partial_target' && s.targetPricesHit) {
+        try {
+          const flags = JSON.parse(s.targetPricesHit) as boolean[];
+          const hitCount = flags.filter(Boolean).length;
+          hitPoints += flags.length > 0 ? hitCount / flags.length : 0;
+        } catch { /* ignore malformed JSON */ }
+      }
+    }
+    const hitRate = resolved > 0 ? hitPoints / resolved : 0;
+
+    const resolvedWithPnl = callerSignals.filter((s) => s.status !== 'open' && s.outcomePnlPct != null);
+    const avgPnlPct = resolvedWithPnl.length > 0
+      ? resolvedWithPnl.reduce((sum, s) => sum + s.outcomePnlPct!, 0) / resolvedWithPnl.length
+      : null;
+
+    const resolvedWithR = callerSignals.filter((s) => s.status !== 'open' && s.outcomeRMultiple != null);
+    const avgRMultiple = resolvedWithR.length > 0
+      ? resolvedWithR.reduce((sum, s) => sum + s.outcomeRMultiple!, 0) / resolvedWithR.length
+      : null;
+
+    callers.push({
+      callerName,
+      totalSignals: callerSignals.length,
+      hitTargets,
+      hitStops,
+      partialTargets,
+      expired,
+      open,
+      hitRate: Math.round(hitRate * 10000) / 10000,
+      avgPnlPct: avgPnlPct != null ? Math.round(avgPnlPct * 100) / 100 : null,
+      avgRMultiple: avgRMultiple != null ? Math.round(avgRMultiple * 100) / 100 : null,
+    });
+  }
+
+  callers.sort((a, b) => {
+    if (a.avgPnlPct == null && b.avgPnlPct == null) return 0;
+    if (a.avgPnlPct == null) return 1;
+    if (b.avgPnlPct == null) return -1;
+    return b.avgPnlPct - a.avgPnlPct;
+  });
+
+  return { callers };
+}
+
+export async function getCallerAnalytics(wallet: string, callerName: string): Promise<any> {
+  const result = await computeCallerAnalytics(wallet, callerName);
+  if (!result) {
+    return { error: `Not enough data for ${callerName}. Need at least 5 resolved signals.` };
+  }
+  return result;
+}
+
+// ─── New read tools: Carry & Funding ───────────────────────────────────────
+
+export async function getCarryOpportunities(wallet: string): Promise<{ opportunities: any[] }> {
+  const opportunities = await fetchCarryOpportunities(wallet);
+  return { opportunities };
+}
+
+export async function getFundingStatus(wallet: string): Promise<{
+  positions: { asset: string; direction: string; fundingRate: number; hourlyPayment: number; annualizedCost: number }[];
+}> {
+  const openPositions = await prisma.position.findMany({
+    where: { walletAddress: wallet, status: 'open' },
+    select: { asset: true, direction: true, totalSize: true, averageEntryPrice: true },
+  });
+
+  if (openPositions.length === 0) return { positions: [] };
+
+  const base = process.env.PACIFICA_CARRY_API_URL
+    ?? process.env.NEXT_PUBLIC_PACIFICA_API_URL
+    ?? 'https://api.pacifica.fi';
+
+  const priceMap = new Map<string, number>();
+  try {
+    const res = await fetch(`${base}/api/v1/info/prices`, {
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (res.ok) {
+      const json: any = await res.json();
+      const prices: any[] = Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : [];
+      for (const p of prices) {
+        if (p.symbol && p.funding != null) {
+          priceMap.set(String(p.symbol).toUpperCase(), parseFloat(String(p.funding)));
+        }
+      }
+    }
+  } catch { /* degrade gracefully — return 0 funding rates */ }
+
+  const result = openPositions.map((p) => {
+    const assetKey = `${p.asset}-PERP`;
+    const fundingRate = priceMap.get(assetKey) ?? priceMap.get(p.asset.toUpperCase()) ?? 0;
+    const notional = (p.totalSize ?? 0) * (p.averageEntryPrice ?? 0);
+    // Longs pay when funding > 0, shorts receive
+    const isLong = p.direction?.toLowerCase() === 'long';
+    const hourlyPayment = isLong ? fundingRate * notional : -fundingRate * notional;
+    const annualizedCost = fundingRate * 24 * 365 * 100 * (isLong ? 1 : -1);
+
+    return {
+      asset: p.asset,
+      direction: p.direction ?? 'unknown',
+      fundingRate,
+      hourlyPayment: Math.round(hourlyPayment * 100) / 100,
+      annualizedCost: Math.round(annualizedCost * 100) / 100,
+    };
+  });
+
+  return { positions: result };
+}
+
+// ─── New read tools: Advanced Analytics ────────────────────────────────────
+
+export async function getWhatIfAnalysis(wallet: string, journalId?: string): Promise<any> {
+  return computeWhatIfCurves(prisma as any, wallet, journalId);
+}
+
+export async function getMonteCarloSimulation(wallet: string, journalId?: string): Promise<any> {
+  const where: any = { walletAddress: wallet, status: 'closed' };
+  if (journalId) where.journalId = journalId;
+
+  const positions = await prisma.position.findMany({
+    where,
+    select: { aggregatePnl: true, totalSize: true, averageEntryPrice: true },
+  });
+
+  if (positions.length < 10) {
+    return { error: 'Not enough data for simulation', tradeCount: positions.length, required: 10 };
+  }
+
+  const pnlValues = positions.map((p) => p.aggregatePnl ?? 0);
+  const winners = pnlValues.filter((v) => v > 0);
+  const winRate = winners.length / pnlValues.length;
+
+  // Compute percentage returns using notional value (size * entry price)
+  const withNotional = positions.filter(
+    (p) => p.totalSize != null && p.averageEntryPrice != null && p.totalSize > 0 && p.averageEntryPrice > 0,
+  );
+
+  let winReturnPcts: number[] | undefined;
+  let lossReturnPcts: number[] | undefined;
+  let avgWinPct = 3;
+  let avgLossPct = -2;
+
+  if (withNotional.length >= 10) {
+    const pctReturns = withNotional.map((p) => {
+      const notional = (p.totalSize ?? 1) * (p.averageEntryPrice ?? 1);
+      return ((p.aggregatePnl ?? 0) / notional) * 100;
+    });
+    const winPcts = pctReturns.filter((v) => v > 0);
+    const lossPcts = pctReturns.filter((v) => v < 0);
+    if (winPcts.length > 0) {
+      avgWinPct = winPcts.reduce((s, v) => s + v, 0) / winPcts.length;
+      winReturnPcts = winPcts;
+    }
+    if (lossPcts.length > 0) {
+      avgLossPct = lossPcts.reduce((s, v) => s + v, 0) / lossPcts.length;
+      lossReturnPcts = lossPcts;
+    }
+  }
+
+  const result = runMonteCarloSimulation({
+    winRate,
+    avgWinPct,
+    avgLossPct,
+    tradeCount: 100,
+    simulations: 5_000,
+    initialBalance: 10_000,
+    winReturnPcts: winReturnPcts && winReturnPcts.length >= 10 ? winReturnPcts : undefined,
+    lossReturnPcts: lossReturnPcts && lossReturnPcts.length >= 10 ? lossReturnPcts : undefined,
+  });
+
+  // Strip equityCurves — too large for Claude's context window
+  const { equityCurves, ...summary } = result;
+  return { ...summary, tradeCount: pnlValues.length, winRate };
+}
+
+export async function getWalkForwardValidation(wallet: string, journalId?: string): Promise<any> {
+  const result = await computeWalkForward(prisma as any, wallet, journalId);
+  if (!result) {
+    return { error: 'Not enough data for walk-forward analysis. Need at least 30 closed trades.' };
+  }
+  return result;
+}
+
+// ─── New read tools: Market Context ────────────────────────────────────────
+
+export async function getCurrentRegime(_wallet: string): Promise<{ regime: string; confidence: string }> {
+  const snapshot = await prisma.regimeSnapshot.findFirst({
+    where: { asset: 'BTC' },
+    orderBy: { timestamp: 'desc' },
+  });
+
+  if (!snapshot) {
+    return { regime: 'unknown', confidence: 'No regime data available yet' };
+  }
+
+  const conf = snapshot.confidence as number | null;
+  const confidence = conf == null ? 'unknown' : conf > 0.7 ? 'high' : conf > 0.4 ? 'medium' : 'low';
+
+  return {
+    regime: snapshot.regimeClassification ?? 'unknown',
+    confidence,
+  };
+}
+
+// ─── New read tools: Playbooks ──────────────────────────────────────────────
+
+export async function getPlaybooks(wallet: string): Promise<{ playbooks: any[] }> {
+  const playbooks = await prisma.playbook.findMany({
+    where: { walletAddress: wallet },
+    orderBy: { createdAt: 'desc' },
+  });
+  return { playbooks };
+}
+
+export async function getPlaybookAdherence(wallet: string, playbookId: string): Promise<any> {
+  const playbook = await prisma.playbook.findUnique({ where: { id: playbookId } });
+  if (!playbook || playbook.walletAddress !== wallet) {
+    return { error: 'Playbook not found' };
+  }
+
+  const positions = await prisma.position.findMany({
+    where: { walletAddress: wallet, playbookId, adherenceScore: { not: null } },
+    select: { id: true, aggregatePnl: true, adherenceScore: true, adherenceDetail: true },
+  });
+
+  if (positions.length < 5) {
+    return {
+      playbookName: playbook.name,
+      sampleSize: positions.length,
+      notEnoughData: true,
+      message: 'Need at least 5 scored positions for adherence analysis.',
+    };
+  }
+
+  const scores = positions.map((p) => p.adherenceScore ?? 0);
+  const avgScore = scores.reduce((s, v) => s + v, 0) / scores.length;
+  const high = positions.filter((p) => (p.adherenceScore ?? 0) >= 80);
+  const low  = positions.filter((p) => (p.adherenceScore ?? 0) <  50);
+
+  const violationCounts = new Map<string, number>();
+  for (const p of positions) {
+    if (!p.adherenceDetail) continue;
+    try {
+      const results = JSON.parse(p.adherenceDetail) as any[];
+      for (const r of results) {
+        if (r.outcome === 'failed') {
+          violationCounts.set(r.ruleLabel, (violationCounts.get(r.ruleLabel) ?? 0) + 1);
+        }
+      }
+    } catch { /* skip malformed */ }
+  }
+
+  let mostViolatedRule: { label: string; count: number } | null = null;
+  for (const [label, count] of violationCounts) {
+    if (!mostViolatedRule || count > mostViolatedRule.count) mostViolatedRule = { label, count };
+  }
+
+  const winRate = (arr: typeof positions) =>
+    arr.length > 0 ? arr.filter((p) => (p.aggregatePnl ?? 0) > 0).length / arr.length : null;
+
+  return {
+    playbookName: playbook.name,
+    sampleSize: positions.length,
+    avgAdherenceScore: Math.round(avgScore),
+    highAdherenceCount: high.length,
+    lowAdherenceCount: low.length,
+    highAdherenceWinRate: winRate(high),
+    lowAdherenceWinRate: winRate(low),
+    mostViolatedRule,
+    notEnoughData: false,
+  };
+}
+
+// ─── New read tools: Period Comparison ─────────────────────────────────────
+
+export async function comparePeriods(
+  wallet: string,
+  period1: { from: string; to: string },
+  period2: { from: string; to: string },
+  journalId?: string,
+): Promise<{ period1Stats: any; period2Stats: any; comparison: any }> {
+  function computeStats(positions: { aggregatePnl: number | null; status: string }[]) {
+    const closed = positions.filter((p) => p.status === 'closed');
+    if (closed.length === 0) return { tradeCount: 0, winRate: 0, expectancy: 0, totalPnl: 0 };
+    const totalPnl = closed.reduce((s, p) => s + (p.aggregatePnl ?? 0), 0);
+    return {
+      tradeCount: closed.length,
+      winRate: Math.round((closed.filter((p) => (p.aggregatePnl ?? 0) > 0).length / closed.length) * 10000) / 10000,
+      expectancy: Math.round((totalPnl / closed.length) * 100) / 100,
+      totalPnl: Math.round(totalPnl * 100) / 100,
+    };
+  }
+
+  const base: any = { walletAddress: wallet };
+  if (journalId) base.journalId = journalId;
+
+  const [positions1, positions2] = await Promise.all([
+    prisma.position.findMany({
+      where: { ...base, firstEntryTime: { gte: new Date(period1.from), lte: new Date(period1.to) } },
+      select: { aggregatePnl: true, status: true },
+    }),
+    prisma.position.findMany({
+      where: { ...base, firstEntryTime: { gte: new Date(period2.from), lte: new Date(period2.to) } },
+      select: { aggregatePnl: true, status: true },
+    }),
+  ]);
+
+  const p1 = computeStats(positions1);
+  const p2 = computeStats(positions2);
+
+  return {
+    period1Stats: { ...p1, from: period1.from, to: period1.to },
+    period2Stats: { ...p2, from: period2.from, to: period2.to },
+    comparison: {
+      winRateDelta: Math.round((p2.winRate - p1.winRate) * 10000) / 10000,
+      expectancyDelta: Math.round((p2.expectancy - p1.expectancy) * 100) / 100,
+      pnlDelta: Math.round((p2.totalPnl - p1.totalPnl) * 100) / 100,
+      tradeCountDelta: p2.tradeCount - p1.tradeCount,
+      improved: p2.expectancy > p1.expectancy,
+    },
+  };
+}
+
+// ─── New read tools: Risk Assessment ───────────────────────────────────────
+
+export async function assessOpenPositionRisk(wallet: string): Promise<{
+  totalExposure: number;
+  positionCount: number;
+  correlationWarning: boolean;
+  largestPosition: { asset: string; size: number; pctOfEquity: number } | null;
+  marginUtilization: number | null;
+}> {
+  const positions = await prisma.position.findMany({
+    where: { walletAddress: wallet, status: 'open' },
+    select: { asset: true, direction: true, totalSize: true, averageEntryPrice: true },
+  });
+
+  if (positions.length === 0) {
+    return { totalExposure: 0, positionCount: 0, correlationWarning: false, largestPosition: null, marginUtilization: null };
+  }
+
+  const positionSizes = positions.map((p) => ({
+    asset: p.asset,
+    direction: (p.direction ?? '').toLowerCase(),
+    notional: (p.totalSize ?? 0) * (p.averageEntryPrice ?? 0),
+  }));
+
+  const totalExposure = positionSizes.reduce((s, p) => s + p.notional, 0);
+
+  const directions = new Set(positionSizes.map((p) => p.direction));
+  const correlationWarning = positions.length > 1 && directions.size === 1;
+
+  const sorted = [...positionSizes].sort((a, b) => b.notional - a.notional);
+  const largest = sorted[0];
+
+  let marginUtilization: number | null = null;
+  let accountEquity: number | null = null;
+
+  try {
+    const base = process.env.PACIFICA_CARRY_API_URL
+      ?? process.env.NEXT_PUBLIC_PACIFICA_API_URL
+      ?? 'https://api.pacifica.fi';
+    const res = await fetch(`${base}/api/v1/account?account=${wallet}`, {
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (res.ok) {
+      const json: any = await res.json();
+      const data = json?.data ?? json;
+      if (data?.margin_utilization != null) marginUtilization = Number(data.margin_utilization);
+      if (data?.equity != null) accountEquity = Number(data.equity);
+    }
+  } catch { /* degrade gracefully */ }
+
+  const pctOfEquity =
+    accountEquity != null && accountEquity > 0
+      ? Math.round((largest.notional / accountEquity) * 1000) / 10
+      : -1; // -1 = unknown
+
+  return {
+    totalExposure: Math.round(totalExposure * 100) / 100,
+    positionCount: positions.length,
+    correlationWarning,
+    largestPosition: {
+      asset: largest.asset,
+      size: Math.round(largest.notional * 100) / 100,
+      pctOfEquity,
+    },
+    marginUtilization,
+  };
+}
+
+// ─── New write tools: Create entities ──────────────────────────────────────
+
+export async function createSignalFromChat(
+  wallet: string,
+  params: {
+    asset: string;
+    direction: string;
+    entryPrice: number;
+    targetPrices?: number[];
+    stopPrice?: number;
+    callerName: string;
+    source?: string;
+  },
+): Promise<{ signal: any }> {
+  const targetPricesArray =
+    params.targetPrices && params.targetPrices.length > 0 ? params.targetPrices : null;
+
+  const signal = await prisma.signal.create({
+    data: {
+      walletAddress: wallet,
+      asset: params.asset.toUpperCase(),
+      direction: params.direction.toUpperCase(),
+      entryPrice: params.entryPrice,
+      targetPrice: targetPricesArray ? targetPricesArray[0] : null,
+      targetPrices: targetPricesArray ? JSON.stringify(targetPricesArray) : null,
+      stopPrice: params.stopPrice ?? null,
+      callerName: params.callerName,
+      source: params.source ?? 'booba_chat',
+      status: 'open',
+    },
+  });
+
+  return { signal };
+}
+
+export async function createPlaybookFromChat(
+  wallet: string,
+  params: {
+    name: string;
+    description?: string;
+    rules: { type: string; params: Record<string, any>; enabled: boolean; label: string }[];
+  },
+): Promise<{ playbook: any }> {
+  const playbook = await prisma.playbook.create({
+    data: {
+      walletAddress: wallet,
+      name: params.name,
+      description: params.description ?? null,
+      rules: JSON.stringify(params.rules),
+    },
+  });
+
+  return { playbook };
+}
+
+// ─── New action tools: UI manipulation ─────────────────────────────────────
+
+export function navigateTo(params: {
+  page: string;
+  tab?: string;
+}): { navigated: true; destination: string; page: string; tab?: string } {
+  return {
+    navigated: true,
+    destination: params.tab ? `${params.page}?tab=${params.tab}` : params.page,
+    page: params.page,
+    ...(params.tab ? { tab: params.tab } : {}),
+  };
+}
+
+export function setTradesFilter(
+  _wallet: string,
+  params: {
+    direction?: string;
+    assets?: string[];
+    regimes?: string[];
+    pnlFilter?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    strategy?: string;
+    playbook?: string;
+  },
+): { applied: true; description: string; filter: typeof params } {
+  const parts: string[] = [];
+  if (params.direction) parts.push(`${params.direction.toLowerCase()} only`);
+  if (params.assets?.length) parts.push(`assets: ${params.assets.join(', ')}`);
+  if (params.regimes?.length) parts.push(`regimes: ${params.regimes.join(', ')}`);
+  if (params.pnlFilter && params.pnlFilter !== 'all') parts.push(params.pnlFilter);
+  if (params.dateFrom || params.dateTo) {
+    const from = params.dateFrom ?? 'start';
+    const to = params.dateTo ?? 'now';
+    parts.push(`${from} to ${to}`);
+  }
+  if (params.strategy) parts.push(`strategy: ${params.strategy}`);
+  if (params.playbook) parts.push(`playbook: ${params.playbook}`);
+
+  return {
+    applied: true,
+    description: parts.length > 0 ? parts.join(', ') : 'all trades',
+    filter: params,
+  };
 }
