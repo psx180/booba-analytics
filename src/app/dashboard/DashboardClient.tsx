@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import EquityCurve, { EquityPoint, TradeMeta, REGIME_LABELS } from './EquityCurve';
 import UnderwaterCurve, { UnderwaterPoint } from './UnderwaterCurve';
 import OpenPositions from './OpenPositions';
@@ -14,6 +15,11 @@ import BoobaChat from '@/app/components/booba/BoobaChat';
 import { computeHealthScore } from '@/app/components/booba/computeHealthScore';
 import { getContextualMessage } from '@/app/components/booba/getContextualMessage';
 import TradeAnnotationPopup, { type PopupPosition } from '@/app/components/trade-popup/TradeAnnotationPopup';
+import type {
+  ConvergenceResult,
+  ConvergentTheme,
+  ThemeSeverity,
+} from '@/services/analytics/convergence';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -274,6 +280,29 @@ function trendArrow(trend: 'improving' | 'declining' | 'stable'): string {
   return '→';
 }
 
+function severityStyle(s: ThemeSeverity): { text: string; border: string; icon: string } {
+  switch (s) {
+    case 'critical':
+      return { text: 'text-red-400',    border: 'border-red-800/60',    icon: '🔴' };
+    case 'warning':
+      return { text: 'text-yellow-400', border: 'border-yellow-700/60', icon: '⚠️' };
+    case 'positive':
+      return { text: 'text-green-400',  border: 'border-green-800/60', icon: '🟢' };
+    default:
+      return { text: 'text-[#c9d1d9]',  border: 'border-[#30363d]',    icon: '•' };
+  }
+}
+
+function firstSentence(s: string): string {
+  const match = s.match(/^[^.!?]*[.!?]/);
+  return (match ? match[0] : s).trim();
+}
+
+function pickHeadlineTheme(c: ConvergenceResult | null): ConvergentTheme | null {
+  if (!c) return null;
+  return c.biggestLeak ?? c.weeklyFocus ?? c.biggestStrength ?? null;
+}
+
 // ── Stat Card ────────────────────────────────────────────────────────────────
 
 function StatCard({ label, value, sub, tooltip }: { label: string; value: React.ReactNode; sub?: string; tooltip?: string }) {
@@ -296,7 +325,9 @@ export default function DashboardClient() {
   // journal-scoped analytics. Switching journal triggers fetchData.
   const { journalId, buildParams } = useJournal();
   const authFetch = useAuthFetch();
+  const router = useRouter();
   const [chatOpen, setChatOpen] = useState(false);
+  const [convergence, setConvergence] = useState<ConvergenceResult | null>(null);
   const [performance, setPerformance] = useState<PerformanceData | null>(null);
   const [equityCurve, setEquityCurve] = useState<EquityPoint[]>([]);
   const [tradeMetas, setTradeMetas] = useState<TradeMeta[]>([]);
@@ -482,6 +513,19 @@ export default function DashboardClient() {
     if (!journalId) return;
     fetchData(activeRegime);
   }, [fetchData, activeRegime, journalId]);
+
+  // ── Convergence headline ────────────────────────────────────────────────
+  // Meta-analysis over the summary + insights + what-if. Drives the hero
+  // banner above the equity curve; degrades to "keep trading" copy when
+  // we're short of the 15-trade floor.
+  useEffect(() => {
+    if (!journalId) return;
+    const params = buildParams();
+    authFetch(`/api/analytics/convergence?${params}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: ConvergenceResult | null) => setConvergence(data))
+      .catch(() => setConvergence(null));
+  }, [journalId, buildParams, authFetch]);
 
   // ── Mount-time sync ──────────────────────────────────────────────────────
   // Non-blocking: page renders from cache immediately, then checks for any
@@ -896,6 +940,48 @@ export default function DashboardClient() {
           tooltip="Average win size vs average loss size. Above 2.0 is excellent."
         />
       </div>
+
+      {/* ── Convergence headline ──────────────────────────────────────────── */}
+      {/* Meta-analysis hero banner — the primary information element on the */}
+      {/* dashboard. Replaces the rotational Booba speech bubble for the     */}
+      {/* dashboard's headline slot; avatar/chat remain, but secondary.      */}
+      {(() => {
+        if (!convergence) return null;
+        if (convergence.insufficientData) {
+          return (
+            <div className="bg-[#161b22] border border-[#30363d] rounded-lg px-4 py-3">
+              <p className="text-base text-[#8b949e]">
+                Keep trading — Booba is learning your patterns. Analytics unlock fully after 15 trades.
+              </p>
+            </div>
+          );
+        }
+        const theme = pickHeadlineTheme(convergence);
+        if (!theme) return null;
+        const style = severityStyle(theme.severity);
+        return (
+          <button
+            type="button"
+            onClick={() => router.push(`/analytics?tab=${theme.tabLink}`)}
+            className={`w-full text-left bg-[#161b22] border ${style.border} rounded-lg px-5 py-4 hover:bg-[#1a2028] transition-colors`}
+          >
+            <div className={`text-lg font-semibold ${style.text} flex items-start gap-2`}>
+              <span aria-hidden>{style.icon}</span>
+              <span>
+                {theme.headline}.
+                {theme.diagnosis && (
+                  <span className="ml-2 text-[#c9d1d9] font-normal">
+                    {firstSentence(theme.diagnosis)}
+                  </span>
+                )}
+                <span className="ml-2 text-sm text-[#8b949e] whitespace-nowrap">
+                  → View analysis
+                </span>
+              </span>
+            </div>
+          </button>
+        );
+      })()}
 
       {/* ── Open Positions (live) ─────────────────────────────────────────── */}
       <OpenPositions

@@ -24,12 +24,19 @@ import MonteCarloChart from './monte-carlo/MonteCarloChart';
 import WhatIfChart from './what-if/WhatIfChart';
 import WalkForwardChart from './walk-forward/WalkForwardChart';
 import PlaybookAnalyticsCard from '../playbooks/PlaybookAnalyticsCard';
+import type {
+  ConvergenceResult,
+  ConvergentTheme,
+  ThemeSeverity,
+} from '@/services/analytics/convergence';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 interface StatisticalTest {
   pValue: number;
   isSignificant: boolean;
+  testName?: string;
+  effectSize?: number;
 }
 
 interface Insight {
@@ -258,6 +265,119 @@ function FilterSelect({
   );
 }
 
+// ── Impact-led insight framing ────────────────────────────────────────────────
+// The insight detectors produce neutral technical titles ("Exit Efficiency
+// Baseline", "Disposition Effect Detected"). For the cards we rewrite the
+// headline to lead with the dollar impact or the behavioural finding in plain
+// English. Statistical backing is moved behind a disclosure — still one click
+// away, but not the first thing the user reads.
+
+function formatDollar(n: number): string {
+  const v = Math.round(Math.abs(n));
+  return (n < 0 ? '-' : '') + '$' + v.toLocaleString();
+}
+
+function deriveImpactHeadline(insight: Insight): string {
+  const d = insight.data ?? {};
+  const num = (v: unknown): number | null =>
+    typeof v === 'number' && isFinite(v) ? v : null;
+
+  switch (insight.module) {
+    case 'exit-optimizer': {
+      const left = num(d.totalLeftOnTable);
+      if (left != null && left > 0) return `You're leaving ${formatDollar(left)} on the table`;
+      return 'Your exit timing has room to improve';
+    }
+    case 'disposition': {
+      const cost = num(d.estimatedCost);
+      if (cost != null && cost > 0) return `Disposition effect is costing you ${formatDollar(cost)}`;
+      return 'You hold losers longer than winners';
+    }
+    case 'liquidation': {
+      const count = num(d.liquidationCount);
+      const cost  = num(d.totalCost);
+      if (count && cost != null) {
+        return `You were liquidated ${count} time${count === 1 ? '' : 's'}, costing ${formatDollar(Math.abs(cost))}`;
+      }
+      return 'You were liquidated';
+    }
+    case 'tilt-episodes': {
+      const impr = num(d.counterfactualImprovement);
+      if (impr != null && impr > 0) return `Tilt episodes are costing you ${formatDollar(impr)}`;
+      const eps = num(d.totalEpisodes);
+      if (eps && eps > 0) return `${eps} tilt episode${eps === 1 ? '' : 's'} detected`;
+      return 'No tilt episodes detected';
+    }
+    case 'size-escalation': {
+      const impact = num(d.dollarImpact);
+      if (impact && impact > 0) return `Size escalation after losses is costing you ${formatDollar(impact)}`;
+      return 'Your position size grows after losses';
+    }
+    case 'sizing-analysis': {
+      const savings = num(d.regimeDollarSavings);
+      if (savings && savings > 0) return `Better sizing in high-vol regimes saves ${formatDollar(savings)}`;
+      const impact = num(d.dollarImpact);
+      if (impact && impact > 0) return `Inconsistent sizing is costing you ${formatDollar(impact)}`;
+      return 'Your position sizing is consistent';
+    }
+    case 'regime-mismatch': {
+      const impact = num(d.topDollarImpact);
+      if (impact != null) {
+        return `${formatDollar(Math.abs(impact))} lost in regime-strategy mismatches`;
+      }
+      return 'Your strategy performs differently across regimes';
+    }
+    case 'revenge-trading': {
+      const impact = num(d.dollarImpact);
+      if (impact && impact > 0) return `Revenge trading is costing you ${formatDollar(impact)}`;
+      return 'No revenge-trading pattern detected';
+    }
+    case 'overtrading': {
+      const impact = num(d.dollarImpact);
+      if (impact && impact > 0) return `Overtrading on heavy days costs ${formatDollar(impact)}`;
+      return 'Your trade frequency has no impact on P&L';
+    }
+    case 'time-of-day-edge': {
+      const fatigue = d.fatigue as { estimatedSavings?: number } | null | undefined;
+      if (fatigue?.estimatedSavings && fatigue.estimatedSavings > 0) {
+        return `Session fatigue costs ${formatDollar(fatigue.estimatedSavings)}`;
+      }
+      const bestHour = num(d.bestHour);
+      if (bestHour != null) return `Your best hour is ${String(bestHour).padStart(2, '0')}:00`;
+      return 'No time-of-day edge detected';
+    }
+    case 'hold-time-optimizer': {
+      const impact = num(d.dollarImpact);
+      if (impact && impact > 0) return `Hold-time tuning could gain ${formatDollar(impact)}`;
+      return insight.title;
+    }
+    case 'streak-behavior': {
+      const impact = num(d.dollarImpact);
+      if (impact && impact > 0) return `Streak-state effect worth ${formatDollar(impact)}`;
+      return insight.title;
+    }
+    case 'social-correlation':
+      return insight.title;
+    case 'xpnl': {
+      const luck = num(d.luckScore);
+      if (luck != null) {
+        const pct = Math.round(luck * 100);
+        if (pct > 20)  return `Your P&L is ${pct}% above expected — likely luck`;
+        if (pct < -20) return `Your P&L is ${Math.abs(pct)}% below expected — likely unlucky`;
+        return 'Your P&L matches expected';
+      }
+      return insight.title;
+    }
+    default:
+      return insight.title;
+  }
+}
+
+function firstTwoSentences(text: string): string {
+  const parts = text.match(/[^.!?]+[.!?]+/g) ?? [text];
+  return parts.slice(0, 2).join(' ').trim();
+}
+
 // ── Inline compact insight card (shown at top of each tab) ────────────────────
 
 function InlineInsightCard({
@@ -269,33 +389,27 @@ function InlineInsightCard({
 }) {
   const style = SEVERITY_STYLE[insight.severity] ?? SEVERITY_STYLE.info;
   const tab = CATEGORY_TO_TAB[insight.category];
-  const pValue = insight.statistics?.[0]?.pValue;
-  const pStr = pValue != null
-    ? (pValue < 0.001 ? 'p<0.001' : `p=${pValue.toFixed(3)}`)
-    : null;
+  const headline = deriveImpactHeadline(insight);
 
   return (
     <div className={`bg-[#161b22] border ${style.border} rounded-lg px-3 py-2.5 flex items-start gap-3`}>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap mb-1">
-          <span className="text-xs font-semibold text-white">{insight.title}</span>
+          <span className="text-xs font-semibold text-white">{headline}</span>
           <span className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-widest font-medium bg-[#21262d] text-[#6e7681]">
             {CATEGORY_LABEL[insight.category] ?? insight.category}
           </span>
-          {insight.isSignificant && (
-            <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-emerald-500/15 text-emerald-400">
-              {pStr ?? 'Significant'}
-            </span>
-          )}
         </div>
-        <p className="text-xs text-[#8b949e] leading-relaxed line-clamp-1">{insight.description}</p>
+        <p className="text-xs text-[#8b949e] leading-relaxed line-clamp-1">
+          {firstTwoSentences(insight.description)}
+        </p>
       </div>
       {tab && onDigDeeper && (
         <button
           onClick={() => onDigDeeper(tab)}
           className="shrink-0 text-xs text-blue-400 hover:text-blue-300 transition-colors whitespace-nowrap"
         >
-          Dig deeper →
+          → {tabLabelFor(tab)}
         </button>
       )}
     </div>
@@ -320,54 +434,472 @@ function FullInsightCard({
     : null;
   const isSignif = insight.isSignificant;
 
+  const [showStats, setShowStats] = useState(false);
+  const headline = deriveImpactHeadline(insight);
+  const body = firstTwoSentences(insight.description);
+
   return (
-    <div className={`bg-[#161b22] border ${style.border} rounded-lg p-4 flex flex-col gap-2 ${isSignif ? '' : 'opacity-60'}`}>
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-semibold text-white">{insight.title}</span>
-          <span className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-widest font-medium bg-[#21262d] text-[#6e7681]">
-            {CATEGORY_LABEL[insight.category] ?? insight.category}
-          </span>
-        </div>
+    <div className={`bg-[#161b22] border ${style.border} rounded-lg p-4 flex flex-col gap-2 ${isSignif ? '' : 'opacity-75'}`}>
+      <div className="flex items-start justify-between gap-3">
+        <span className="text-sm font-semibold text-white">{headline}</span>
         <span className={`shrink-0 px-2 py-0.5 rounded text-[10px] uppercase tracking-widest font-medium ${style.badge} ${style.badgeText}`}>
           {insight.severity}
         </span>
       </div>
 
-      <div className="flex items-center gap-2 flex-wrap">
-        {isSignif ? (
-          <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-emerald-500/15 text-emerald-400">
-            Significant{pStr ? ` · ${pStr}` : ''}
-          </span>
-        ) : (
-          <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-[#21262d] text-[#6e7681]">
-            Preliminary{pStr ? ` · ${pStr}` : ''}
-          </span>
-        )}
-        {insight.sampleSize != null && (
-          <span className="text-[10px] text-[#6e7681]">{insight.sampleSize} trades</span>
-        )}
-      </div>
-
-      <p className="text-sm text-[#8b949e] leading-relaxed">{insight.description}</p>
+      <p className="text-sm text-[#c9d1d9] leading-relaxed">{body}</p>
 
       {insight.suggestion && (
-        <p className="text-xs text-[#6e7681] leading-relaxed pt-2 border-t border-[#21262d]">
-          <span className="text-[#8b949e] font-medium">Suggestion: </span>
+        <p className="text-xs text-[#8b949e] leading-relaxed">
           {insight.suggestion}
         </p>
       )}
 
-      {tab && (
+      <div className="flex items-center gap-4 pt-1 flex-wrap">
         <button
-          onClick={() => onDigDeeper(tab)}
-          className="self-start text-xs text-blue-400 hover:text-blue-300 transition-colors mt-0.5"
+          onClick={() => setShowStats((s) => !s)}
+          className="text-xs text-[#6e7681] hover:text-[#c9d1d9] transition-colors"
         >
-          → {tab.charAt(0).toUpperCase() + tab.slice(1)}
+          {showStats ? 'Hide statistical details ▲' : 'Show statistical details ▼'}
         </button>
+        {tab && (
+          <button
+            onClick={() => onDigDeeper(tab)}
+            className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+          >
+            → {tabLabelFor(tab)} tab
+          </button>
+        )}
+      </div>
+
+      {showStats && (
+        <div className="mt-1 pt-2 border-t border-[#21262d] space-y-1.5 text-xs text-[#8b949e]">
+          <div className="flex flex-wrap gap-3">
+            <span className="text-[#6e7681]">Module:</span>
+            <span className="text-[#c9d1d9] font-mono">{insight.module}</span>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <span className="text-[#6e7681]">Significance:</span>
+            <span className={isSignif ? 'text-emerald-400' : 'text-[#6e7681]'}>
+              {isSignif ? 'Significant' : 'Preliminary'}
+              {pStr ? ` · ${pStr}` : ''}
+            </span>
+          </div>
+          {insight.sampleSize != null && (
+            <div className="flex flex-wrap gap-3">
+              <span className="text-[#6e7681]">Sample size:</span>
+              <span className="text-[#c9d1d9]">{insight.sampleSize} trades</span>
+            </div>
+          )}
+          {primary?.testName && (
+            <div className="flex flex-wrap gap-3">
+              <span className="text-[#6e7681]">Test:</span>
+              <span className="text-[#c9d1d9] font-mono">{primary.testName}</span>
+            </div>
+          )}
+          {primary?.effectSize != null && (
+            <div className="flex flex-wrap gap-3">
+              <span className="text-[#6e7681]">Effect size:</span>
+              <span className="text-[#c9d1d9]">{primary.effectSize.toFixed(3)}</span>
+            </div>
+          )}
+          <p className="text-[#8b949e] leading-relaxed pt-1">{insight.description}</p>
+        </div>
       )}
     </div>
   );
+}
+
+// ── Tab Verdicts ──────────────────────────────────────────────────────────────
+// 2-3 sentence summary at the top of each tab. Sourced from data the tab (or
+// page) already fetches — insights, summary, regime breakdown, or a lazy
+// tab-level fetch of walk-forward / Monte Carlo.
+
+type VerdictTone = 'positive' | 'negative' | 'neutral';
+
+function Verdict({
+  tone,
+  text,
+  loading,
+}: {
+  tone: VerdictTone;
+  text: string | null;
+  loading?: boolean;
+}) {
+  const border =
+    tone === 'positive' ? 'border-l-green-500/70' :
+    tone === 'negative' ? 'border-l-red-500/70'   :
+                          'border-l-blue-500/70';
+
+  return (
+    <div className={`bg-[#161b22] border border-[#21262d] border-l-2 ${border} rounded-lg px-4 py-3`}>
+      {loading ? (
+        <div className="space-y-2 animate-pulse">
+          <div className="h-3 w-2/3 bg-[#21262d] rounded" />
+          <div className="h-3 w-1/2 bg-[#21262d] rounded" />
+        </div>
+      ) : (
+        <p className="text-sm text-[#c9d1d9] leading-relaxed">{text ?? '—'}</p>
+      )}
+    </div>
+  );
+}
+
+function regimeLabel(key: string): string {
+  return key
+    .split('_')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+function buildPlaybookPhrase(
+  playbooks: { id: string; name: string }[],
+): string | null {
+  // Playbook adherence data isn't currently surfaced via a shared API, so we
+  // omit the adherence %. Brief allows us to drop the playbook clause
+  // entirely when adherence isn't available.
+  if (!playbooks.length) return null;
+  return null;
+}
+
+function StrategyVerdict({
+  regimeBreakdown,
+  playbooks,
+  journalId,
+}: {
+  regimeBreakdown: Record<string, any>;
+  playbooks: { id: string; name: string }[];
+  journalId?: string;
+}) {
+  const authFetch = useAuthFetch();
+  const [wf, setWf] = useState<{
+    expectancyTrend?: 'improving' | 'declining' | 'stable';
+    winRateTrend?: 'improving' | 'declining' | 'stable';
+    edgePersistent?: boolean;
+  } | null>(null);
+  const [wfLoading, setWfLoading] = useState(true);
+
+  useEffect(() => {
+    if (!journalId) return;
+    setWfLoading(true);
+    authFetch(`/api/analytics/walk-forward?journalId=${encodeURIComponent(journalId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setWf(d && !d.error ? d : null))
+      .catch(() => setWf(null))
+      .finally(() => setWfLoading(false));
+  }, [journalId, authFetch]);
+
+  const qualifying = Object.entries(regimeBreakdown).filter(
+    ([name, s]) => name !== 'unknown' && (s?.tradeCount ?? 0) >= 5,
+  );
+  const sorted = [...qualifying].sort(
+    ([, a], [, b]) => (b.winRate ?? 0) - (a.winRate ?? 0),
+  );
+  const best = sorted[0];
+
+  if (!best) {
+    return <Verdict tone="neutral" text="Not enough trades across regimes yet for a strategy verdict." />;
+  }
+
+  const bestName = regimeLabel(best[0]);
+  const bestWinPct = Math.round((best[1].winRate ?? 0) * 100);
+
+  let trendPhrase: string;
+  if (wfLoading) {
+    trendPhrase = 'still being checked';
+  } else if (wf?.expectancyTrend === 'improving') {
+    trendPhrase = 'improving across recent windows';
+  } else if (wf?.expectancyTrend === 'declining') {
+    trendPhrase = 'weakening across recent windows';
+  } else if (wf?.edgePersistent) {
+    trendPhrase = 'holding steady across time';
+  } else if (wf?.expectancyTrend === 'stable') {
+    trendPhrase = 'stable across time windows';
+  } else {
+    trendPhrase = 'not yet durable across windows';
+  }
+
+  const playbookPhrase = buildPlaybookPhrase(playbooks);
+  const expTrendTone: VerdictTone =
+    wf?.expectancyTrend === 'declining' ? 'negative' :
+    wf?.expectancyTrend === 'improving' || wf?.edgePersistent ? 'positive' :
+    'neutral';
+
+  const text = [
+    `Your best regime is ${bestName} (${bestWinPct}% win rate).`,
+    `Your edge is ${trendPhrase}.`,
+    playbookPhrase,
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  return <Verdict tone={expTrendTone} text={text} loading={wfLoading && !wf} />;
+}
+
+function ExecutionVerdict({
+  insights,
+  tradeCount,
+}: {
+  insights: Insight[];
+  tradeCount: number;
+}) {
+  const exitInsight = insights.find((i) => i.module === 'exit-optimizer');
+  const effPct = typeof exitInsight?.data?.avgEfficiency === 'number'
+    ? Math.round((exitInsight.data.avgEfficiency as number) * 100)
+    : null;
+  const moneyLeft = typeof exitInsight?.data?.totalLeftOnTable === 'number'
+    ? Math.round(exitInsight.data.totalLeftOnTable as number)
+    : null;
+
+  const timeInsight = insights.find((i) => i.module === 'time-of-day-edge');
+  const bestHour = typeof timeInsight?.data?.bestHour === 'number'
+    ? (timeInsight.data.bestHour as number)
+    : null;
+
+  const parts: string[] = [];
+  if (effPct != null && moneyLeft != null) {
+    parts.push(
+      `You capture ${effPct}% of available profit, leaving $${moneyLeft.toLocaleString()} on the table across ${tradeCount || (exitInsight?.data?.tradeCount ?? 0)} trades.`,
+    );
+  } else if (effPct != null) {
+    parts.push(`You capture ${effPct}% of available profit across ${tradeCount} trades.`);
+  }
+  if (bestHour != null) {
+    parts.push(`Your best entry time is ${String(bestHour).padStart(2, '0')}:00.`);
+  }
+
+  const text = parts.join(' ');
+  const tone: VerdictTone = effPct != null && effPct < 40 ? 'negative' : 'neutral';
+
+  return <Verdict tone={tone} text={text || 'Execution verdict will appear once exit and timing data are computed.'} />;
+}
+
+function RiskVerdict({
+  sharpeRatio,
+  drawdownAnalysis,
+  journalId,
+}: {
+  sharpeRatio: number | null;
+  drawdownAnalysis: DrawdownAnalysis | null;
+  journalId?: string;
+}) {
+  const authFetch = useAuthFetch();
+  const [mc, setMc] = useState<{ probDrawdown25?: number } | null>(null);
+  const [mcLoading, setMcLoading] = useState(true);
+
+  useEffect(() => {
+    if (!journalId) return;
+    setMcLoading(true);
+    authFetch(`/api/analytics/monte-carlo?journalId=${encodeURIComponent(journalId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setMc(d && !d.error ? d : null))
+      .catch(() => setMc(null))
+      .finally(() => setMcLoading(false));
+  }, [journalId, authFetch]);
+
+  const sharpeStr = sharpeRatio != null ? sharpeRatio.toFixed(2) : '—';
+  const dd25Pct = mc?.probDrawdown25 != null ? Math.round(mc.probDrawdown25 * 100) : null;
+
+  let drawdownSentence: string;
+  if (drawdownAnalysis && drawdownAnalysis.currentDrawdownDuration > 0) {
+    drawdownSentence = `You are ${Math.round(drawdownAnalysis.currentDrawdownDuration)} day${drawdownAnalysis.currentDrawdownDuration >= 1.5 ? 's' : ''} into a drawdown.`;
+  } else {
+    drawdownSentence = 'You are at your equity high.';
+  }
+
+  const parts: string[] = [];
+  parts.push(`Your Sharpe ratio is ${sharpeStr}.`);
+  if (dd25Pct != null) {
+    parts.push(`There is a ${dd25Pct}% chance of a 25% drawdown over your next 100 trades.`);
+  }
+  parts.push(drawdownSentence);
+
+  const tone: VerdictTone =
+    (sharpeRatio != null && sharpeRatio < 0.3) ||
+    (dd25Pct != null && dd25Pct > 30)
+      ? 'negative'
+      : (sharpeRatio != null && sharpeRatio >= 1.0)
+        ? 'positive'
+        : 'neutral';
+
+  return (
+    <Verdict tone={tone} text={parts.join(' ')} loading={mcLoading && !mc} />
+  );
+}
+
+function PsychologyVerdict({ insights }: { insights: Insight[] }) {
+  const tilt = insights.find((i) => i.module === 'tilt-episodes');
+  const tof  = insights.find((i) => i.module === 'time-of-day-edge');
+  const mlm  = insights.find((i) => i.module === 'ml-patterns-markov');
+
+  const tiltEpisodes = (tilt?.data?.totalEpisodes as number | undefined) ?? 0;
+  const tiltCost = tilt?.data?.counterfactualImprovement as number | undefined;
+
+  const tiltStatement = tiltEpisodes > 0
+    ? `${tiltEpisodes} tilt episode${tiltEpisodes === 1 ? '' : 's'} detected${
+        tiltCost != null && tiltCost > 0 ? `, costing ~$${Math.round(tiltCost).toLocaleString()}` : ''
+      }.`
+    : 'No tilt episodes detected.';
+
+  const fatigue = tof?.data?.fatigue as { optimalCutoff?: number } | null | undefined;
+  const fatigueStatement = fatigue?.optimalCutoff != null
+    ? `Performance drops after trade #${fatigue.optimalCutoff}.`
+    : null;
+
+  const markov = mlm?.data?.markov as
+    | { transitionProbabilities: { winAfterWin: number; winAfterLoss: number } }
+    | undefined;
+
+  let postLossPhrase: string | null = null;
+  if (markov) {
+    const diff = markov.transitionProbabilities.winAfterWin - markov.transitionProbabilities.winAfterLoss;
+    const pct = Math.round(Math.abs(diff) * 100);
+    postLossPhrase = diff > 0.02
+      ? `You perform ${pct}% worse after losses.`
+      : diff < -0.02
+        ? `You perform ${pct}% better after losses.`
+        : 'Your outcomes are independent of prior results.';
+  }
+
+  const parts = [tiltStatement, fatigueStatement, postLossPhrase].filter(Boolean);
+  const text = parts.join(' ');
+  const tone: VerdictTone = tiltEpisodes > 0 || fatigue?.optimalCutoff != null ? 'negative' : 'neutral';
+
+  return <Verdict tone={tone} text={text || 'Psychology verdict will appear once behavioral analytics are computed.'} />;
+}
+
+function InsightsVerdict({
+  insights,
+  tradeCount,
+}: {
+  insights: Insight[];
+  tradeCount: number;
+}) {
+  const total = insights.length;
+  const significant = insights.filter((i) => i.isSignificant).length;
+  const text = `${total} pattern${total === 1 ? '' : 's'} detected across ${tradeCount} trades. ${significant} ${significant === 1 ? 'is' : 'are'} statistically significant.`;
+  return <Verdict tone="neutral" text={text} />;
+}
+
+// ── Narrative Hero (Overview) ─────────────────────────────────────────────────
+
+const NARRATIVE_CARD_STYLES: Record<
+  'leak' | 'strength' | 'focus',
+  { bg: string; border: string; title: string; titleText: string; icon: string }
+> = {
+  leak: {
+    bg:        'bg-red-900/20',
+    border:    'border-red-800/40',
+    title:     'BIGGEST LEAK',
+    titleText: 'text-red-300',
+    icon:      '🔴',
+  },
+  strength: {
+    bg:        'bg-green-900/20',
+    border:    'border-green-800/40',
+    title:     'BIGGEST STRENGTH',
+    titleText: 'text-green-300',
+    icon:      '🟢',
+  },
+  focus: {
+    bg:        'bg-yellow-900/20',
+    border:    'border-yellow-800/40',
+    title:     'FOCUS THIS WEEK',
+    titleText: 'text-yellow-300',
+    icon:      '⚠️',
+  },
+};
+
+function tabLabelFor(tab: TabId): string {
+  return TABS.find((t) => t.id === tab)?.label ?? tab;
+}
+
+function NarrativeCard({
+  kind,
+  theme,
+  body,
+  onSwitchTab,
+}: {
+  kind: 'leak' | 'strength' | 'focus';
+  theme: ConvergentTheme;
+  body: React.ReactNode;
+  onSwitchTab: (tab: TabId) => void;
+}) {
+  const s = NARRATIVE_CARD_STYLES[kind];
+  return (
+    <button
+      type="button"
+      onClick={() => onSwitchTab(theme.tabLink as TabId)}
+      className={`${s.bg} ${s.border} border rounded-lg px-4 py-3 text-left hover:brightness-125 transition-colors w-full h-full`}
+    >
+      <div className={`flex items-center gap-2 text-[11px] uppercase tracking-widest ${s.titleText} mb-2`}>
+        <span aria-hidden>{s.icon}</span>
+        <span>{s.title}</span>
+      </div>
+      <div className="text-base font-semibold text-white mb-1.5">{theme.headline}</div>
+      <div className="text-sm text-[#c9d1d9] leading-relaxed">{body}</div>
+      <div className="mt-2 text-xs text-[#8b949e]">→ {tabLabelFor(theme.tabLink as TabId)}</div>
+    </button>
+  );
+}
+
+function NarrativeHero({
+  convergence,
+  onSwitchTab,
+}: {
+  convergence: ConvergenceResult;
+  onSwitchTab: (tab: TabId) => void;
+}) {
+  const { biggestLeak, biggestStrength, weeklyFocus } = convergence;
+
+  return (
+    <div className="space-y-3">
+      <div className="text-[11px] uppercase tracking-widest text-[#6e7681]">
+        Your trading in 30 seconds
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {biggestLeak && (
+          <NarrativeCard
+            kind="leak"
+            theme={biggestLeak}
+            body={twoSentences(biggestLeak.diagnosis)}
+            onSwitchTab={onSwitchTab}
+          />
+        )}
+        {biggestStrength && (
+          <NarrativeCard
+            kind="strength"
+            theme={biggestStrength}
+            body={twoSentences(biggestStrength.diagnosis)}
+            onSwitchTab={onSwitchTab}
+          />
+        )}
+        {weeklyFocus && (
+          <NarrativeCard
+            kind="focus"
+            theme={weeklyFocus}
+            body={
+              <>
+                <div>{weeklyFocus.prescription}</div>
+                {weeklyFocus.expectedImpact && (
+                  <div className="mt-1.5 text-xs text-[#8b949e]">
+                    Expected impact: {weeklyFocus.expectedImpact}
+                  </div>
+                )}
+              </>
+            }
+            onSwitchTab={onSwitchTab}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Grab the first two sentences of a diagnosis for card body copy. */
+function twoSentences(text: string): string {
+  const parts = text.match(/[^.!?]+[.!?]+/g) ?? [text];
+  return parts.slice(0, 2).join(' ').trim();
 }
 
 // ── Tab: Overview ─────────────────────────────────────────────────────────────
@@ -375,12 +907,16 @@ function FullInsightCard({
 function OverviewTab({
   wartResult,
   eloResult,
+  sharpeRatio,
   insights,
+  convergence,
   onSwitchTab,
 }: {
   wartResult: WartResult | null;
   eloResult: EloResult | null;
+  sharpeRatio: number | null;
   insights: Insight[];
+  convergence: ConvergenceResult | null;
   onSwitchTab: (tab: TabId) => void;
 }) {
   const top3 = pickTop3(insights);
@@ -392,8 +928,46 @@ function OverviewTab({
     { id: 'psychology', label: 'Psychology' },
   ];
 
+  const hasNarrative =
+    convergence != null &&
+    !convergence.insufficientData &&
+    (convergence.biggestLeak || convergence.biggestStrength || convergence.weeklyFocus);
+
   return (
     <div className="space-y-4">
+      {/* Narrative hero: BIGGEST LEAK / STRENGTH / FOCUS THIS WEEK */}
+      {hasNarrative && (
+        <NarrativeHero convergence={convergence!} onSwitchTab={onSwitchTab} />
+      )}
+
+      {/* WART / Elo / Sharpe — secondary context row (always shown when available) */}
+      {hasNarrative && (
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-1 text-sm text-[#8b949e]">
+          {wartResult && (
+            <span>
+              <span className="text-[10px] uppercase tracking-widest text-[#6e7681] mr-1.5">WART</span>
+              <span className={wartColor(wartResult.composite)}>
+                {wartResult.composite >= 0 ? '+' : ''}{wartResult.composite.toFixed(1)}
+              </span>
+              <span className="text-[#6e7681] ml-1">({wartResult.tier})</span>
+            </span>
+          )}
+          {eloResult && (
+            <span>
+              <span className="text-[10px] uppercase tracking-widest text-[#6e7681] mr-1.5">Elo</span>
+              <span className={eloColor(eloResult.currentElo)}>{Math.round(eloResult.currentElo)}</span>
+              <span className="text-[#6e7681] ml-1">({eloResult.tier})</span>
+            </span>
+          )}
+          {sharpeRatio != null && (
+            <span>
+              <span className="text-[10px] uppercase tracking-widest text-[#6e7681] mr-1.5">Sharpe</span>
+              <span className="text-white">{sharpeRatio.toFixed(2)}</span>
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Top row: WART radar + Elo card */}
       <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-4 items-start">
         {/* Compact WART radar */}
@@ -504,6 +1078,7 @@ function OverviewTab({
 function ExecutionTab({
   chartProps,
   insights,
+  tradeCount,
   missingExitMetricsCount,
   onSwitchTab,
   onRunDeepAnalysis,
@@ -511,6 +1086,7 @@ function ExecutionTab({
 }: {
   chartProps: any;
   insights: Insight[];
+  tradeCount: number;
   missingExitMetricsCount: number;
   onSwitchTab: (tab: TabId) => void;
   onRunDeepAnalysis: () => void;
@@ -519,6 +1095,7 @@ function ExecutionTab({
   const inlineInsights = getInlineInsights('execution', insights);
   return (
     <div className="space-y-4">
+      <ExecutionVerdict insights={insights} tradeCount={tradeCount} />
       {missingExitMetricsCount > 0 && (
         <div className="flex items-center justify-between bg-[#1c2128] border border-[#30363d] rounded-lg px-4 py-2.5">
           <span className="text-sm text-[#8b949e]">
@@ -577,6 +1154,7 @@ function PsychologyTab({
 
   return (
     <div className="space-y-4">
+      <PsychologyVerdict insights={insights} />
       {/* ── Row 1: DisciplineGauge · MarkovBars · SessionDecayChart ── */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
@@ -651,12 +1229,14 @@ function PsychologyTab({
 function StrategyTab({
   chartProps,
   insights,
+  regimeBreakdown,
   onSwitchTab,
   combinatorialResult,
   playbooks,
 }: {
   chartProps: any;
   insights: Insight[];
+  regimeBreakdown: Record<string, any>;
   onSwitchTab: (tab: TabId) => void;
   combinatorialResult: CombinatorialSearchResult | null;
   playbooks: { id: string; name: string }[];
@@ -664,6 +1244,11 @@ function StrategyTab({
   const inlineInsights = getInlineInsights('strategy', insights);
   return (
     <div className="space-y-4">
+      <StrategyVerdict
+        regimeBreakdown={regimeBreakdown}
+        playbooks={playbooks}
+        journalId={chartProps.journalId}
+      />
       {inlineInsights.length > 0 && (
         <div className="space-y-1.5">
           {inlineInsights.map((ins, i) => (
@@ -738,6 +1323,11 @@ function RiskTab({
 
   return (
     <div className="space-y-4">
+      <RiskVerdict
+        sharpeRatio={sharpeRatio}
+        drawdownAnalysis={drawdownAnalysis}
+        journalId={chartProps.journalId}
+      />
       {/* ── Risk-Adjusted Performance ────────────────────────────── */}
       {hasRatios && (
         <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
@@ -913,9 +1503,11 @@ const INSIGHT_CATEGORIES = [
 
 function InsightsTab({
   insights,
+  tradeCount,
   onSwitchTab,
 }: {
   insights: Insight[];
+  tradeCount: number;
   onSwitchTab: (tab: TabId) => void;
 }) {
   const [catFilter, setCatFilter] = useState('');
@@ -946,6 +1538,7 @@ function InsightsTab({
 
   return (
     <div className="space-y-4">
+      <InsightsVerdict insights={deduped} tradeCount={tradeCount} />
       {/* Header + controls */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <p className="text-xs text-[#6e7681]">
@@ -1037,6 +1630,9 @@ export default function AnalyticsClient() {
   const [feeAttribution, setFeeAttribution] = useState<FeeAttribution | null>(null);
   const [liquidationCount, setLiquidationCount] = useState(0);
   const [liquidationCost, setLiquidationCost] = useState(0);
+  const [convergence, setConvergence] = useState<ConvergenceResult | null>(null);
+  const [regimeBreakdown, setRegimeBreakdown] = useState<Record<string, any>>({});
+  const [tradeCount, setTradeCount] = useState<number>(0);
   // Behavior-tab-specific data — fetched lazily when the tab first becomes active.
   const [behaviorPositions, setBehaviorPositions] = useState<BehaviorPosition[]>([]);
   const [equitySeries, setEquitySeries] = useState<{ date: string; cumulativePnl: number }[]>([]);
@@ -1077,6 +1673,16 @@ export default function AnalyticsClient() {
       .catch(() => {});
   }, [journalId, authFetch]);
 
+  // Convergence — drives the Overview hero cards.
+  useEffect(() => {
+    if (!journalId) return;
+    const p = new URLSearchParams({ journalId });
+    authFetch(`/api/analytics/convergence?${p}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: ConvergenceResult | null) => setConvergence(d))
+      .catch(() => setConvergence(null));
+  }, [journalId, authFetch]);
+
   // Summary (WART + Elo + risk metrics + missing exit count)
   useEffect(() => {
     if (!journalId) return;
@@ -1095,6 +1701,8 @@ export default function AnalyticsClient() {
         setFeeAttribution(d.feeAttribution ?? null);
         setLiquidationCount(d.liquidationCount ?? 0);
         setLiquidationCost(d.liquidationCost ?? 0);
+        setRegimeBreakdown((d.breakdowns?.regime as Record<string, any>) ?? {});
+        setTradeCount((d.data?.tradeCount as number) ?? 0);
         // Invalidate behavior data so it re-fetches with the new filters.
         behaviorLoadedRef.current = '';
       })
@@ -1247,7 +1855,9 @@ export default function AnalyticsClient() {
           <OverviewTab
             wartResult={wartResult}
             eloResult={eloResult}
+            sharpeRatio={sharpeRatio}
             insights={insightsForCards}
+            convergence={convergence}
             onSwitchTab={setActiveTab}
           />
         )}
@@ -1255,6 +1865,7 @@ export default function AnalyticsClient() {
           <StrategyTab
             chartProps={chartProps}
             insights={insightsForCards}
+            regimeBreakdown={regimeBreakdown}
             onSwitchTab={setActiveTab}
             combinatorialResult={combinatorialResult}
             playbooks={playbooks}
@@ -1264,6 +1875,7 @@ export default function AnalyticsClient() {
           <ExecutionTab
             chartProps={chartProps}
             insights={insightsForCards}
+            tradeCount={tradeCount}
             missingExitMetricsCount={missingExitMetricsCount}
             onSwitchTab={setActiveTab}
             onRunDeepAnalysis={handleRunDeepAnalysis}
@@ -1294,6 +1906,7 @@ export default function AnalyticsClient() {
         {activeTab === 'insights' && (
           <InsightsTab
             insights={insightsForCards}
+            tradeCount={tradeCount}
             onSwitchTab={setActiveTab}
           />
         )}
