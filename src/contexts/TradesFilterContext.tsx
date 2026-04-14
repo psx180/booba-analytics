@@ -104,6 +104,11 @@ export function useTradesFilter(): TradesFilterContextValue {
   return ctx;
 }
 
+/** Returns null when called outside a TradesFilterProvider (e.g. extension popup). */
+export function useTradesFilterOptional(): TradesFilterContextValue | null {
+  return useContext(TradesFilterContext);
+}
+
 // ── URL serialisation helpers ──────────────────────────────────────────────
 
 export function serializeFilterToUrl(f: TradesFilter): URLSearchParams {

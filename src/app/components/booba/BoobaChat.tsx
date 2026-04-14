@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback, useContext } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthFetch } from '@/lib/api-client';
 import { useJournalOptional } from '@/app/JournalContext';
-import { TradesFilterContext, EMPTY_TRADES_FILTER, serializeFilterToUrl } from '@/contexts/TradesFilterContext';
+import { useTradesFilterOptional, EMPTY_TRADES_FILTER, serializeFilterToUrl } from '@/contexts/TradesFilterContext';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -53,7 +53,7 @@ export default function BoobaChat({ isOpen, onClose }: BoobaChatProps) {
   const journalCtx = useJournalOptional();
   const router = useRouter();
   // Optional — only available when BoobaChat is rendered inside TradesFilterProvider
-  const filterCtx = useContext(TradesFilterContext);
+  const filterCtx = useTradesFilterOptional();
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
