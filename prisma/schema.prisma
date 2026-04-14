@@ -137,6 +137,11 @@ model Position {
   emotion             String?
   mistakes            String?         // JSON array of mistake tags
 
+  // Playbook adherence (set when user tags a playbook; auto-computed on import/tag)
+  playbookId          String?
+  adherenceScore      Float?          // 0-100, percentage of enabled non-inconclusive rules passed
+  adherenceDetail     String?         // JSON: RuleResult[]
+
   // Social context at time of entry (populated by ELFA enrichment)
   socialSentiment    Float?           // -1 to 1 at time of entry
   socialMentions     Int?             // mention count at time of entry
@@ -395,6 +400,33 @@ model Signal {
 
   @@index([walletAddress, callerName])
   @@index([walletAddress, status])
+}
+
+// ─── Playbooks (structured strategy rules + adherence) ───────────────────────
+//
+// A playbook is a list of rules the trader commits to. When a position is
+// tagged with a playbook, the adherence service runs each enabled rule against
+// the position and stores a score (0-100) plus per-rule results on the
+// position itself (adherenceScore/adherenceDetail). Rules serialised as JSON
+// so adding new rule types is a code-only change — no migrations.
+
+model Playbook {
+  id              String   @id @default(cuid())
+  walletAddress   String
+  name            String
+  description     String?
+
+  // JSON array of PlaybookRule: { type, params, enabled, label }
+  rules           String
+
+  // Rolling stats, refreshed after each adherence check.
+  totalChecks     Int      @default(0)
+  avgAdherence    Float?   // 0-100 average of per-position adherenceScore
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([walletAddress])
 }
 
 // ─── Alerts ────────────────────────────────────────────────────────────────────

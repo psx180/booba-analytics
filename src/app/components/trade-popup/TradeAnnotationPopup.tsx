@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useAuthFetch } from '@/lib/api-client';
+import PlaybookAdherenceBreakdown from './PlaybookAdherenceBreakdown';
+import type { RuleResult } from '@/services/playbooks/types';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -24,6 +26,7 @@ export interface PopupPosition {
   invalidationPrice: number | null;
   targetPrice: string | null;
   mistakes: string | null;
+  playbookId: string | null;
 }
 
 interface PositionAnnotation {
@@ -36,6 +39,7 @@ interface PositionAnnotation {
   targetPrice: string;
   mistakes: string[];
   notes: string;
+  playbookId: string | null;
 }
 
 interface Strategy {
@@ -43,13 +47,27 @@ interface Strategy {
   name: string;
 }
 
+interface Playbook {
+  id: string;
+  name: string;
+}
+
+interface AdherencePreview {
+  playbookId: string;
+  score: number;
+  results: RuleResult[];
+}
+
 interface SectionProps {
   position: PopupPosition;
   formData: PositionAnnotation;
   strategies: Strategy[];
+  playbooks: Playbook[];
   sourceTags: string[];
   onUpdate: (data: Partial<PositionAnnotation>) => void;
   onNewStrategy: (name: string) => Promise<Strategy | null>;
+  adherencePreview: AdherencePreview | null;
+  adherenceLoading: boolean;
 }
 
 interface PopupSection {
@@ -110,7 +128,10 @@ function fmtHoldTime(s: number | null) {
 
 // ── Section: Quick Capture ────────────────────────────────────────────────────
 
-function QuickCaptureSection({ position, formData, strategies, sourceTags, onUpdate, onNewStrategy }: SectionProps) {
+function QuickCaptureSection({
+  position, formData, strategies, playbooks, sourceTags, onUpdate, onNewStrategy,
+  adherencePreview, adherenceLoading,
+}: SectionProps) {
   const [newStrategyMode, setNewStrategyMode] = useState(false);
   const [newStrategyName, setNewStrategyName] = useState('');
   const [creatingStrategy, setCreatingStrategy] = useState(false);
@@ -190,6 +211,35 @@ function QuickCaptureSection({ position, formData, strategies, sourceTags, onUpd
         )}
       </div>
 
+      {/* Playbook */}
+      <div>
+        <label className="block text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
+          Playbook
+        </label>
+        <select
+          value={formData.playbookId ?? ''}
+          onChange={(e) => onUpdate({ playbookId: e.target.value || null })}
+          className="w-full bg-[#0d1117] border border-[#30363d] text-sm text-[#e6edf3] rounded px-3 py-1.5 focus:outline-none focus:border-blue-500"
+        >
+          <option value="">— No playbook —</option>
+          {playbooks.map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+        {adherenceLoading && (
+          <div className="text-[10px] text-[#6e7681] mt-1">Scoring adherence…</div>
+        )}
+        {adherencePreview && !adherenceLoading && (
+          <div className="mt-2">
+            <PlaybookAdherenceBreakdown
+              score={adherencePreview.score}
+              results={adherencePreview.results}
+              playbookName={playbooks.find((p) => p.id === adherencePreview.playbookId)?.name}
+            />
+          </div>
+        )}
+      </div>
+
       {/* Thesis */}
       <div>
         <label className="block text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
@@ -262,6 +312,8 @@ function QuickCaptureSection({ position, formData, strategies, sourceTags, onUpd
 
 // ── Section: More Details ─────────────────────────────────────────────────────
 
+// DetailSection ignores playbooks/preview props but accepts SectionProps
+// so the registry stays uniform.
 function DetailSection({ position, formData, sourceTags, onUpdate }: SectionProps) {
   return (
     <div className="space-y-3">
@@ -431,14 +483,18 @@ export default function TradeAnnotationPopup({
     targetPrice: position.targetPrice ?? '',
     mistakes: position.mistakes ? (JSON.parse(position.mistakes) as string[]) : [],
     notes: position.thesis?.includes('\n\n') ? position.thesis.split('\n\n').slice(1).join('\n\n') : '',
+    playbookId: position.playbookId ?? null,
   }));
 
   const [strategies, setStrategies] = useState<Strategy[]>([]);
+  const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
   const [sourceTags, setSourceTags] = useState<string[]>([]);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>(
     () => Object.fromEntries(POPUP_SECTIONS.map((s) => [s.id, s.defaultExpanded])),
   );
   const [saving, setSaving] = useState(false);
+  const [adherencePreview, setAdherencePreview] = useState<AdherencePreview | null>(null);
+  const [adherenceLoading, setAdherenceLoading] = useState(false);
 
   useEffect(() => {
     authFetch('/api/strategies')
@@ -448,7 +504,36 @@ export default function TradeAnnotationPopup({
         setSourceTags(d.sourceTags ?? []);
       })
       .catch(() => {});
+    authFetch('/api/playbooks')
+      .then((r) => r.json())
+      .then((d) => setPlaybooks(d.playbooks ?? []))
+      .catch(() => {});
   }, [authFetch]);
+
+  // Preview adherence whenever the user picks a different playbook. The
+  // result isn't persisted until they click Save — server re-runs the
+  // check at that point so what they saw matches what gets stored.
+  useEffect(() => {
+    const id = formData.playbookId;
+    if (!id) { setAdherencePreview(null); return; }
+    let cancelled = false;
+    setAdherenceLoading(true);
+    authFetch('/api/playbooks/check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ positionId: position.id, playbookId: id }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled) return;
+        if (d.results) {
+          setAdherencePreview({ playbookId: id, score: d.score ?? 0, results: d.results });
+        }
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setAdherenceLoading(false); });
+    return () => { cancelled = true; };
+  }, [formData.playbookId, position.id, authFetch]);
 
   // Escape to close
   useEffect(() => {
@@ -494,6 +579,7 @@ export default function TradeAnnotationPopup({
         invalidationPrice: formData.invalidationPrice ? parseFloat(formData.invalidationPrice) : null,
         targetPrice: formData.targetPrice || null,
         mistakes: formData.mistakes.length > 0 ? JSON.stringify(formData.mistakes) : null,
+        playbookId: formData.playbookId,
       };
 
       await authFetch(`/api/positions/${position.id}`, {
@@ -585,9 +671,12 @@ export default function TradeAnnotationPopup({
                   position={position}
                   formData={formData}
                   strategies={strategies}
+                  playbooks={playbooks}
                   sourceTags={sourceTags}
                   onUpdate={handleUpdate}
                   onNewStrategy={handleNewStrategy}
+                  adherencePreview={adherencePreview}
+                  adherenceLoading={adherenceLoading}
                 />
               </SectionWrapper>
             );

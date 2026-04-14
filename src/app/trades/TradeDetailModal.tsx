@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
 import { useAuthFetch } from '@/lib/api-client';
 import TradeReplay from './TradeReplay';
+import PlaybookAdherenceBreakdown from '@/app/components/trade-popup/PlaybookAdherenceBreakdown';
+import type { RuleResult } from '@/services/playbooks/types';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -40,6 +42,14 @@ interface PositionDetail {
   socialMentions: number | null;
   socialMindshare: number | null;
   screenshot: string | null;
+  playbookId: string | null;
+  adherenceScore: number | null;
+  adherenceDetail: string | null;
+}
+
+interface Playbook {
+  id: string;
+  name: string;
 }
 
 interface Strategy {
@@ -286,6 +296,11 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
   const [conviction, setConviction] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [strategies, setStrategies] = useState<Strategy[]>([]);
+  const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
+  const [playbookId, setPlaybookId] = useState<string | null>(null);
+  const [adherenceDetail, setAdherenceDetail] = useState<RuleResult[] | null>(null);
+  const [adherenceScore, setAdherenceScore] = useState<number | null>(null);
+  const [savingPlaybook, setSavingPlaybook] = useState(false);
 
   // Signal link state
   const [matchingSignals, setMatchingSignals] = useState<SignalOption[]>([]);
@@ -325,8 +340,9 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
       authFetch('/api/analytics/insights', { signal: controller.signal }).then((r) => r.json()),
       authFetch('/api/strategies', { signal: controller.signal }).then((r) => r.json()),
       authFetch('/api/signals?limit=100', { signal: controller.signal }).then((r) => r.json()),
+      authFetch('/api/playbooks', { signal: controller.signal }).then((r) => r.json()),
     ])
-      .then(([posData, ordersData, insightData, strategiesData, signalsData]) => {
+      .then(([posData, ordersData, insightData, strategiesData, signalsData, playbooksData]) => {
         const pos: PositionDetail = posData.position;
         setPosition(pos);
         setThesis(pos?.thesis ?? '');
@@ -335,6 +351,18 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
         setSourceTag(pos?.sourceTag ?? '');
         setConviction(pos?.conviction ?? null);
         setStrategies(strategiesData.strategies ?? []);
+        setPlaybooks(playbooksData.playbooks ?? []);
+        setPlaybookId(pos?.playbookId ?? null);
+        setAdherenceScore(pos?.adherenceScore ?? null);
+        if (pos?.adherenceDetail) {
+          try {
+            setAdherenceDetail(JSON.parse(pos.adherenceDetail) as RuleResult[]);
+          } catch {
+            setAdherenceDetail(null);
+          }
+        } else {
+          setAdherenceDetail(null);
+        }
         setOrders(ordersData.orders ?? []);
         // Filter insights to those referencing this position
         const all: Insight[] = insightData.insights ?? [];
@@ -426,6 +454,34 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
       });
     } finally {
       setSaving(false);
+    }
+  }, [positionId, authFetch]);
+
+  const handlePlaybookChange = useCallback(async (nextId: string | null) => {
+    setSavingPlaybook(true);
+    setPlaybookId(nextId);
+    try {
+      const res = await authFetch(`/api/positions/${positionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playbookId: nextId }),
+      });
+      const data = await res.json();
+      // The PATCH route re-runs adherence when a playbook is tagged and
+      // returns the refreshed row — propagate score + detail so the
+      // breakdown below updates without a second fetch.
+      if (data?.adherenceScore != null) setAdherenceScore(data.adherenceScore);
+      else setAdherenceScore(null);
+      if (data?.adherenceDetail) {
+        try { setAdherenceDetail(JSON.parse(data.adherenceDetail) as RuleResult[]); }
+        catch { setAdherenceDetail(null); }
+      } else {
+        setAdherenceDetail(null);
+      }
+    } catch (err) {
+      console.error('Playbook tag failed', err);
+    } finally {
+      setSavingPlaybook(false);
     }
   }, [positionId, authFetch]);
 
@@ -810,6 +866,32 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
               <h3 className="text-xs uppercase tracking-widest text-[#6e7681] mb-3">
                 Tags
               </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+                <div className="flex flex-col gap-1.5 sm:col-span-3">
+                  <label className="text-[10px] uppercase tracking-widest text-[#6e7681]">Playbook</label>
+                  <select
+                    value={playbookId ?? ''}
+                    disabled={savingPlaybook}
+                    onChange={(e) => handlePlaybookChange(e.target.value || null)}
+                    className="bg-[#161b22] border border-[#30363d] text-sm text-[#e6edf3] rounded px-2 py-1.5 focus:outline-none focus:border-blue-500 disabled:opacity-50"
+                  >
+                    <option value="">— No playbook —</option>
+                    {playbooks.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                  {savingPlaybook && <div className="text-[10px] text-[#6e7681]">Scoring adherence…</div>}
+                  {!savingPlaybook && playbookId && adherenceDetail && adherenceScore != null && (
+                    <div className="mt-2">
+                      <PlaybookAdherenceBreakdown
+                        score={adherenceScore}
+                        results={adherenceDetail}
+                        playbookName={playbooks.find((p) => p.id === playbookId)?.name}
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 {/* Strategy */}
                 <div className="flex flex-col gap-1.5">

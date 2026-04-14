@@ -5,6 +5,7 @@ import { POSITION_TYPES } from '@/services/grouping/types';
 import type { PositionType } from '@/services/grouping/types';
 import { withAuth, requireOwnedPosition } from '@/lib/api-auth';
 import { runCompute } from '@/services/compute-policy';
+import { runAndStoreAdherence } from '@/services/playbooks/adherence-service';
 
 export async function DELETE(
   req: NextRequest,
@@ -70,7 +71,7 @@ export async function PATCH(
     const annotationFields = [
       'thesis', 'strategyTag', 'sourceTag', 'conviction',
       'strategyId', 'invalidationPrice', 'targetPrice',
-      'emotion', 'mistakes',
+      'emotion', 'mistakes', 'playbookId',
     ] as const;
     const updateData: Record<string, string | number | null> = {};
     for (const field of annotationFields) {
@@ -80,15 +81,38 @@ export async function PATCH(
     }
 
     if (Object.keys(updateData).length > 0) {
+      // When a playbook is being un-tagged, wipe the stored adherence too —
+      // a stale score on an untagged position would show up in analytics and
+      // confuse the user.
+      if ('playbookId' in updateData && updateData.playbookId == null) {
+        updateData.adherenceScore = null;
+        updateData.adherenceDetail = null;
+      }
+
       const updated = await prisma.position.update({
         where: { id },
         data: updateData,
       });
+
+      // Re-run adherence when the playbook tag changed. Awaited so the
+      // response reflects the fresh score, letting the UI render the
+      // breakdown immediately after save.
+      if ('playbookId' in updateData && updateData.playbookId != null) {
+        try {
+          await runAndStoreAdherence(id);
+        } catch (err) {
+          console.error('[playbook] adherence check failed:', err);
+        }
+      }
+
       // Fire and forget — annotations changed, re-run fast compute
       runCompute(walletAddress, 'mutation', updated.journalId ?? undefined).catch((err) =>
         console.error('[compute-policy] Background fast compute failed:', err),
       );
-      return NextResponse.json(updated);
+
+      // Re-read so the adherence fields round-trip to the client.
+      const fresh = await prisma.position.findUnique({ where: { id } });
+      return NextResponse.json(fresh);
     }
 
     return NextResponse.json({ error: 'No valid operation specified' }, { status: 400 });

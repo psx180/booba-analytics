@@ -1346,6 +1346,7 @@ export default function TradesClient() {
     invalidationPrice: unit.invalidationPrice ?? null,
     targetPrice: unit.targetPrice ?? null,
     mistakes: unit.mistakes ?? null,
+    playbookId: (unit as { playbookId?: string | null }).playbookId ?? null,
   });
 
   // Resolve annotatePositionId → PopupPosition.
@@ -1388,6 +1389,7 @@ export default function TradesClient() {
           invalidationPrice: p.invalidationPrice ?? null,
           targetPrice: p.targetPrice ?? null,
           mistakes: p.mistakes ?? null,
+          playbookId: p.playbookId ?? null,
         });
       })
       .catch(() => {});
