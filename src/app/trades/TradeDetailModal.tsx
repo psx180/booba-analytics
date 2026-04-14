@@ -39,6 +39,7 @@ interface PositionDetail {
   socialSentiment: number | null;
   socialMentions: number | null;
   socialMindshare: number | null;
+  screenshot: string | null;
 }
 
 interface Strategy {
@@ -299,6 +300,9 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
 
   // Active tab in the modal body ('details' vs. 'replay')
   const [activeTab, setActiveTab] = useState<'details' | 'replay'>('details');
+
+  // Screenshot lightbox
+  const [screenshotOpen, setScreenshotOpen] = useState(false);
 
   const overlayRef = useRef<HTMLDivElement>(null);
 
@@ -956,6 +960,43 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
                     );
                   })}
                 </div>
+              </div>
+            )}
+
+            {/* ── Chart at Entry ──────────────────────────────────────── */}
+            {position.screenshot && (
+              <div className="px-6 py-4 border-t border-[#21262d]">
+                <h3 className="text-xs uppercase tracking-widest text-[#6e7681] mb-3">
+                  Chart at Entry
+                </h3>
+                <img
+                  src={position.screenshot}
+                  alt="Chart at entry"
+                  className="w-full rounded border border-[#21262d] cursor-pointer"
+                  onClick={() => setScreenshotOpen(true)}
+                />
+              </div>
+            )}
+
+            {/* Screenshot lightbox */}
+            {screenshotOpen && position.screenshot && (
+              <div
+                className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80"
+                onClick={() => setScreenshotOpen(false)}
+              >
+                <button
+                  className="absolute top-4 right-4 text-white text-2xl leading-none"
+                  onClick={() => setScreenshotOpen(false)}
+                  aria-label="Close"
+                >
+                  ✕
+                </button>
+                <img
+                  src={position.screenshot}
+                  alt="Chart at entry"
+                  className="max-w-[90vw] max-h-[90vh] rounded shadow-xl"
+                  onClick={(e) => e.stopPropagation()}
+                />
               </div>
             )}
             </>

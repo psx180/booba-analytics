@@ -697,6 +697,22 @@
     return b;
   }
 
+  // ── Screenshot upload ────────────────────────────────────────────────────────
+
+  async function uploadScreenshot(positionId, dataUrl, settings) {
+    const appUrl = (settings.webAppUrl || 'http://localhost:3000').replace(/\/$/, '');
+    try {
+      await fetch(`${appUrl}/api/positions/${positionId}/screenshot?apiKey=${settings.apiKey}&wallet=${settings.walletAddress}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ screenshot: dataUrl }),
+      });
+      console.log('[booba-ext] Screenshot uploaded for position', positionId);
+    } catch (err) {
+      console.error('[booba-ext] Screenshot upload failed:', err);
+    }
+  }
+
   // ── SSE ──────────────────────────────────────────────────────────────────────
 
   function stopSSE() {
@@ -737,6 +753,46 @@
         if (d.isNewPosition) {
           setMood('excited', 10000);
           if (settings.enableThesisPopup !== false) showTradePopup(d, settings);
+
+          // Screenshot capture — 1-second delay to let the chart update
+          if (d.positionId) {
+            const posId = d.positionId;
+            setTimeout(async () => {
+              try {
+                const s = await chrome.storage.local.get(['enableScreenshots']);
+                if (!s.enableScreenshots) return;
+
+                let screenshotData = null;
+
+                try {
+                  const chartEl = document.querySelector('canvas')
+                    || document.querySelector('[class*="chart"]')
+                    || document.querySelector('[class*="trading"]');
+
+                  if (chartEl && typeof html2canvas !== 'undefined') {
+                    const canvas = await html2canvas(chartEl, {
+                      backgroundColor: '#0d1117',
+                      scale: 1,
+                      logging: false,
+                    });
+                    screenshotData = canvas.toDataURL('image/png', 0.8);
+                    console.log('[booba-ext] Chart element captured via html2canvas');
+                  }
+                } catch (err) {
+                  console.warn('[booba-ext] html2canvas failed:', err);
+                }
+
+                if (!screenshotData) {
+                  chrome.runtime.sendMessage({ type: 'capture_screenshot', positionId: posId });
+                  return;
+                }
+
+                uploadScreenshot(posId, screenshotData, settings);
+              } catch (err) {
+                console.error('[booba-ext] Screenshot flow error:', err);
+              }
+            }, 1000);
+          }
         }
       } catch {}
     });

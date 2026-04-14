@@ -142,6 +142,7 @@ model Position {
   socialMentions     Int?             // mention count at time of entry
   socialMindshare    Float?           // % of total discussion at time of entry
 
+  screenshot          String?         // base64 data URL of chart at entry time
   customData          String?         // JSON
   linkedStrategyId    String?
   linkedStrategy      LinkedStrategy? @relation(fields: [linkedStrategyId], references: [id])

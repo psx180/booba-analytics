@@ -11,7 +11,7 @@
   "content_scripts": [
     {
       "matches": ["https://app.pacifica.fi/*", "https://*.pacifica.fi/*"],
-      "js": ["content/content.js", "content/booba-float.js"],
+      "js": ["lib/html2canvas.min.js", "content/content.js", "content/booba-float.js"],
       "css": ["content/content.css"],
       "run_at": "document_idle"
     }
