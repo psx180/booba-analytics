@@ -21,6 +21,7 @@ import SizeAfterOutcomeScatter from './behavior/SizeAfterOutcomeScatter';
 import TiltEquityCurve, { type TiltEpisode } from './behavior/TiltEquityCurve';
 import MonteCarloChart from './monte-carlo/MonteCarloChart';
 import WhatIfChart from './what-if/WhatIfChart';
+import WalkForwardChart from './walk-forward/WalkForwardChart';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -695,6 +696,7 @@ function StrategyTab({
       )}
       <StrategyBreakdown {...chartProps} />
       <RegimePerformance {...chartProps} />
+      <WalkForwardChart journalId={chartProps.journalId} />
       <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
         <div className="px-4 py-3 border-b border-[#21262d]">
           <h2 className="text-sm font-semibold text-white">What If?</h2>
