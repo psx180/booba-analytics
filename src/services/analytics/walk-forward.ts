@@ -21,6 +21,7 @@ export interface WindowMetrics {
   avgLoss: number;        // avg P&L on losing trades (negative $)
   totalPnl: number;
   sharpe: number;         // mean return / stddev of returns (within window)
+  sortino: number;        // mean return / downside deviation (within window)
 }
 
 export interface WalkForwardResult {
@@ -89,6 +90,14 @@ function stddev(values: number[]): number {
   return Math.sqrt(variance);
 }
 
+function downsideDeviation(values: number[]): number {
+  const n = values.length;
+  if (n < 2) return 0;
+  const downside = values.map((v) => Math.min(v, 0));
+  const variance = downside.reduce((a, v) => a + v ** 2, 0) / n;
+  return Math.sqrt(variance);
+}
+
 function r2(v: number): number {
   return Math.round(v * 100) / 100;
 }
@@ -116,6 +125,9 @@ function computeWindowMetrics(
   const sd     = stddev(pnls);
   const sharpe = sd > 0 ? expectancy / sd : 0;
 
+  const dd      = downsideDeviation(pnls);
+  const sortino = dd > 0 ? expectancy / dd : 0;
+
   return {
     windowStart:  startIso,
     windowEnd:    endIso,
@@ -127,6 +139,7 @@ function computeWindowMetrics(
     avgLoss:      r2(avgLoss),
     totalPnl:     r2(totalPnl),
     sharpe:       r2(sharpe),
+    sortino:      r2(sortino),
   };
 }
 

@@ -127,7 +127,7 @@ function WindowTable({ windows }: { windows: WindowMetrics[] }) {
       <table className="w-full text-xs border-collapse">
         <thead>
           <tr className="border-b border-[#21262d]">
-            {['Window', 'Trades', 'Win Rate', 'Expectancy', 'Profit Factor', 'Total P&L'].map(
+            {['Window', 'Trades', 'Win Rate', 'Expectancy', 'Profit Factor', 'Total P&L', 'Sortino'].map(
               (h) => (
                 <th
                   key={h}
@@ -146,6 +146,8 @@ function WindowTable({ windows }: { windows: WindowMetrics[] }) {
               ? 'bg-green-500/5 hover:bg-green-500/10'
               : 'bg-red-500/5 hover:bg-red-500/10';
             const pnlColor   = isPositive ? 'text-green-400' : 'text-red-400';
+            const sortinoColor =
+              w.sortino >= 1 ? 'text-green-400' : w.sortino >= 0.5 ? 'text-amber-400' : 'text-red-400';
             return (
               <tr key={i} className={`border-b border-[#21262d]/50 transition-colors ${rowBg}`}>
                 <td className="px-3 py-2 font-medium text-[#e6edf3] whitespace-nowrap">
@@ -159,6 +161,9 @@ function WindowTable({ windows }: { windows: WindowMetrics[] }) {
                 <td className="px-3 py-2 tabular-nums text-[#8b949e]">{fmtPf(w.profitFactor)}</td>
                 <td className={`px-3 py-2 tabular-nums font-medium ${pnlColor}`}>
                   {fmtDollar(w.totalPnl)}
+                </td>
+                <td className={`px-3 py-2 tabular-nums font-medium ${sortinoColor}`}>
+                  {w.sortino.toFixed(2)}
                 </td>
               </tr>
             );

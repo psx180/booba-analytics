@@ -281,6 +281,16 @@ function AnalyticsContent({ analytics }: { analytics: CallerAnalytics }) {
           value={analytics.profitFactor === 999 ? '∞' : analytics.profitFactor.toFixed(2)}
           color={analytics.profitFactor >= 1 ? '#3fb950' : '#f85149'}
         />
+        <StatCard
+          label="Sharpe"
+          value={analytics.sharpeRatio != null ? fmt(analytics.sharpeRatio) : '—'}
+          color={
+            analytics.sharpeRatio == null ? '#484f58'
+            : analytics.sharpeRatio >= 1 ? '#3fb950'
+            : analytics.sharpeRatio >= 0.5 ? '#d29922'
+            : '#f85149'
+          }
+        />
       </div>
 
       {/* Charts row */}

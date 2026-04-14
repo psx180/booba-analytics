@@ -11,6 +11,13 @@ export interface BoobaAnalyticsData {
       risk?: { score: number };
     };
   };
+  /** Drawdown analysis from risk metrics. */
+  drawdownAnalysis?: {
+    currentDrawdown: number;
+    currentDrawdownDuration: number;
+    avgDrawdownDuration: number;
+    maxDrawdown: number;
+  };
   tiltEpisodeCount?: number;
   eloResult?: {
     currentElo: number;
@@ -125,6 +132,22 @@ export function getContextualMessage(
     // Luck score negative
     if (data.xpnlLuckScore !== undefined && data.xpnlLuckScore < -0.3) {
       analyticsMsgs.push("Your actual P&L is below expected — you might be running unlucky.");
+    }
+
+    // Drawdown awareness
+    if (data.drawdownAnalysis && data.drawdownAnalysis.currentDrawdown < 0) {
+      const dd = data.drawdownAnalysis;
+      if (dd.avgDrawdownDuration > 0 && dd.currentDrawdownDuration > dd.avgDrawdownDuration * 1.5) {
+        const current = Math.round(dd.currentDrawdownDuration);
+        const avg = Math.round(dd.avgDrawdownDuration);
+        analyticsMsgs.push(
+          `You have been in a drawdown for ${current} day${current === 1 ? '' : 's'} — longer than your average recovery time of ${avg} day${avg === 1 ? '' : 's'}.`,
+        );
+      } else if (dd.maxDrawdown < 0 && dd.currentDrawdown < dd.maxDrawdown * 0.5) {
+        analyticsMsgs.push(
+          'Your current drawdown is approaching your historical maximum. Consider reducing position sizes.',
+        );
+      }
     }
 
     // WART positive — positive reinforcement

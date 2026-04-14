@@ -44,6 +44,9 @@ interface PerformanceResult {
   xpnlResult?: XpnlSummary;
   equityCurveConsistency?: number;
   wartResult?: WartResult;
+  // Risk metrics
+  sharpeRatio?: number | null;
+  payoffRatio?: number | null;
 }
 
 interface WartAxis {
@@ -156,6 +159,14 @@ interface DashboardCacheEntry {
     currentDrawdown: number;
     currentDrawdownPct: number;
   } | null;
+  sharpeRatio: number | null;
+  payoffRatio: number | null;
+  drawdownAnalysis: {
+    currentDrawdown: number;
+    currentDrawdownDuration: number;
+    avgDrawdownDuration: number;
+    maxDrawdown: number;
+  } | null;
 }
 
 const dashboardCache = new Map<string, DashboardCacheEntry>();
@@ -225,6 +236,18 @@ function wartColor(composite: number): string {
   return 'text-red-400';
 }
 
+function sharpeColor(v: number): string {
+  if (v >= 1.0) return 'text-green-400';
+  if (v >= 0.5) return 'text-amber-400';
+  return 'text-red-400';
+}
+
+function payoffColor(v: number): string {
+  if (v >= 2.0) return 'text-green-400';
+  if (v >= 1.0) return 'text-amber-400';
+  return 'text-red-400';
+}
+
 function formatWart(c: number): string {
   return `${c >= 0 ? '+' : ''}${c.toFixed(1)}`;
 }
@@ -253,9 +276,9 @@ function trendArrow(trend: 'improving' | 'declining' | 'stable'): string {
 
 // ── Stat Card ────────────────────────────────────────────────────────────────
 
-function StatCard({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) {
+function StatCard({ label, value, sub, tooltip }: { label: string; value: React.ReactNode; sub?: string; tooltip?: string }) {
   return (
-    <div className="bg-[#161b22] border border-[#21262d] rounded-lg px-4 py-3">
+    <div className="bg-[#161b22] border border-[#21262d] rounded-lg px-4 py-3" title={tooltip}>
       <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">{label}</div>
       <div className="text-xl font-semibold">{value}</div>
       {sub && <div className="text-xs text-[#6e7681] mt-0.5">{sub}</div>}
@@ -300,6 +323,15 @@ export default function DashboardClient() {
     maxDrawdownPct: number;
     currentDrawdown: number;
     currentDrawdownPct: number;
+  } | null>(null);
+
+  const [sharpeRatio, setSharpeRatio] = useState<number | null>(null);
+  const [payoffRatio, setPayoffRatio] = useState<number | null>(null);
+  const [drawdownAnalysis, setDrawdownAnalysis] = useState<{
+    currentDrawdown: number;
+    currentDrawdownDuration: number;
+    avgDrawdownDuration: number;
+    maxDrawdown: number;
   } | null>(null);
 
   const [carryData, setCarryData] = useState<CarryDataForBooba | null>(null);
@@ -376,6 +408,9 @@ export default function DashboardClient() {
           insights: insightsData.insights ?? [],
           lastComputedAt: insightsData.lastComputedAt ?? null,
           untaggedPositionCount: untaggedData.count ?? 0,
+          sharpeRatio: (summaryData as any).sharpeRatio ?? null,
+          payoffRatio: (summaryData as any).payoffRatio ?? null,
+          drawdownAnalysis: (summaryData as any).drawdownAnalysis ?? null,
         };
 
         dashboardCache.set(cacheKey, entry);
@@ -393,6 +428,9 @@ export default function DashboardClient() {
         setInsights(entry.insights);
         setLastComputedAt(entry.lastComputedAt);
         setUntaggedPositionCount(entry.untaggedPositionCount);
+        setSharpeRatio(entry.sharpeRatio);
+        setPayoffRatio(entry.payoffRatio);
+        setDrawdownAnalysis(entry.drawdownAnalysis);
       } finally {
         if (!isBackground) setLoading(false);
       }
@@ -422,6 +460,9 @@ export default function DashboardClient() {
         setInsights(cached.insights);
         setLastComputedAt(cached.lastComputedAt);
         setUntaggedPositionCount(cached.untaggedPositionCount);
+        setSharpeRatio(cached.sharpeRatio);
+        setPayoffRatio(cached.payoffRatio);
+        setDrawdownAnalysis(cached.drawdownAnalysis);
         setLoading(false);
         // Background refresh — no spinner, silently updates state when done
         doFetch(regime, true).catch(console.error);
@@ -719,7 +760,7 @@ export default function DashboardClient() {
       </div>
 
       {/* ── Stats Bar ─────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-10 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-12 gap-3">
         <StatCard
           label="Total P&L"
           value={
@@ -824,6 +865,34 @@ export default function DashboardClient() {
             )
           }
           sub={wartResult ? wartResult.tier : 'composite trader score'}
+        />
+        <StatCard
+          label="Sharpe"
+          value={
+            sharpeRatio != null ? (
+              <span className={sharpeColor(sharpeRatio)}>
+                {sharpeRatio.toFixed(2)}
+              </span>
+            ) : (
+              <span className="text-[#6e7681]">—</span>
+            )
+          }
+          sub="risk-adjusted return"
+          tooltip="Risk-adjusted return. Above 1.0 is good, above 2.0 is excellent."
+        />
+        <StatCard
+          label="Payoff"
+          value={
+            payoffRatio != null ? (
+              <span className={payoffColor(payoffRatio)}>
+                {payoffRatio.toFixed(1)}:1
+              </span>
+            ) : (
+              <span className="text-[#6e7681]">—</span>
+            )
+          }
+          sub="avg win vs avg loss"
+          tooltip="Average win size vs average loss size. Above 2.0 is excellent."
         />
       </div>
 
@@ -1005,6 +1074,7 @@ export default function DashboardClient() {
             impactScore: i.impactScore,
             data: i.data,
           })),
+          drawdownAnalysis: drawdownAnalysis ?? undefined,
           carryData: carryData
             ? {
                 topOpportunity: carryData.topOpportunity ?? undefined,

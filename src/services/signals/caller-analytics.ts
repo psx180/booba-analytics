@@ -40,6 +40,7 @@ export interface CallerAnalytics {
   avgLoss: number;
   expectancy: number;
   profitFactor: number;
+  sharpeRatio: number | null;
 
   // WART-style axes (0-100 each)
   entryScore: number;
@@ -185,6 +186,16 @@ export async function computeCallerAnalytics(
     2,
   );
 
+  // Sharpe ratio — mean return / stddev of returns (per-% return series)
+  let sharpeRatio: number | null = null;
+  if (n >= 10) {
+    const returns = positions.map((p) => p.pnlRealized);
+    const meanReturn = avg(returns);
+    const variance = returns.reduce((s, v) => s + (v - meanReturn) ** 2, 0) / returns.length;
+    const sd = Math.sqrt(variance);
+    if (sd > 0) sharpeRatio = round(meanReturn / sd, 4);
+  }
+
   // ── 6. Equity curve (cumulative % P&L sorted by exit time) ───────────────
   let balance = 0;
   const equityCurve = sorted.map((p) => {
@@ -302,6 +313,7 @@ export async function computeCallerAnalytics(
     avgLoss,
     expectancy,
     profitFactor,
+    sharpeRatio,
     entryScore: round(entryScore, 1),
     exitScore: round(exitScore, 1),
     riskScore: round(riskScore, 1),

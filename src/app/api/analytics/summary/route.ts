@@ -47,6 +47,7 @@ export async function GET(req: NextRequest) {
   ]);
   const performance = summary.performance;
 
+  const rm = summary.riskMetrics;
   return NextResponse.json({
     ...performance,
     eloResult:               summary.eloResult,
@@ -58,6 +59,14 @@ export async function GET(req: NextRequest) {
     missingExitMetricsCount: missingExitCount as number,
     liquidationCount: (liquidationAgg._count.id as number) ?? 0,
     liquidationCost:  Math.round(((liquidationAgg._sum.aggregatePnl as number) ?? 0) * 100) / 100,
+    sharpeRatio:             rm.sharpeRatio,
+    sortinoRatio:            rm.sortinoRatio,
+    payoffRatio:             rm.payoffRatio,
+    recoveryFactor:          rm.recoveryFactor,
+    drawdownAnalysis:        rm.drawdownAnalysis,
+    feeAttribution:          rm.feeAttribution,
+    avgRMultiple:            rm.avgRMultiple,
+    rMultipleDistribution:   rm.rMultipleDistribution,
   });
   });
 }

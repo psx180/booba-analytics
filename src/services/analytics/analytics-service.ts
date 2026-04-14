@@ -31,6 +31,7 @@ import { computeEloResult, type EloResult } from './metrics/elo';
 import { computeXpnlResult, type XpnlResult } from './metrics/xpnl';
 import { computeWartResult, type WartResult } from './metrics/wart';
 import { computeEntropyResult, type EntropyResult } from './insights/entropy-insight';
+import { computeRiskMetrics, type RiskMetrics } from './metrics/risk-metrics';
 import { performanceAggregator } from './aggregations/performance';
 import { equityCurveAggregator } from './aggregations/equity-curve';
 
@@ -61,6 +62,8 @@ export interface AdvancedSummary {
   equityCurveConsistency: number;
   /** Composite trader score (WART) decomposed into 5 axes. */
   wartResult: WartResult;
+  /** Risk-adjusted metrics: Sharpe, Sortino, payoff ratio, drawdown analysis, fees. */
+  riskMetrics: RiskMetrics;
 }
 
 export class AnalyticsService {
@@ -282,6 +285,7 @@ export class AnalyticsService {
     const eloResult = computeEloResult(positions);
     const entropyResult = computeEntropyResult(positions);
     const xpnl = computeXpnlResult(positions);
+    const riskMetrics = computeRiskMetrics(positions);
 
     // WART consumes the existing computed dependencies plus the drawdown
     // fields from the equity curve aggregator. Pass them through so the
@@ -306,6 +310,7 @@ export class AnalyticsService {
       xpnlLuckScore: xpnl.luckScore,
       equityCurveConsistency,
       wartResult,
+      riskMetrics,
     };
   }
 
