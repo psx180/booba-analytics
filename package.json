@@ -14,7 +14,8 @@
     "mcp:analytics": "tsx src/scripts/mcp-analytics.ts",
     "mcp:grouping": "tsx src/scripts/mcp-grouping.ts",
     "seed:signals": "tsx src/scripts/seed-signals.ts",
-    "seed:playbooks": "tsx src/scripts/seed-playbooks.ts"
+    "seed:playbooks": "tsx src/scripts/seed-playbooks.ts",
+    "seed:demo": "tsx src/scripts/seed-demo.ts"
   },
   "keywords": [],
   "author": "",
