@@ -37,6 +37,18 @@ export interface BoobaAnalyticsData {
     sentimentScore: number;
     trendDirection: 'rising' | 'falling' | 'stable';
   }>;
+  /** Carry trade context — populated by CarryOpportunities component. */
+  carryData?: {
+    topOpportunity?: {
+      symbol: string;
+      stabilityScore: number;
+      netApr: number | null;
+      fundingAprGross: number;
+      userHasMatchingShort: boolean;
+    };
+    utilizationPct?: number | null;
+    payingFundingSymbols?: string[];
+  };
 }
 
 export function getContextualMessage(
@@ -118,6 +130,46 @@ export function getContextualMessage(
     // WART positive — positive reinforcement
     if (data.wartResult && data.wartResult.composite > 1) {
       analyticsMsgs.push("Looking at your patterns...");
+    }
+
+    // Carry trade awareness
+    if (data.carryData) {
+      const { topOpportunity, utilizationPct, payingFundingSymbols } = data.carryData;
+
+      // Paying-funding warning (highest priority carry message)
+      if (payingFundingSymbols && payingFundingSymbols.length > 0) {
+        const sym = payingFundingSymbols[0];
+        analyticsMsgs.push(
+          `${sym} funding rate is charging you > 0.03%/hr. Consider closing or hedging your long.`,
+        );
+      }
+
+      // High-quality opportunity
+      if (
+        topOpportunity &&
+        topOpportunity.stabilityScore >= 4 &&
+        (topOpportunity.netApr ?? topOpportunity.fundingAprGross) > 30
+      ) {
+        const apr = (topOpportunity.netApr ?? topOpportunity.fundingAprGross).toFixed(0);
+        analyticsMsgs.push(
+          `${topOpportunity.symbol} carry at ${apr}% APR with ${topOpportunity.stabilityScore}-star stability. Deposit spot + short perps.`,
+        );
+      }
+
+      // Utilization spike warning
+      if (utilizationPct != null && utilizationPct > 70) {
+        analyticsMsgs.push(
+          `Borrow utilization at ${utilizationPct.toFixed(0)}% — rates may spike. Watch carry positions.`,
+        );
+      }
+
+      // Active carry encouragement
+      if (topOpportunity?.userHasMatchingShort) {
+        const apr = (topOpportunity.netApr ?? topOpportunity.fundingAprGross).toFixed(0);
+        analyticsMsgs.push(
+          `Your ${topOpportunity.symbol} carry trade is running. Earning ~${apr}% APR delta-neutral.`,
+        );
+      }
     }
 
     // Social shift alerts for held positions (low-priority pool candidate)

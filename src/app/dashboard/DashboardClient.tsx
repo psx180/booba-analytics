@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import EquityCurve, { EquityPoint, TradeMeta, REGIME_LABELS } from './EquityCurve';
 import UnderwaterCurve, { UnderwaterPoint } from './UnderwaterCurve';
 import OpenPositions from './OpenPositions';
+import CarryOpportunities, { type CarryDataForBooba } from './CarryOpportunities';
 import LiveToast, { type Toast } from './LiveToast';
 import { useJournal } from '../JournalContext';
 import { useLive } from '../LiveContext';
@@ -300,6 +301,8 @@ export default function DashboardClient() {
     currentDrawdown: number;
     currentDrawdownPct: number;
   } | null>(null);
+
+  const [carryData, setCarryData] = useState<CarryDataForBooba | null>(null);
 
   // ── Live websocket state ──
   const { openPositions, initialPositions, lastTrade, lastClosedTrade, connected, lastSyncImport } = useLive();
@@ -831,6 +834,9 @@ export default function DashboardClient() {
         connected={connected}
       />
 
+      {/* ── Carry Opportunities ───────────────────────────────────────────── */}
+      <CarryOpportunities onDataLoaded={setCarryData} />
+
       {/* ── Equity Curve ──────────────────────────────────────────────────── */}
       <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
@@ -999,6 +1005,13 @@ export default function DashboardClient() {
             impactScore: i.impactScore,
             data: i.data,
           })),
+          carryData: carryData
+            ? {
+                topOpportunity: carryData.topOpportunity ?? undefined,
+                utilizationPct: carryData.utilizationPct,
+                payingFundingSymbols: carryData.payingFundingSymbols,
+              }
+            : undefined,
         })}
         eloTrend={eloResult?.recentTrend}
         wartTrend={wartResult?.composite}
