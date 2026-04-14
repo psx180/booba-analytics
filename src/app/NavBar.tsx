@@ -12,10 +12,10 @@ import { useAccount, type Network } from '@/contexts/AccountContext';
 
 const tabs = [
   { href: '/dashboard', label: 'Dashboard' },
-  { href: '/trades', label: 'Trades' },
-  { href: '/analytics', label: 'Analytics' },
-  { href: '/signals', label: 'Signals' },
-  { href: '/playbooks', label: 'Playbooks' },
+  { href: '/trades', label: 'Trades', tourId: 'nav-trades' },
+  { href: '/analytics', label: 'Analytics', tourId: 'nav-analytics' },
+  { href: '/signals', label: 'Signals', tourId: 'nav-signals' },
+  { href: '/playbooks', label: 'Playbooks', tourId: 'nav-playbooks' },
   { href: '#', label: 'Auctions', disabled: true },
   { href: '/settings', label: 'Settings' },
 ];
@@ -49,6 +49,7 @@ export default function NavBar() {
                 <Link
                   key={tab.href}
                   href={tab.href}
+                  data-tour={(tab as { tourId?: string }).tourId}
                   className={`px-4 py-2 text-sm transition-colors ${
                     isActive
                       ? 'text-white border-b-2 border-blue-400 -mb-px'
@@ -102,6 +103,7 @@ function NetworkSelector() {
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen((o) => !o)}
+        data-tour="network-switcher"
         className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] text-[#e6edf3] transition-colors"
         title="Switch network"
       >
@@ -267,7 +269,7 @@ function PrivyWalletBadge({ walletAddress }: { walletAddress: string }) {
   });
 
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex items-center gap-1.5" data-tour="wallet-connect">
       <span
         className="flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium bg-[#21262d] border border-[#30363d] text-[#e6edf3]"
         title={walletAddress}

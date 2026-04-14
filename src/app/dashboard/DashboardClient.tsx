@@ -962,6 +962,7 @@ export default function DashboardClient() {
         return (
           <button
             type="button"
+            data-tour="dashboard-headline"
             onClick={() => router.push(`/analytics?tab=${theme.tabLink}`)}
             className={`w-full text-left bg-[#161b22] border ${style.border} rounded-lg px-5 py-4 hover:bg-[#1a2028] transition-colors`}
           >

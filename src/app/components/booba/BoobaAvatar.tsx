@@ -242,6 +242,7 @@ export default function BoobaAvatar({
 
       {/* Avatar container */}
       <div
+        data-tour="booba-chat"
         style={{
           position: 'relative',
           width: `${px}px`,

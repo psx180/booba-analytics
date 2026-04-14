@@ -721,6 +721,62 @@
     if (sessionTimerInt)   { clearInterval(sessionTimerInt);   sessionTimerInt   = null; }
   }
 
+  // ── Extension intro bubble ───────────────────────────────────────────────────
+
+  let introBubbleShown = false;
+
+  function showExtensionIntroBubble() {
+    if (introBubbleShown) return;
+    chrome.storage.local.get({ hasSeenExtensionIntro: false }, (s) => {
+      if (s.hasSeenExtensionIntro) return;
+      if (introBubbleShown) return;
+      introBubbleShown = true;
+
+      const bubble = document.createElement('div');
+      bubble.id = 'booba-intro-bubble';
+      bubble.style.cssText = [
+        'position:fixed', 'bottom:90px', 'right:80px', 'z-index:999999',
+        'background:#161b22', 'border:1px solid #30363d',
+        'border-radius:12px', 'padding:14px 16px',
+        'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+        'font-size:13px', 'color:#c9d1d9', 'max-width:260px',
+        'box-shadow:0 8px 32px rgba(0,0,0,.5)',
+        'opacity:0', 'transform:translateY(8px)',
+        'transition:opacity .25s ease,transform .25s ease',
+      ].join(';');
+
+      // Tail pointing to the avatar (bottom-right)
+      bubble.style.setProperty('--tail-color', '#30363d');
+
+      const msg = document.createElement('p');
+      msg.style.cssText = 'margin:0 0 10px;line-height:1.5;color:#c9d1d9';
+      msg.textContent = "Hi! I'm Booba. I'll capture your trades and thesis right here on Pacifica. Configure me in extension settings.";
+
+      const gotItBtn = document.createElement('button');
+      gotItBtn.textContent = 'Got it';
+      gotItBtn.style.cssText = [
+        'padding:5px 14px', 'border-radius:6px', 'border:none',
+        'background:#1f6feb', 'color:#fff', 'font-size:12px',
+        'font-weight:600', 'cursor:pointer', 'font-family:inherit',
+      ].join(';');
+      gotItBtn.addEventListener('click', () => {
+        bubble.style.opacity = '0';
+        bubble.style.transform = 'translateY(8px)';
+        setTimeout(() => { if (bubble.parentNode) bubble.remove(); }, 280);
+        chrome.storage.local.set({ hasSeenExtensionIntro: true });
+      });
+
+      bubble.appendChild(msg);
+      bubble.appendChild(gotItBtn);
+      document.body.appendChild(bubble);
+
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        bubble.style.opacity = '1';
+        bubble.style.transform = 'translateY(0)';
+      }));
+    });
+  }
+
   function startSSE(settings) {
     stopSSE();
     if (!settings || settings.enableTradeDetection === false) {
@@ -741,7 +797,10 @@
     const es = new EventSource(`${appUrl}/api/ws${qs ? '?' + qs : ''}`);
     sseSource = es;
 
-    es.addEventListener('open', () => setConnectionDot('connected'));
+    es.addEventListener('open', () => {
+      setConnectionDot('connected');
+      showExtensionIntroBubble();
+    });
 
     es.addEventListener('new_trade', (event) => {
       try {
@@ -847,6 +906,9 @@
     if (!root.querySelector('#booba-session-badge')) createSessionBadge();
 
     startSSE(settings);
+
+    // Show intro bubble after 2s as a fallback if SSE hasn't connected yet
+    setTimeout(showExtensionIntroBubble, 2000);
   }
 
   // ── Expose ───────────────────────────────────────────────────────────────────

@@ -82,6 +82,39 @@ function ResetGroupingSection() {
   );
 }
 
+// ── Reset Onboarding Tour ────────────────────────────────────────────────────
+
+function ResetOnboardingSection() {
+  const [done, setDone] = useState(false);
+
+  const handleReset = () => {
+    localStorage.removeItem('hasSeenAppIntro');
+    setDone(true);
+  };
+
+  return (
+    <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-5">
+      <h2 className="text-sm font-semibold text-white mb-1">Reset Onboarding Tour</h2>
+      <p className="text-xs text-[#8b949e] mb-4 max-w-lg">
+        Clear the intro flag so the guided tour plays again on next page load. Useful for demos.
+      </p>
+
+      {done && (
+        <p className="text-xs text-emerald-400 mb-4">
+          Done — refresh the page to replay the tour.
+        </p>
+      )}
+
+      <button
+        onClick={handleReset}
+        className="px-4 py-2 text-sm font-medium text-white bg-[#1f6feb] hover:bg-[#388bfd] rounded transition-colors"
+      >
+        Reset Onboarding Tour
+      </button>
+    </div>
+  );
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function SettingsClient() {
@@ -89,6 +122,7 @@ export default function SettingsClient() {
     <div className="space-y-6 max-w-2xl">
       <h1 className="text-lg font-semibold text-white">Settings</h1>
       <ResetGroupingSection />
+      <ResetOnboardingSection />
     </div>
   );
 }

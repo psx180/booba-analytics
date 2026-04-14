@@ -6,7 +6,8 @@
       "Bash(npx prisma:*)",
       "Bash(npx tsc:*)",
       "Bash(npx next:*)",
-      "Bash(node -e \"console.log\\(typeof AbortSignal.timeout\\)\")"
+      "Bash(node -e \"console.log\\(typeof AbortSignal.timeout\\)\")",
+      "Bash(npm install:*)"
     ]
   }
 }

@@ -65,3 +65,36 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #444d56;
 }
+
+/* ── Booba Guided Tour (driver.js) ───────────────────────────────────────── */
+.booba-tour-popover {
+  background-color: #161b22 !important;
+  color: #c9d1d9 !important;
+  border: 1px solid #30363d !important;
+  border-radius: 12px !important;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5) !important;
+}
+
+.booba-tour-popover .driver-popover-title {
+  color: #e6edf3 !important;
+  font-size: 1.1rem !important;
+  font-weight: 600 !important;
+}
+
+.booba-tour-popover .driver-popover-description {
+  color: #8b949e !important;
+  font-size: 0.95rem !important;
+  line-height: 1.5 !important;
+}
+
+.booba-tour-popover .driver-popover-navigation-btns button {
+  background-color: #1f6feb !important;
+  color: white !important;
+  border-radius: 8px !important;
+  padding: 6px 16px !important;
+  border: none !important;
+}
+
+.booba-tour-popover .driver-popover-progress-text {
+  color: #6e7681 !important;
+}

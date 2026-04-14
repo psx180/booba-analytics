@@ -31,13 +31,15 @@
  */
 
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { usePrivy } from '@privy-io/react-auth';
 import { JournalProvider } from './JournalContext';
 import { LiveProvider } from './LiveContext';
 import NavBar from './NavBar';
 import { isDevBypass, DEV_WALLET } from './privy-env';
 import { AccountProvider } from '@/contexts/AccountContext';
+import IntroOverlay from './components/onboarding/IntroOverlay';
+import { startGuidedTour } from './components/onboarding/GuidedTour';
 
 const CONNECT_PATH = '/connect';
 
@@ -106,12 +108,32 @@ function AuthedShell({
   walletAddress: string;
   children: React.ReactNode;
 }) {
+  const [showIntro, setShowIntro] = useState(false);
+
+  useEffect(() => {
+    if (!localStorage.getItem('hasSeenAppIntro')) {
+      setShowIntro(true);
+    }
+  }, []);
+
   return (
     <AccountProvider walletAddress={walletAddress}>
       <JournalProvider walletAddress={walletAddress}>
         <LiveProvider>
           <NavBar />
           <main className="max-w-[1400px] mx-auto px-4 py-6">{children}</main>
+          {showIntro && (
+            <IntroOverlay
+              onStartTour={() => {
+                setShowIntro(false);
+                startGuidedTour();
+              }}
+              onSkip={() => {
+                setShowIntro(false);
+                localStorage.setItem('hasSeenAppIntro', 'true');
+              }}
+            />
+          )}
         </LiveProvider>
       </JournalProvider>
     </AccountProvider>
