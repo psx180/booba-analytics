@@ -9,17 +9,24 @@
  *   - All other methods — injects CORS headers onto the pass-through response
  *     so the browser lets the content script read the body.
  *
- * Only chrome-extension:// origins and localhost are allowed. All other
- * origins go through unchanged (handled by Privy auth as normal).
+ * Allowed origins: chrome-extension://, localhost, and Pacifica's domains
+ * (app.pacifica.fi and test-app.pacifica.fi — content scripts run there).
+ * All other origins go through unchanged (handled by Privy auth as normal).
  */
 
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
+const ALLOWED_ORIGINS = new Set([
+  'https://app.pacifica.fi',
+  'https://test-app.pacifica.fi',
+]);
+
 function isAllowedOrigin(origin: string): boolean {
   return (
     origin.startsWith('chrome-extension://') ||
-    /^https?:\/\/localhost(:\d+)?$/.test(origin)
+    /^https?:\/\/localhost(:\d+)?$/.test(origin) ||
+    ALLOWED_ORIGINS.has(origin)
   );
 }
 
