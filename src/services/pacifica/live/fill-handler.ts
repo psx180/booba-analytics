@@ -277,5 +277,16 @@ export async function handleAccountTrade(
     )
     .catch(() => {});
 
+  // Fire-and-forget adherence check. Only runs if the position has been
+  // tagged with a playbook — no-op otherwise. Scored and persisted so the
+  // trade detail modal renders the breakdown without recomputing.
+  import('../../playbooks/adherence-service')
+    .then(({ runAndStoreAdherence }) =>
+      runAndStoreAdherence(grouped.positionId).catch((err) =>
+        console.error('[live] adherence check failed', err),
+      ),
+    )
+    .catch(() => {});
+
   return events;
 }
