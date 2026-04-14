@@ -49,7 +49,7 @@ function rMultiple(
 
 // ── Signal definitions ───────────────────────────────────────────────────────
 
-type Status = 'open' | 'hit_target' | 'hit_stop' | 'expired' | 'closed_manual';
+type Status = 'open' | 'hit_target' | 'hit_stop' | 'partial_target' | 'expired' | 'closed_manual';
 
 interface SignalSeed {
   callerName: string;
@@ -59,76 +59,92 @@ interface SignalSeed {
   direction: 'LONG' | 'SHORT';
   entryPrice: number;
   targetPrice: number | null;
+  targetPrices: number[] | null;   // null → single-TP signal (targetPrice used)
   stopPrice: number | null;
   status: Status;
-  outcomePrice: number | null;
+  outcomePrice: number | null;     // for partial_target: weighted average price
+  targetPricesHit: boolean[] | null; // which TPs were hit (null for non-multi-TP signals)
   createdDaysAgo: number;  // days ago the signal was posted
   resolvedHours: number;   // hours after creation it resolved (0 if still open)
 }
 
 const SEEDS: SignalSeed[] = [
-  // ── AlphaTrader — 20 signals, ~65% hit rate, reliable ───────────────────
-  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'BTC', direction: 'LONG',  entryPrice: 79000, targetPrice: 84000, stopPrice: 76000, status: 'hit_target', outcomePrice: 84000, createdDaysAgo: 85, resolvedHours: 48 },
-  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'ETH', direction: 'LONG',  entryPrice: 2900,  targetPrice: 3200,  stopPrice: 2750,  status: 'hit_target', outcomePrice: 3200,  createdDaysAgo: 80, resolvedHours: 36 },
-  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'SOL', direction: 'LONG',  entryPrice: 135,   targetPrice: 155,   stopPrice: 125,   status: 'hit_target', outcomePrice: 155,   createdDaysAgo: 75, resolvedHours: 24 },
-  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'BTC', direction: 'SHORT', entryPrice: 87000, targetPrice: 81000, stopPrice: 90000, status: 'hit_target', outcomePrice: 81000, createdDaysAgo: 72, resolvedHours: 60 },
-  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'ETH', direction: 'SHORT', entryPrice: 3500,  targetPrice: 3100,  stopPrice: 3650,  status: 'hit_target', outcomePrice: 3100,  createdDaysAgo: 68, resolvedHours: 48 },
-  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'BTC', direction: 'LONG',  entryPrice: 75000, targetPrice: 80000, stopPrice: 72000, status: 'hit_stop',   outcomePrice: 72000, createdDaysAgo: 64, resolvedHours: 18 },
-  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'SOL', direction: 'LONG',  entryPrice: 142,   targetPrice: 165,   stopPrice: 132,   status: 'hit_target', outcomePrice: 165,   createdDaysAgo: 60, resolvedHours: 72 },
-  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'BTC', direction: 'LONG',  entryPrice: 78000, targetPrice: 86000, stopPrice: 74000, status: 'hit_target', outcomePrice: 86000, createdDaysAgo: 55, resolvedHours: 96 },
-  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'ETH', direction: 'LONG',  entryPrice: 3050,  targetPrice: 3400,  stopPrice: 2900,  status: 'hit_stop',   outcomePrice: 2900,  createdDaysAgo: 50, resolvedHours: 30 },
-  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'BTC', direction: 'SHORT', entryPrice: 91000, targetPrice: 84000, stopPrice: 94000, status: 'hit_target', outcomePrice: 84000, createdDaysAgo: 46, resolvedHours: 84 },
-  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'SOL', direction: 'SHORT', entryPrice: 175,   targetPrice: 155,   stopPrice: 183,   status: 'hit_target', outcomePrice: 155,   createdDaysAgo: 42, resolvedHours: 48 },
-  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'ETH', direction: 'LONG',  entryPrice: 2800,  targetPrice: 3100,  stopPrice: 2650,  status: 'hit_target', outcomePrice: 3100,  createdDaysAgo: 38, resolvedHours: 60 },
-  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'BTC', direction: 'LONG',  entryPrice: 82000, targetPrice: 89000, stopPrice: 78000, status: 'hit_target', outcomePrice: 89000, createdDaysAgo: 33, resolvedHours: 120 },
-  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'SOL', direction: 'LONG',  entryPrice: 120,   targetPrice: 145,   stopPrice: 110,   status: 'hit_stop',   outcomePrice: 110,   createdDaysAgo: 28, resolvedHours: 12 },
-  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'BTC', direction: 'SHORT', entryPrice: 95000, targetPrice: 87000, stopPrice: 98000, status: 'hit_target', outcomePrice: 87000, createdDaysAgo: 23, resolvedHours: 72 },
-  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'ETH', direction: 'SHORT', entryPrice: 3800,  targetPrice: 3300,  stopPrice: 4000,  status: 'hit_target', outcomePrice: 3300,  createdDaysAgo: 18, resolvedHours: 96 },
-  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'BTC', direction: 'LONG',  entryPrice: 80000, targetPrice: 88000, stopPrice: 76000, status: 'hit_stop',   outcomePrice: 76000, createdDaysAgo: 14, resolvedHours: 24 },
-  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'SOL', direction: 'LONG',  entryPrice: 128,   targetPrice: 148,   stopPrice: 118,   status: 'hit_target', outcomePrice: 148,   createdDaysAgo: 9,  resolvedHours: 48 },
-  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'ETH', direction: 'LONG',  entryPrice: 2750,  targetPrice: 3050,  stopPrice: 2600,  status: 'open',       outcomePrice: null,  createdDaysAgo: 4,  resolvedHours: 0  },
-  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'BTC', direction: 'LONG',  entryPrice: 77000, targetPrice: 85000, stopPrice: 73000, status: 'open',       outcomePrice: null,  createdDaysAgo: 1,  resolvedHours: 0  },
+  // ── AlphaTrader — 20 single-TP + 6 laddered signals, ~65% hit rate ──────
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'BTC', direction: 'LONG',  entryPrice: 79000, targetPrice: 84000, targetPrices: null, stopPrice: 76000, status: 'hit_target', outcomePrice: 84000, targetPricesHit: null, createdDaysAgo: 85, resolvedHours: 48 },
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'ETH', direction: 'LONG',  entryPrice: 2900,  targetPrice: 3200,  targetPrices: null, stopPrice: 2750,  status: 'hit_target', outcomePrice: 3200,  targetPricesHit: null, createdDaysAgo: 80, resolvedHours: 36 },
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'SOL', direction: 'LONG',  entryPrice: 135,   targetPrice: 155,   targetPrices: null, stopPrice: 125,   status: 'hit_target', outcomePrice: 155,   targetPricesHit: null, createdDaysAgo: 75, resolvedHours: 24 },
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'BTC', direction: 'SHORT', entryPrice: 87000, targetPrice: 81000, targetPrices: null, stopPrice: 90000, status: 'hit_target', outcomePrice: 81000, targetPricesHit: null, createdDaysAgo: 72, resolvedHours: 60 },
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'ETH', direction: 'SHORT', entryPrice: 3500,  targetPrice: 3100,  targetPrices: null, stopPrice: 3650,  status: 'hit_target', outcomePrice: 3100,  targetPricesHit: null, createdDaysAgo: 68, resolvedHours: 48 },
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'BTC', direction: 'LONG',  entryPrice: 75000, targetPrice: 80000, targetPrices: null, stopPrice: 72000, status: 'hit_stop',   outcomePrice: 72000, targetPricesHit: null, createdDaysAgo: 64, resolvedHours: 18 },
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'SOL', direction: 'LONG',  entryPrice: 142,   targetPrice: 165,   targetPrices: null, stopPrice: 132,   status: 'hit_target', outcomePrice: 165,   targetPricesHit: null, createdDaysAgo: 60, resolvedHours: 72 },
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'BTC', direction: 'LONG',  entryPrice: 78000, targetPrice: 86000, targetPrices: null, stopPrice: 74000, status: 'hit_target', outcomePrice: 86000, targetPricesHit: null, createdDaysAgo: 55, resolvedHours: 96 },
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'ETH', direction: 'LONG',  entryPrice: 3050,  targetPrice: 3400,  targetPrices: null, stopPrice: 2900,  status: 'hit_stop',   outcomePrice: 2900,  targetPricesHit: null, createdDaysAgo: 50, resolvedHours: 30 },
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'BTC', direction: 'SHORT', entryPrice: 91000, targetPrice: 84000, targetPrices: null, stopPrice: 94000, status: 'hit_target', outcomePrice: 84000, targetPricesHit: null, createdDaysAgo: 46, resolvedHours: 84 },
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'SOL', direction: 'SHORT', entryPrice: 175,   targetPrice: 155,   targetPrices: null, stopPrice: 183,   status: 'hit_target', outcomePrice: 155,   targetPricesHit: null, createdDaysAgo: 42, resolvedHours: 48 },
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'ETH', direction: 'LONG',  entryPrice: 2800,  targetPrice: 3100,  targetPrices: null, stopPrice: 2650,  status: 'hit_target', outcomePrice: 3100,  targetPricesHit: null, createdDaysAgo: 38, resolvedHours: 60 },
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'BTC', direction: 'LONG',  entryPrice: 82000, targetPrice: 89000, targetPrices: null, stopPrice: 78000, status: 'hit_target', outcomePrice: 89000, targetPricesHit: null, createdDaysAgo: 33, resolvedHours: 120 },
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'SOL', direction: 'LONG',  entryPrice: 120,   targetPrice: 145,   targetPrices: null, stopPrice: 110,   status: 'hit_stop',   outcomePrice: 110,   targetPricesHit: null, createdDaysAgo: 28, resolvedHours: 12 },
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'BTC', direction: 'SHORT', entryPrice: 95000, targetPrice: 87000, targetPrices: null, stopPrice: 98000, status: 'hit_target', outcomePrice: 87000, targetPricesHit: null, createdDaysAgo: 23, resolvedHours: 72 },
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'ETH', direction: 'SHORT', entryPrice: 3800,  targetPrice: 3300,  targetPrices: null, stopPrice: 4000,  status: 'hit_target', outcomePrice: 3300,  targetPricesHit: null, createdDaysAgo: 18, resolvedHours: 96 },
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'BTC', direction: 'LONG',  entryPrice: 80000, targetPrice: 88000, targetPrices: null, stopPrice: 76000, status: 'hit_stop',   outcomePrice: 76000, targetPricesHit: null, createdDaysAgo: 14, resolvedHours: 24 },
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'SOL', direction: 'LONG',  entryPrice: 128,   targetPrice: 148,   targetPrices: null, stopPrice: 118,   status: 'hit_target', outcomePrice: 148,   targetPricesHit: null, createdDaysAgo: 9,  resolvedHours: 48 },
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'ETH', direction: 'LONG',  entryPrice: 2750,  targetPrice: 3050,  targetPrices: null, stopPrice: 2600,  status: 'open',       outcomePrice: null,  targetPricesHit: null, createdDaysAgo: 4,  resolvedHours: 0  },
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'BTC', direction: 'LONG',  entryPrice: 77000, targetPrice: 85000, targetPrices: null, stopPrice: 73000, status: 'open',       outcomePrice: null,  targetPricesHit: null, createdDaysAgo: 1,  resolvedHours: 0  },
+
+  // AlphaTrader — laddered calls (3 TPs each) ──────────────────────────────
+  // SOL long: all 3 TPs hit — full winner
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'SOL', direction: 'LONG',  entryPrice: 103,   targetPrice: 110,   targetPrices: [110, 114, 120], stopPrice: 99,    status: 'hit_target',    outcomePrice: 120,   targetPricesHit: [true,  true,  true ], createdDaysAgo: 71, resolvedHours: 56  },
+  // BTC long: TP1 + TP2 hit, then stopped — partial (2/3 = 0.67 win)
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'BTC', direction: 'LONG',  entryPrice: 81000, targetPrice: 85000, targetPrices: [85000, 89000, 93000], stopPrice: 78000, status: 'partial_target', outcomePrice: (85000 + 89000 + 78000) / 3, targetPricesHit: [true, true, false], createdDaysAgo: 61, resolvedHours: 72 },
+  // ETH short: all 3 TPs hit — full winner
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'ETH', direction: 'SHORT', entryPrice: 3600,  targetPrice: 3400,  targetPrices: [3400, 3200, 3000], stopPrice: 3750,  status: 'hit_target',    outcomePrice: 3000,  targetPricesHit: [true,  true,  true ], createdDaysAgo: 52, resolvedHours: 96  },
+  // SOL long: only TP1 hit, then stopped — partial (1/3 = 0.33 win)
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'SOL', direction: 'LONG',  entryPrice: 115,   targetPrice: 122,   targetPrices: [122, 130, 140], stopPrice: 110,   status: 'partial_target', outcomePrice: (122 + 110 + 110) / 3, targetPricesHit: [true, false, false], createdDaysAgo: 40, resolvedHours: 36 },
+  // BTC short: all 3 TPs hit — full winner
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'BTC', direction: 'SHORT', entryPrice: 97000, targetPrice: 92000, targetPrices: [92000, 88000, 84000], stopPrice: 100000, status: 'hit_target',   outcomePrice: 84000, targetPricesHit: [true,  true,  true ], createdDaysAgo: 30, resolvedHours: 120 },
+  // ETH long: 3-TP call still open
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'ETH', direction: 'LONG',  entryPrice: 2650,  targetPrice: 2800,  targetPrices: [2800, 2950, 3100], stopPrice: 2500,  status: 'open',          outcomePrice: null,  targetPricesHit: null,                   createdDaysAgo: 3,  resolvedHours: 0   },
 
   // ── DegenKing — 15 signals, ~53% hit rate, volatile ─────────────────────
-  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'SOL', direction: 'LONG',  entryPrice: 145,   targetPrice: 175,   stopPrice: 130,   status: 'hit_target', outcomePrice: 175,   createdDaysAgo: 82, resolvedHours: 36  },
-  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'BTC', direction: 'LONG',  entryPrice: 76000, targetPrice: 84000, stopPrice: 70000, status: 'hit_stop',   outcomePrice: 70000, createdDaysAgo: 76, resolvedHours: 18  },
-  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'ETH', direction: 'SHORT', entryPrice: 3400,  targetPrice: 2900,  stopPrice: 3600,  status: 'hit_target', outcomePrice: 2900,  createdDaysAgo: 70, resolvedHours: 72  },
-  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'SOL', direction: 'SHORT', entryPrice: 170,   targetPrice: 140,   stopPrice: 185,   status: 'hit_stop',   outcomePrice: 185,   createdDaysAgo: 65, resolvedHours: 24  },
-  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'BTC', direction: 'LONG',  entryPrice: 72000, targetPrice: 81000, stopPrice: 67000, status: 'hit_target', outcomePrice: 81000, createdDaysAgo: 60, resolvedHours: 96  },
-  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'ETH', direction: 'LONG',  entryPrice: 2600,  targetPrice: 3000,  stopPrice: 2400,  status: 'hit_target', outcomePrice: 3000,  createdDaysAgo: 54, resolvedHours: 60  },
-  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'SOL', direction: 'LONG',  entryPrice: 130,   targetPrice: 160,   stopPrice: 118,   status: 'hit_stop',   outcomePrice: 118,   createdDaysAgo: 48, resolvedHours: 30  },
-  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'BTC', direction: 'SHORT', entryPrice: 88000, targetPrice: 80000, stopPrice: 92000, status: 'hit_target', outcomePrice: 80000, createdDaysAgo: 43, resolvedHours: 84  },
-  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'ETH', direction: 'SHORT', entryPrice: 3700,  targetPrice: 3100,  stopPrice: 3900,  status: 'hit_stop',   outcomePrice: 3900,  createdDaysAgo: 37, resolvedHours: 12  },
-  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'SOL', direction: 'LONG',  entryPrice: 140,   targetPrice: 170,   stopPrice: 128,   status: 'hit_target', outcomePrice: 170,   createdDaysAgo: 31, resolvedHours: 48  },
-  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'BTC', direction: 'LONG',  entryPrice: 83000, targetPrice: 92000, stopPrice: 78000, status: 'hit_stop',   outcomePrice: 78000, createdDaysAgo: 25, resolvedHours: 36  },
-  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'ETH', direction: 'LONG',  entryPrice: 2950,  targetPrice: 3400,  stopPrice: 2750,  status: 'hit_target', outcomePrice: 3400,  createdDaysAgo: 19, resolvedHours: 72  },
-  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'SOL', direction: 'SHORT', entryPrice: 155,   targetPrice: 130,   stopPrice: 168,   status: 'expired',    outcomePrice: 148,   createdDaysAgo: 14, resolvedHours: 168 },
-  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'BTC', direction: 'LONG',  entryPrice: 79000, targetPrice: 87000, stopPrice: 75000, status: 'open',       outcomePrice: null,  createdDaysAgo: 3,  resolvedHours: 0   },
-  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'ETH', direction: 'LONG',  entryPrice: 2800,  targetPrice: 3200,  stopPrice: 2600,  status: 'open',       outcomePrice: null,  createdDaysAgo: 1,  resolvedHours: 0   },
+  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'SOL', direction: 'LONG',  entryPrice: 145,   targetPrice: 175,   targetPrices: null, stopPrice: 130,   status: 'hit_target', outcomePrice: 175,   targetPricesHit: null, createdDaysAgo: 82, resolvedHours: 36  },
+  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'BTC', direction: 'LONG',  entryPrice: 76000, targetPrice: 84000, targetPrices: null, stopPrice: 70000, status: 'hit_stop',   outcomePrice: 70000, targetPricesHit: null, createdDaysAgo: 76, resolvedHours: 18  },
+  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'ETH', direction: 'SHORT', entryPrice: 3400,  targetPrice: 2900,  targetPrices: null, stopPrice: 3600,  status: 'hit_target', outcomePrice: 2900,  targetPricesHit: null, createdDaysAgo: 70, resolvedHours: 72  },
+  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'SOL', direction: 'SHORT', entryPrice: 170,   targetPrice: 140,   targetPrices: null, stopPrice: 185,   status: 'hit_stop',   outcomePrice: 185,   targetPricesHit: null, createdDaysAgo: 65, resolvedHours: 24  },
+  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'BTC', direction: 'LONG',  entryPrice: 72000, targetPrice: 81000, targetPrices: null, stopPrice: 67000, status: 'hit_target', outcomePrice: 81000, targetPricesHit: null, createdDaysAgo: 60, resolvedHours: 96  },
+  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'ETH', direction: 'LONG',  entryPrice: 2600,  targetPrice: 3000,  targetPrices: null, stopPrice: 2400,  status: 'hit_target', outcomePrice: 3000,  targetPricesHit: null, createdDaysAgo: 54, resolvedHours: 60  },
+  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'SOL', direction: 'LONG',  entryPrice: 130,   targetPrice: 160,   targetPrices: null, stopPrice: 118,   status: 'hit_stop',   outcomePrice: 118,   targetPricesHit: null, createdDaysAgo: 48, resolvedHours: 30  },
+  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'BTC', direction: 'SHORT', entryPrice: 88000, targetPrice: 80000, targetPrices: null, stopPrice: 92000, status: 'hit_target', outcomePrice: 80000, targetPricesHit: null, createdDaysAgo: 43, resolvedHours: 84  },
+  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'ETH', direction: 'SHORT', entryPrice: 3700,  targetPrice: 3100,  targetPrices: null, stopPrice: 3900,  status: 'hit_stop',   outcomePrice: 3900,  targetPricesHit: null, createdDaysAgo: 37, resolvedHours: 12  },
+  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'SOL', direction: 'LONG',  entryPrice: 140,   targetPrice: 170,   targetPrices: null, stopPrice: 128,   status: 'hit_target', outcomePrice: 170,   targetPricesHit: null, createdDaysAgo: 31, resolvedHours: 48  },
+  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'BTC', direction: 'LONG',  entryPrice: 83000, targetPrice: 92000, targetPrices: null, stopPrice: 78000, status: 'hit_stop',   outcomePrice: 78000, targetPricesHit: null, createdDaysAgo: 25, resolvedHours: 36  },
+  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'ETH', direction: 'LONG',  entryPrice: 2950,  targetPrice: 3400,  targetPrices: null, stopPrice: 2750,  status: 'hit_target', outcomePrice: 3400,  targetPricesHit: null, createdDaysAgo: 19, resolvedHours: 72  },
+  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'SOL', direction: 'SHORT', entryPrice: 155,   targetPrice: 130,   targetPrices: null, stopPrice: 168,   status: 'expired',    outcomePrice: 148,   targetPricesHit: null, createdDaysAgo: 14, resolvedHours: 168 },
+  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'BTC', direction: 'LONG',  entryPrice: 79000, targetPrice: 87000, targetPrices: null, stopPrice: 75000, status: 'open',       outcomePrice: null,  targetPricesHit: null, createdDaysAgo: 3,  resolvedHours: 0   },
+  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'ETH', direction: 'LONG',  entryPrice: 2800,  targetPrice: 3200,  targetPrices: null, stopPrice: 2600,  status: 'open',       outcomePrice: null,  targetPricesHit: null, createdDaysAgo: 1,  resolvedHours: 0   },
 
   // ── SolanaWhale — 8 signals, ~38% hit rate, mostly SOL ──────────────────
-  { callerName: 'SolanaWhale', source: 'telegram', channelName: 'sol-alpha', asset: 'SOL', direction: 'LONG',  entryPrice: 160,   targetPrice: 220,   stopPrice: 140,   status: 'hit_stop',   outcomePrice: 140,   createdDaysAgo: 80, resolvedHours: 24  },
-  { callerName: 'SolanaWhale', source: 'telegram', channelName: 'sol-alpha', asset: 'SOL', direction: 'LONG',  entryPrice: 128,   targetPrice: 175,   stopPrice: 112,   status: 'hit_target', outcomePrice: 175,   createdDaysAgo: 72, resolvedHours: 120 },
-  { callerName: 'SolanaWhale', source: 'telegram', channelName: 'sol-alpha', asset: 'SOL', direction: 'SHORT', entryPrice: 185,   targetPrice: 150,   stopPrice: 200,   status: 'hit_stop',   outcomePrice: 200,   createdDaysAgo: 63, resolvedHours: 18  },
-  { callerName: 'SolanaWhale', source: 'telegram', channelName: 'sol-alpha', asset: 'SOL', direction: 'LONG',  entryPrice: 115,   targetPrice: 150,   stopPrice: 100,   status: 'hit_stop',   outcomePrice: 100,   createdDaysAgo: 52, resolvedHours: 12  },
-  { callerName: 'SolanaWhale', source: 'telegram', channelName: 'sol-alpha', asset: 'BTC', direction: 'LONG',  entryPrice: 70000, targetPrice: 78000, stopPrice: 65000, status: 'hit_target', outcomePrice: 78000, createdDaysAgo: 40, resolvedHours: 84  },
-  { callerName: 'SolanaWhale', source: 'telegram', channelName: 'sol-alpha', asset: 'SOL', direction: 'LONG',  entryPrice: 150,   targetPrice: 200,   stopPrice: 135,   status: 'hit_stop',   outcomePrice: 135,   createdDaysAgo: 28, resolvedHours: 36  },
-  { callerName: 'SolanaWhale', source: 'telegram', channelName: 'sol-alpha', asset: 'SOL', direction: 'SHORT', entryPrice: 140,   targetPrice: 110,   stopPrice: 152,   status: 'expired',    outcomePrice: 132,   createdDaysAgo: 15, resolvedHours: 168 },
-  { callerName: 'SolanaWhale', source: 'telegram', channelName: 'sol-alpha', asset: 'SOL', direction: 'LONG',  entryPrice: 125,   targetPrice: 155,   stopPrice: 115,   status: 'open',       outcomePrice: null,  createdDaysAgo: 2,  resolvedHours: 0   },
+  { callerName: 'SolanaWhale', source: 'telegram', channelName: 'sol-alpha', asset: 'SOL', direction: 'LONG',  entryPrice: 160,   targetPrice: 220,   targetPrices: null, stopPrice: 140,   status: 'hit_stop',   outcomePrice: 140,   targetPricesHit: null, createdDaysAgo: 80, resolvedHours: 24  },
+  { callerName: 'SolanaWhale', source: 'telegram', channelName: 'sol-alpha', asset: 'SOL', direction: 'LONG',  entryPrice: 128,   targetPrice: 175,   targetPrices: null, stopPrice: 112,   status: 'hit_target', outcomePrice: 175,   targetPricesHit: null, createdDaysAgo: 72, resolvedHours: 120 },
+  { callerName: 'SolanaWhale', source: 'telegram', channelName: 'sol-alpha', asset: 'SOL', direction: 'SHORT', entryPrice: 185,   targetPrice: 150,   targetPrices: null, stopPrice: 200,   status: 'hit_stop',   outcomePrice: 200,   targetPricesHit: null, createdDaysAgo: 63, resolvedHours: 18  },
+  { callerName: 'SolanaWhale', source: 'telegram', channelName: 'sol-alpha', asset: 'SOL', direction: 'LONG',  entryPrice: 115,   targetPrice: 150,   targetPrices: null, stopPrice: 100,   status: 'hit_stop',   outcomePrice: 100,   targetPricesHit: null, createdDaysAgo: 52, resolvedHours: 12  },
+  { callerName: 'SolanaWhale', source: 'telegram', channelName: 'sol-alpha', asset: 'BTC', direction: 'LONG',  entryPrice: 70000, targetPrice: 78000, targetPrices: null, stopPrice: 65000, status: 'hit_target', outcomePrice: 78000, targetPricesHit: null, createdDaysAgo: 40, resolvedHours: 84  },
+  { callerName: 'SolanaWhale', source: 'telegram', channelName: 'sol-alpha', asset: 'SOL', direction: 'LONG',  entryPrice: 150,   targetPrice: 200,   targetPrices: null, stopPrice: 135,   status: 'hit_stop',   outcomePrice: 135,   targetPricesHit: null, createdDaysAgo: 28, resolvedHours: 36  },
+  { callerName: 'SolanaWhale', source: 'telegram', channelName: 'sol-alpha', asset: 'SOL', direction: 'SHORT', entryPrice: 140,   targetPrice: 110,   targetPrices: null, stopPrice: 152,   status: 'expired',    outcomePrice: 132,   targetPricesHit: null, createdDaysAgo: 15, resolvedHours: 168 },
+  { callerName: 'SolanaWhale', source: 'telegram', channelName: 'sol-alpha', asset: 'SOL', direction: 'LONG',  entryPrice: 125,   targetPrice: 155,   targetPrices: null, stopPrice: 115,   status: 'open',       outcomePrice: null,  targetPricesHit: null, createdDaysAgo: 2,  resolvedHours: 0   },
 
   // ── ChartMaster — 12 signals, ~58% hit rate, conservative ───────────────
-  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'BTC', direction: 'LONG',  entryPrice: 78500, targetPrice: 82000, stopPrice: 76500, status: 'hit_target', outcomePrice: 82000, createdDaysAgo: 83, resolvedHours: 36  },
-  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'ETH', direction: 'SHORT', entryPrice: 3250,  targetPrice: 3000,  stopPrice: 3380,  status: 'hit_target', outcomePrice: 3000,  createdDaysAgo: 77, resolvedHours: 48  },
-  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'BTC', direction: 'SHORT', entryPrice: 86000, targetPrice: 82000, stopPrice: 88000, status: 'hit_stop',   outcomePrice: 88000, createdDaysAgo: 70, resolvedHours: 24  },
-  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'SOL', direction: 'LONG',  entryPrice: 137,   targetPrice: 148,   stopPrice: 131,   status: 'hit_target', outcomePrice: 148,   createdDaysAgo: 64, resolvedHours: 60  },
-  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'ETH', direction: 'LONG',  entryPrice: 2850,  targetPrice: 3050,  stopPrice: 2750,  status: 'hit_target', outcomePrice: 3050,  createdDaysAgo: 57, resolvedHours: 72  },
-  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'BTC', direction: 'LONG',  entryPrice: 74000, targetPrice: 78000, stopPrice: 72000, status: 'hit_stop',   outcomePrice: 72000, createdDaysAgo: 50, resolvedHours: 18  },
-  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'SOL', direction: 'SHORT', entryPrice: 168,   targetPrice: 152,   stopPrice: 176,   status: 'hit_target', outcomePrice: 152,   createdDaysAgo: 44, resolvedHours: 48  },
-  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'BTC', direction: 'LONG',  entryPrice: 80000, targetPrice: 84000, stopPrice: 78000, status: 'hit_target', outcomePrice: 84000, createdDaysAgo: 37, resolvedHours: 60  },
-  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'ETH', direction: 'SHORT', entryPrice: 3600,  targetPrice: 3350,  stopPrice: 3720,  status: 'hit_stop',   outcomePrice: 3720,  createdDaysAgo: 30, resolvedHours: 12  },
-  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'SOL', direction: 'LONG',  entryPrice: 122,   targetPrice: 135,   stopPrice: 115,   status: 'hit_target', outcomePrice: 135,   createdDaysAgo: 22, resolvedHours: 84  },
-  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'BTC', direction: 'LONG',  entryPrice: 76000, targetPrice: 81000, stopPrice: 74000, status: 'open',       outcomePrice: null,  createdDaysAgo: 5,  resolvedHours: 0   },
-  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'ETH', direction: 'LONG',  entryPrice: 2700,  targetPrice: 2950,  stopPrice: 2580,  status: 'open',       outcomePrice: null,  createdDaysAgo: 2,  resolvedHours: 0   },
+  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'BTC', direction: 'LONG',  entryPrice: 78500, targetPrice: 82000, targetPrices: null, stopPrice: 76500, status: 'hit_target', outcomePrice: 82000, targetPricesHit: null, createdDaysAgo: 83, resolvedHours: 36  },
+  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'ETH', direction: 'SHORT', entryPrice: 3250,  targetPrice: 3000,  targetPrices: null, stopPrice: 3380,  status: 'hit_target', outcomePrice: 3000,  targetPricesHit: null, createdDaysAgo: 77, resolvedHours: 48  },
+  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'BTC', direction: 'SHORT', entryPrice: 86000, targetPrice: 82000, targetPrices: null, stopPrice: 88000, status: 'hit_stop',   outcomePrice: 88000, targetPricesHit: null, createdDaysAgo: 70, resolvedHours: 24  },
+  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'SOL', direction: 'LONG',  entryPrice: 137,   targetPrice: 148,   targetPrices: null, stopPrice: 131,   status: 'hit_target', outcomePrice: 148,   targetPricesHit: null, createdDaysAgo: 64, resolvedHours: 60  },
+  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'ETH', direction: 'LONG',  entryPrice: 2850,  targetPrice: 3050,  targetPrices: null, stopPrice: 2750,  status: 'hit_target', outcomePrice: 3050,  targetPricesHit: null, createdDaysAgo: 57, resolvedHours: 72  },
+  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'BTC', direction: 'LONG',  entryPrice: 74000, targetPrice: 78000, targetPrices: null, stopPrice: 72000, status: 'hit_stop',   outcomePrice: 72000, targetPricesHit: null, createdDaysAgo: 50, resolvedHours: 18  },
+  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'SOL', direction: 'SHORT', entryPrice: 168,   targetPrice: 152,   targetPrices: null, stopPrice: 176,   status: 'hit_target', outcomePrice: 152,   targetPricesHit: null, createdDaysAgo: 44, resolvedHours: 48  },
+  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'BTC', direction: 'LONG',  entryPrice: 80000, targetPrice: 84000, targetPrices: null, stopPrice: 78000, status: 'hit_target', outcomePrice: 84000, targetPricesHit: null, createdDaysAgo: 37, resolvedHours: 60  },
+  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'ETH', direction: 'SHORT', entryPrice: 3600,  targetPrice: 3350,  targetPrices: null, stopPrice: 3720,  status: 'hit_stop',   outcomePrice: 3720,  targetPricesHit: null, createdDaysAgo: 30, resolvedHours: 12  },
+  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'SOL', direction: 'LONG',  entryPrice: 122,   targetPrice: 135,   targetPrices: null, stopPrice: 115,   status: 'hit_target', outcomePrice: 135,   targetPricesHit: null, createdDaysAgo: 22, resolvedHours: 84  },
+  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'BTC', direction: 'LONG',  entryPrice: 76000, targetPrice: 81000, targetPrices: null, stopPrice: 74000, status: 'open',       outcomePrice: null,  targetPricesHit: null, createdDaysAgo: 5,  resolvedHours: 0   },
+  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'ETH', direction: 'LONG',  entryPrice: 2700,  targetPrice: 2950,  targetPrices: null, stopPrice: 2580,  status: 'open',       outcomePrice: null,  targetPricesHit: null, createdDaysAgo: 2,  resolvedHours: 0   },
 ];
 
 // ── Insert ───────────────────────────────────────────────────────────────────
@@ -157,6 +173,9 @@ async function run() {
       ? rMultiple(s.entryPrice, s.outcomePrice, s.stopPrice, s.direction)
       : null;
 
+    // Compute targetPrices — use provided array, or wrap single targetPrice
+    const targetPricesArray = s.targetPrices ?? (s.targetPrice != null ? [s.targetPrice] : null);
+
     await prisma.signal.create({
       data: {
         walletAddress: walletAddress!,
@@ -167,11 +186,13 @@ async function run() {
         direction: s.direction,
         entryPrice: s.entryPrice,
         targetPrice: s.targetPrice,
+        targetPrices: targetPricesArray ? JSON.stringify(targetPricesArray) : null,
         stopPrice: s.stopPrice,
         status: s.status,
         outcomePrice: s.outcomePrice,
         outcomePnlPct,
         outcomeRMultiple,
+        targetPricesHit: s.targetPricesHit ? JSON.stringify(s.targetPricesHit) : null,
         resolvedAt: resolved,
         createdAt,
         updatedAt: resolved ?? createdAt,
@@ -186,13 +207,22 @@ async function run() {
   const callers = [...new Set(SEEDS.map((s) => s.callerName))];
   for (const caller of callers) {
     const callerSeeds = SEEDS.filter((s) => s.callerName === caller);
-    const hits = callerSeeds.filter((s) => s.status === 'hit_target').length;
-    const stops = callerSeeds.filter((s) => s.status === 'hit_stop').length;
-    const expired = callerSeeds.filter((s) => s.status === 'expired').length;
-    const open = callerSeeds.filter((s) => s.status === 'open').length;
-    const resolved = hits + stops + expired;
-    const hitRate = resolved > 0 ? ((hits / resolved) * 100).toFixed(0) : '—';
-    console.log(`  ${caller}: ${callerSeeds.length} signals, ${hitRate}% hit rate (${hits} target / ${stops} stop / ${expired} expired / ${open} open)`);
+    const hits     = callerSeeds.filter((s) => s.status === 'hit_target').length;
+    const partials = callerSeeds.filter((s) => s.status === 'partial_target').length;
+    const stops    = callerSeeds.filter((s) => s.status === 'hit_stop').length;
+    const expired  = callerSeeds.filter((s) => s.status === 'expired').length;
+    const open     = callerSeeds.filter((s) => s.status === 'open').length;
+    const resolved = hits + partials + stops + expired;
+    const hitPoints = callerSeeds.reduce((sum, s) => {
+      if (s.status === 'hit_target') return sum + 1;
+      if (s.status === 'partial_target' && s.targetPricesHit) {
+        const cnt = s.targetPricesHit.filter(Boolean).length;
+        return sum + cnt / s.targetPricesHit.length;
+      }
+      return sum;
+    }, 0);
+    const hitRate = resolved > 0 ? ((hitPoints / resolved) * 100).toFixed(0) : '—';
+    console.log(`  ${caller}: ${callerSeeds.length} signals, ${hitRate}% hit rate (${hits} target / ${partials} partial / ${stops} stop / ${expired} expired / ${open} open)`);
   }
 }
 

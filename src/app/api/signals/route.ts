@@ -74,6 +74,7 @@ export async function POST(req: NextRequest) {
       direction: string;
       entryPrice: number;
       targetPrice?: number | null;
+      targetPrices?: number[] | null;
       stopPrice?: number | null;
       callerName: string;
       source: string;
@@ -98,13 +99,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'direction must be LONG or SHORT' }, { status: 400 });
     }
 
+    // Normalise targetPrices — if only a single targetPrice is provided, wrap it
+    const targetPricesArray: number[] | null =
+      body.targetPrices && body.targetPrices.length > 0
+        ? body.targetPrices
+        : body.targetPrice != null
+          ? [body.targetPrice]
+          : null;
+
     const signal = await prisma.signal.create({
       data: {
         walletAddress,
         asset: body.asset.toUpperCase(),
         direction: body.direction,
         entryPrice: body.entryPrice,
-        targetPrice: body.targetPrice ?? null,
+        targetPrice: targetPricesArray ? targetPricesArray[0] : null,
+        targetPrices: targetPricesArray ? JSON.stringify(targetPricesArray) : null,
         stopPrice: body.stopPrice ?? null,
         callerName: body.callerName,
         source: body.source,

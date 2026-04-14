@@ -375,13 +375,15 @@ model Signal {
   direction     String   // LONG, SHORT
   entryPrice    Float
   targetPrice   Float?
+  targetPrices  String?  // JSON array of all target prices: '[110, 114, 120]'
   stopPrice     Float?
 
   // Outcome tracking
-  status        String   @default("open") // open, hit_target, hit_stop, expired, closed_manual
+  status        String   @default("open") // open, hit_target, hit_stop, partial_target, expired, closed_manual
   outcomePrice  Float?
   outcomePnlPct Float?   // percentage return
   outcomeRMultiple Float? // reward / risk
+  targetPricesHit String? // JSON boolean array: '[true, true, false]' — which TPs were hit
   resolvedAt    DateTime?
 
   // Link to user's position if they followed this call

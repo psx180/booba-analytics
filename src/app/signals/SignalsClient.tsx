@@ -14,6 +14,8 @@ interface Signal {
   direction: string;
   entryPrice: number;
   targetPrice: number | null;
+  targetPrices: string | null;     // JSON number array, e.g. '[110, 114, 120]'
+  targetPricesHit: string | null;  // JSON boolean array, e.g. '[true, true, false]'
   stopPrice: number | null;
   status: string;
   outcomePrice: number | null;
@@ -68,11 +70,12 @@ function pnlColor(pnl: number | null): string {
 
 function statusBadge(status: string): React.CSSProperties {
   const colors: Record<string, { bg: string; color: string }> = {
-    open:          { bg: 'rgba(31,111,235,0.15)',  color: '#58a6ff' },
-    hit_target:    { bg: 'rgba(35,134,54,0.2)',    color: '#3fb950' },
-    hit_stop:      { bg: 'rgba(218,54,51,0.2)',    color: '#f85149' },
-    expired:       { bg: 'rgba(110,118,129,0.2)',  color: '#8b949e' },
-    closed_manual: { bg: 'rgba(210,153,34,0.2)',   color: '#d29922' },
+    open:           { bg: 'rgba(31,111,235,0.15)',  color: '#58a6ff' },
+    hit_target:     { bg: 'rgba(35,134,54,0.2)',    color: '#3fb950' },
+    hit_stop:       { bg: 'rgba(218,54,51,0.2)',    color: '#f85149' },
+    partial_target: { bg: 'rgba(210,153,34,0.2)',   color: '#d29922' },
+    expired:        { bg: 'rgba(110,118,129,0.2)',  color: '#8b949e' },
+    closed_manual:  { bg: 'rgba(110,118,129,0.2)',  color: '#8b949e' },
   };
   const c = colors[status] ?? colors.open;
   return {
@@ -302,43 +305,79 @@ export default function SignalsClient() {
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
                           <thead>
                             <tr style={{ color: '#6e7681', borderBottom: '1px solid #21262d' }}>
-                              {['Date', 'Asset', 'Dir', 'Entry', 'Target', 'Stop', 'Status', 'P&L', 'R'].map((h) => (
+                              {['Date', 'Asset', 'Dir', 'Entry', 'Targets', 'Stop', 'Status', 'P&L', 'R'].map((h) => (
                                 <th key={h} style={{ padding: '6px 12px', textAlign: 'left', fontWeight: 600, fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
                               ))}
                             </tr>
                           </thead>
                           <tbody>
-                            {callerSignals.map((sig) => (
-                              <tr key={sig.id} style={{ borderBottom: '1px solid #161b22' }}>
-                                <td style={{ padding: '7px 12px', color: '#6e7681' }}>
-                                  {new Date(sig.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                                </td>
-                                <td style={{ padding: '7px 12px', color: '#e6edf3', fontWeight: 600 }}>{sig.asset}</td>
-                                <td style={{ padding: '7px 12px' }}>
-                                  <span style={{ color: sig.direction === 'LONG' ? '#3fb950' : '#f85149', fontWeight: 700 }}>
-                                    {sig.direction}
-                                  </span>
-                                </td>
-                                <td style={{ padding: '7px 12px', color: '#c9d1d9' }}>${sig.entryPrice.toLocaleString()}</td>
-                                <td style={{ padding: '7px 12px', color: '#3fb950' }}>
-                                  {sig.targetPrice ? `$${sig.targetPrice.toLocaleString()}` : '—'}
-                                </td>
-                                <td style={{ padding: '7px 12px', color: '#f85149' }}>
-                                  {sig.stopPrice ? `$${sig.stopPrice.toLocaleString()}` : '—'}
-                                </td>
-                                <td style={{ padding: '7px 12px' }}>
-                                  <span style={statusBadge(sig.status)}>
-                                    {sig.status.replace('_', ' ')}
-                                  </span>
-                                </td>
-                                <td style={{ padding: '7px 12px', color: pnlColor(sig.outcomePnlPct), fontWeight: 600 }}>
-                                  {sig.outcomePnlPct != null ? `${fmt(sig.outcomePnlPct)}%` : '—'}
-                                </td>
-                                <td style={{ padding: '7px 12px', color: rMultipleColor(sig.outcomeRMultiple) }}>
-                                  {sig.outcomeRMultiple != null ? `${fmt(sig.outcomeRMultiple)}R` : '—'}
-                                </td>
-                              </tr>
-                            ))}
+                            {callerSignals.map((sig) => {
+                              const tpList: number[] = sig.targetPrices
+                                ? JSON.parse(sig.targetPrices)
+                                : sig.targetPrice != null ? [sig.targetPrice] : [];
+                              const hitList: boolean[] = sig.targetPricesHit
+                                ? JSON.parse(sig.targetPricesHit)
+                                : [];
+                              const isResolved = sig.status !== 'open';
+
+                              return (
+                                <tr key={sig.id} style={{ borderBottom: '1px solid #161b22' }}>
+                                  <td style={{ padding: '7px 12px', color: '#6e7681' }}>
+                                    {new Date(sig.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                  </td>
+                                  <td style={{ padding: '7px 12px', color: '#e6edf3', fontWeight: 600 }}>{sig.asset}</td>
+                                  <td style={{ padding: '7px 12px' }}>
+                                    <span style={{ color: sig.direction === 'LONG' ? '#3fb950' : '#f85149', fontWeight: 700 }}>
+                                      {sig.direction}
+                                    </span>
+                                  </td>
+                                  <td style={{ padding: '7px 12px', color: '#c9d1d9' }}>${sig.entryPrice.toLocaleString()}</td>
+                                  <td style={{ padding: '7px 12px' }}>
+                                    {tpList.length === 0 ? (
+                                      <span style={{ color: '#484f58' }}>—</span>
+                                    ) : tpList.length === 1 ? (
+                                      <span style={{ color: isResolved && hitList[0] === false ? '#f85149' : '#3fb950' }}>
+                                        ${tpList[0].toLocaleString()}
+                                        {isResolved && hitList.length > 0 && (
+                                          <span style={{ marginLeft: '3px' }}>{hitList[0] ? '✓' : '✗'}</span>
+                                        )}
+                                      </span>
+                                    ) : (
+                                      <span style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                        {tpList.map((tp, i) => {
+                                          const hit = hitList[i];
+                                          const color = !isResolved || hitList.length === 0
+                                            ? '#3fb950'
+                                            : hit ? '#3fb950' : '#6e7681';
+                                          return (
+                                            <span key={i} style={{ color, whiteSpace: 'nowrap' }}>
+                                              TP{i + 1}:&nbsp;${tp.toLocaleString()}
+                                              {isResolved && hitList.length > 0 && (
+                                                <span style={{ color: hit ? '#3fb950' : '#f85149' }}>{hit ? ' ✓' : ' ✗'}</span>
+                                              )}
+                                            </span>
+                                          );
+                                        })}
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td style={{ padding: '7px 12px', color: '#f85149' }}>
+                                    {sig.stopPrice ? `$${sig.stopPrice.toLocaleString()}` : '—'}
+                                  </td>
+                                  <td style={{ padding: '7px 12px' }}>
+                                    <span style={statusBadge(sig.status)}>
+                                      {sig.status.replace(/_/g, ' ')}
+                                    </span>
+                                  </td>
+                                  <td style={{ padding: '7px 12px', color: pnlColor(sig.outcomePnlPct), fontWeight: 600 }}>
+                                    {sig.outcomePnlPct != null ? `${fmt(sig.outcomePnlPct)}%` : '—'}
+                                  </td>
+                                  <td style={{ padding: '7px 12px', color: rMultipleColor(sig.outcomeRMultiple) }}>
+                                    {sig.outcomeRMultiple != null ? `${fmt(sig.outcomeRMultiple)}R` : '—'}
+                                  </td>
+                                </tr>
+                              );
+                            })}
                           </tbody>
                         </table>
                       )}

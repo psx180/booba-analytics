@@ -8,6 +8,7 @@ interface ParsedSignal {
   direction: 'LONG' | 'SHORT';
   entryPrice: number;
   targetPrice: number | null;
+  targetPrices: number[] | null;
   stopPrice: number | null;
   callerName: string | null;
 }
@@ -121,6 +122,7 @@ export default function SignalInput({ onSignalAdded }: SignalInputProps) {
           direction: card.parsed.direction,
           entryPrice: card.parsed.entryPrice,
           targetPrice: card.parsed.targetPrice,
+          targetPrices: card.parsed.targetPrices,
           stopPrice: card.parsed.stopPrice,
           callerName: card.callerName.trim(),
           source: card.source,
@@ -273,9 +275,15 @@ export default function SignalInput({ onSignalAdded }: SignalInputProps) {
                         </span>
                         <span style={{ color: '#e6edf3', fontWeight: 700, fontSize: '14px' }}>{card.parsed.asset}</span>
                         <span style={{ color: '#c9d1d9', fontSize: '13px' }}>@ ${card.parsed.entryPrice.toLocaleString()}</span>
-                        {card.parsed.targetPrice && (
+                        {card.parsed.targetPrices && card.parsed.targetPrices.length > 1 ? (
+                          card.parsed.targetPrices.map((tp, i) => (
+                            <span key={i} style={{ color: '#3fb950', fontSize: '12px' }}>
+                              TP{i + 1}:&nbsp;${tp.toLocaleString()}
+                            </span>
+                          ))
+                        ) : card.parsed.targetPrice ? (
                           <span style={{ color: '#3fb950', fontSize: '12px' }}>→ ${card.parsed.targetPrice.toLocaleString()}</span>
-                        )}
+                        ) : null}
                         {card.parsed.stopPrice && (
                           <span style={{ color: '#f85149', fontSize: '12px' }}>SL ${card.parsed.stopPrice.toLocaleString()}</span>
                         )}

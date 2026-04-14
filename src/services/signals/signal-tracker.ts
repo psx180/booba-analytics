@@ -4,7 +4,10 @@
  * For each open signal belonging to a wallet:
  *   1. Select candle timeframe based on stop/target distance (tight scalps → 1m, wide swings → 1h)
  *   2. Fetch candles from signal creation through now, batched by (asset, timeframe)
- *   3. Walk candles chronologically, checking high/low against target/stop
+ *   3. Walk candles chronologically, checking high/low against each target and stop
+ *      - Stop is checked first per candle (conservative: adverse move wins on same candle)
+ *      - Each unhit target is checked; when all are hit the signal is fully resolved
+ *      - partial_target: some TPs hit then stop fired
  *   4. Expire signals older than 7 days with no resolution
  *   5. Compute outcomePnlPct and outcomeRMultiple, write back to DB
  *   6. Return the list of signals that changed status
@@ -51,7 +54,7 @@ function computeRMultiple(
 }
 
 /**
- * Select candle timeframe based on stop (or target) distance from entry.
+ * Select candle timeframe based on stop (or first target) distance from entry.
  * Tight scalp signals get fine-grained candles; wide swing signals use 1h.
  */
 function selectTimeframe(
@@ -109,28 +112,69 @@ export async function checkSignalOutcomes(walletAddress: string): Promise<Signal
       if (signalCandles.length === 0) continue;
 
       const isLong = signal.direction === 'LONG';
-      const target = signal.targetPrice;
       const stop = signal.stopPrice;
+
+      // Parse target list — prefer targetPrices JSON array, fall back to single targetPrice
+      const targets: number[] = signal.targetPrices
+        ? JSON.parse(signal.targetPrices as string)
+        : signal.targetPrice != null ? [signal.targetPrice] : [];
+
+      // Track which targets have been hit
+      const hitFlags = new Array<boolean>(targets.length).fill(false);
+
       let newStatus: string | null = null;
       let outcomePrice: number | null = null;
+      let stopHitDuringWalk = false;
 
       for (const candle of signalCandles) {
+        // Stop is checked first — if stop fires, no same-candle TP credit (conservative)
         const stopHit = stop != null && (isLong ? candle.low <= stop : candle.high >= stop);
-        const targetHit = target != null && (isLong ? candle.high >= target : candle.low <= target);
-
         if (stopHit) {
-          // When both trigger on the same candle, assume adverse move first (conservative)
-          newStatus = 'hit_stop';
-          outcomePrice = stop;
+          stopHitDuringWalk = true;
           break;
         }
-        if (targetHit) {
+
+        // Mark any newly-hit targets
+        for (let i = 0; i < targets.length; i++) {
+          if (!hitFlags[i]) {
+            const tpHit = isLong ? candle.high >= targets[i] : candle.low <= targets[i];
+            if (tpHit) hitFlags[i] = true;
+          }
+        }
+
+        // All targets hit — fully resolved
+        if (targets.length > 0 && hitFlags.every(Boolean)) {
           newStatus = 'hit_target';
-          outcomePrice = target;
+          outcomePrice = targets[targets.length - 1];
           break;
         }
       }
 
+      // Determine outcome after the walk
+      if (newStatus == null) {
+        const someHit = hitFlags.some(Boolean);
+
+        if (stopHitDuringWalk) {
+          if (!someHit) {
+            // Stop hit before any TP
+            newStatus = 'hit_stop';
+            outcomePrice = stop!;
+          } else {
+            // Some TPs hit, then stopped out
+            newStatus = 'partial_target';
+            // outcomePrice = equal-weight average across all TP slots
+            // hit slots use TP price, missed slots use stop price
+            const n = targets.length;
+            const priceSum = targets.reduce(
+              (sum, tp, i) => sum + (hitFlags[i] ? tp : stop!),
+              0,
+            );
+            outcomePrice = priceSum / n;
+          }
+        }
+      }
+
+      // Expiry check
       if (newStatus == null) {
         const isExpired = signal.createdAt.getTime() < now.getTime() - EXPIRY_DAYS * 86_400_000;
         if (isExpired) {
@@ -141,17 +185,49 @@ export async function checkSignalOutcomes(walletAddress: string): Promise<Signal
         }
       }
 
-      const resolvedPrice = outcomePrice!;
-      const pnlPct = computePnlPct(signal.entryPrice, resolvedPrice, signal.direction);
-      const rMultiple = computeRMultiple(signal.entryPrice, resolvedPrice, stop, signal.direction);
+      // Compute P&L
+      let pnlPct: number;
+      let rMultiple: number | null;
+
+      if (newStatus === 'partial_target' && targets.length > 0) {
+        // Weighted return: each TP slot gets equal weight (1/n)
+        const n = targets.length;
+        pnlPct = targets.reduce((sum, tp, i) => {
+          const slotPrice = hitFlags[i] ? tp : stop!;
+          return sum + computePnlPct(signal.entryPrice, slotPrice, signal.direction) / n;
+        }, 0);
+
+        // R-multiple based on highest hit TP
+        const hitPrices = targets.filter((_, i) => hitFlags[i]);
+        const highestHitTP = signal.direction === 'LONG'
+          ? Math.max(...hitPrices)
+          : Math.min(...hitPrices);
+        rMultiple = computeRMultiple(signal.entryPrice, highestHitTP, stop, signal.direction);
+      } else {
+        pnlPct = computePnlPct(signal.entryPrice, outcomePrice!, signal.direction);
+        rMultiple = computeRMultiple(signal.entryPrice, outcomePrice!, stop, signal.direction);
+      }
+
+      // Build targetPricesHit boolean array for resolved signals with multiple TPs
+      const targetPricesHit =
+        targets.length > 0 && newStatus !== 'expired'
+          ? JSON.stringify(
+              newStatus === 'hit_target'
+                ? targets.map(() => true)
+                : newStatus === 'hit_stop'
+                  ? targets.map(() => false)
+                  : hitFlags,
+            )
+          : null;
 
       await prisma.signal.update({
         where: { id: signal.id },
         data: {
           status: newStatus,
-          outcomePrice: resolvedPrice,
+          outcomePrice: outcomePrice!,
           outcomePnlPct: pnlPct,
           outcomeRMultiple: rMultiple,
+          targetPricesHit,
           resolvedAt: now,
         },
       });
@@ -163,7 +239,7 @@ export async function checkSignalOutcomes(walletAddress: string): Promise<Signal
         direction: signal.direction,
         previousStatus: 'open',
         newStatus,
-        outcomePrice: resolvedPrice,
+        outcomePrice: outcomePrice!,
         outcomePnlPct: pnlPct,
         outcomeRMultiple: rMultiple,
       });

@@ -2,8 +2,11 @@
  * GET /api/signals/leaderboard — Caller leaderboard for the authenticated wallet.
  *
  * Aggregates all resolved signals per caller and computes:
- *   totalSignals, hitTargets, hitStops, expired, open,
+ *   totalSignals, hitTargets, hitStops, partialTargets, expired, open,
  *   hitRate, avgPnlPct, avgRMultiple, bestSignal, worstSignal
+ *
+ * hitRate treats partial_target proportionally: a signal with 2 of 3 TPs hit
+ * contributes 0.67 to the win numerator rather than 0 or 1.
  *
  * Only callers with at least one signal are returned. Sorted by avgPnlPct desc.
  */
@@ -17,9 +20,10 @@ export interface CallerStats {
   totalSignals: number;
   hitTargets: number;
   hitStops: number;
+  partialTargets: number;
   expired: number;
   open: number;
-  hitRate: number;           // hit_target / (hit_target + hit_stop + expired) — excludes open
+  hitRate: number;           // weighted: full wins + fractional partial wins / resolved
   avgPnlPct: number | null;
   avgRMultiple: number | null;
   bestSignal: { asset: string; direction: string; pnlPct: number } | null;
@@ -37,6 +41,7 @@ export async function GET(req: NextRequest) {
         status: true,
         outcomePnlPct: true,
         outcomeRMultiple: true,
+        targetPricesHit: true,
       },
     });
 
@@ -51,14 +56,25 @@ export async function GET(req: NextRequest) {
     const callers: CallerStats[] = [];
 
     for (const [callerName, callerSignals] of byCallerMap) {
-      const hitTargets = callerSignals.filter((s) => s.status === 'hit_target').length;
-      const hitStops = callerSignals.filter((s) => s.status === 'hit_stop').length;
-      const expired = callerSignals.filter((s) => s.status === 'expired').length;
-      const open = callerSignals.filter((s) => s.status === 'open').length;
-      const totalSignals = callerSignals.length;
+      const hitTargets    = callerSignals.filter((s) => s.status === 'hit_target').length;
+      const hitStops      = callerSignals.filter((s) => s.status === 'hit_stop').length;
+      const partialTargets = callerSignals.filter((s) => s.status === 'partial_target').length;
+      const expired       = callerSignals.filter((s) => s.status === 'expired').length;
+      const open          = callerSignals.filter((s) => s.status === 'open').length;
+      const totalSignals  = callerSignals.length;
 
-      const resolved = hitTargets + hitStops + expired;
-      const hitRate = resolved > 0 ? hitTargets / resolved : 0;
+      const resolved = hitTargets + hitStops + partialTargets + expired;
+
+      // Win points: full wins = 1, partial_target = fraction of TPs hit
+      let hitPoints = hitTargets;
+      for (const s of callerSignals) {
+        if (s.status === 'partial_target' && s.targetPricesHit) {
+          const flags = JSON.parse(s.targetPricesHit) as boolean[];
+          const hitCount = flags.filter(Boolean).length;
+          hitPoints += flags.length > 0 ? hitCount / flags.length : 0;
+        }
+      }
+      const hitRate = resolved > 0 ? hitPoints / resolved : 0;
 
       const resolvedWithPnl = callerSignals.filter(
         (s) => s.status !== 'open' && s.outcomePnlPct != null,
@@ -74,7 +90,7 @@ export async function GET(req: NextRequest) {
         ? resolvedWithR.reduce((sum, s) => sum + s.outcomeRMultiple!, 0) / resolvedWithR.length
         : null;
 
-      const sorted = resolvedWithPnl.sort((a, b) => b.outcomePnlPct! - a.outcomePnlPct!);
+      const sorted = [...resolvedWithPnl].sort((a, b) => b.outcomePnlPct! - a.outcomePnlPct!);
       const bestSignal = sorted.length > 0
         ? { asset: sorted[0].asset, direction: sorted[0].direction, pnlPct: sorted[0].outcomePnlPct! }
         : null;
@@ -87,6 +103,7 @@ export async function GET(req: NextRequest) {
         totalSignals,
         hitTargets,
         hitStops,
+        partialTargets,
         expired,
         open,
         hitRate,
