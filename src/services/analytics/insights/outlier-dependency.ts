@@ -68,14 +68,14 @@ export const outlierDependencyDetector: InsightDetector = {
 
     const dummyTest: StatisticalTest = {
       testName: 'descriptive',
-      pValue:      isDependentOnOutliers ? 0.01 : 0.5,
+      pValue:      1,
       effectSize:  Math.min(1, Math.abs(topPct) / 100),
       sampleSizeA: topPositions.length,
       sampleSizeB: sorted.length - topPositions.length,
-      isSignificant: isDependentOnOutliers,
+      isSignificant: false,
       description: isDependentOnOutliers
-        ? `Statistically significant (descriptive, N=${sorted.length}, large effect) — top ${top10Count} trades drive >50% of P&L`
-        : `Not significant (descriptive, N=${sorted.length}) — P&L is reasonably distributed across trades`,
+        ? `Descriptive — top ${top10Count} trades drive >50% of P&L`
+        : `Descriptive — P&L is reasonably distributed across trades`,
     };
 
     const impactScore = computeImpactScore(topPnl, dummyTest, 0.4);

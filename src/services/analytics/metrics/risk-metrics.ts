@@ -68,7 +68,7 @@ function stddev(values: number[]): number {
   const n = values.length;
   if (n < 2) return 0;
   const m = mean(values);
-  const variance = values.reduce((s, v) => s + (v - m) ** 2, 0) / n;
+  const variance = values.reduce((s, v) => s + (v - m) ** 2, 0) / (n - 1);
   return Math.sqrt(variance);
 }
 
@@ -258,8 +258,7 @@ function computeDrawdownAnalysis(
       : 0;
 
   // If currently in drawdown and worst pct > 5%, include in count
-  if (inDrawdown && drawdownWorstPct > 5 && !drawdownDurations.length) {
-    // Ongoing — only count if it already exceeds threshold
+  if (inDrawdown && drawdownWorstPct > 5) {
     drawdownCount++;
   }
 

@@ -126,7 +126,7 @@ export const entropyInsightDetector: InsightDetector = {
     );
 
     const score = result.compositeScore;
-    let title = `Trading Discipline Score: ${score}/100`;
+    let title = `Decision Consistency Score: ${score}/100`;
     let severity: Insight['severity'] = 'info';
 
     const focusedDims = result.dimensions

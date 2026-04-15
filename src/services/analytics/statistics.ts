@@ -67,6 +67,7 @@ export function welchTTest(groupA: number[], groupB: number[]): StatisticalTest 
 
 /**
  * Chi-squared test for comparing two proportions (win rates, etc.).
+ * Automatically falls back to Fisher's exact test when any expected cell count < 5.
  */
 export function chiSquaredProportionTest(
   successesA: number, totalA: number,
@@ -86,6 +87,11 @@ export function chiSquaredProportionTest(
   const eA0 = (1 - pPooled) * totalA;
   const eB0 = (1 - pPooled) * totalB;
 
+  // Fisher exact fallback when any expected cell count < 5
+  if (eA1 < 5 || eB1 < 5 || eA0 < 5 || eB0 < 5) {
+    return fisherExactTest(successesA, totalA, successesB, totalB);
+  }
+
   const chi2 =
     (successesA - eA1) ** 2 / eA1 +
     (successesB - eB1) ** 2 / eB1 +
@@ -104,6 +110,63 @@ export function chiSquaredProportionTest(
     sampleSizeB: totalB,
     isSignificant,
     description: describeSignificanceInternal(pValue, totalA + totalB, phi),
+  };
+}
+
+/**
+ * Fisher's exact test for 2×2 contingency tables.
+ * Computes an exact two-sided p-value via the hypergeometric distribution.
+ * Used as an automatic fallback from chiSquaredProportionTest when any
+ * expected cell count is < 5.
+ */
+export function fisherExactTest(
+  successesA: number, totalA: number,
+  successesB: number, totalB: number,
+): StatisticalTest {
+  if (totalA < 1 || totalB < 1) {
+    return insufficientData('fisher_exact', totalA, totalB);
+  }
+
+  const n    = totalA + totalB;
+  const row1 = successesA + successesB;   // total successes
+  const col1 = totalA;                    // column 1 total
+
+  const kMin = Math.max(0, row1 + col1 - n);
+  const kMax = Math.min(row1, col1);
+
+  const logDenom = logComb(n, col1);
+
+  // Log probability of the observed table
+  const logPObs = logComb(row1, successesA) + logComb(n - row1, col1 - successesA) - logDenom;
+  const pObs    = Math.exp(logPObs);
+
+  // Two-sided: sum all tables at least as extreme as observed
+  let pValue = 0;
+  for (let k = kMin; k <= kMax; k++) {
+    const logP = logComb(row1, k) + logComb(n - row1, col1 - k) - logDenom;
+    const p    = Math.exp(logP);
+    if (p <= pObs + 1e-10) pValue += p;
+  }
+  pValue = Math.min(1, pValue);
+
+  // Phi coefficient as effect size
+  const a = successesA;
+  const b = successesB;
+  const c = totalA - successesA;
+  const d = totalB - successesB;
+  const phiDenom = Math.sqrt((a + b) * (c + d) * (a + c) * (b + d));
+  const phi = phiDenom > 0 ? Math.abs((a * d - b * c) / phiDenom) : 0;
+
+  const isSignificant = pValue < 0.05;
+
+  return {
+    testName: 'fisher_exact',
+    pValue,
+    effectSize: phi,
+    sampleSizeA: totalA,
+    sampleSizeB: totalB,
+    isSignificant,
+    description: describeSignificanceInternal(pValue, n, phi),
   };
 }
 
@@ -277,7 +340,7 @@ export function benjaminiHochberg(insights: Insight[], fdrRate = 0.10): Insight[
   for (const insight of updated) {
     const wasSignificant = insight.isSignificant;
     insight.isSignificant =
-      insight.statistics.length > 0 && insight.statistics.every((t) => t.isSignificant);
+      insight.statistics.length > 0 && insight.statistics.some((t) => t.isSignificant);
     if (wasSignificant && !insight.isSignificant) {
       insight.impactScore *= 0.1;
     }
@@ -325,6 +388,19 @@ function insufficientData(
     isSignificant: false,
     description: `Not significant (insufficient data, N=${nA + nB}) — need more trades for reliable results`,
   };
+}
+
+// ─── Combinatorial helpers (for Fisher exact) ──────────────────────────────
+
+function logFactorial(n: number): number {
+  let result = 0;
+  for (let i = 2; i <= n; i++) result += Math.log(i);
+  return result;
+}
+
+function logComb(n: number, k: number): number {
+  if (k < 0 || k > n) return -Infinity;
+  return logFactorial(n) - logFactorial(k) - logFactorial(n - k);
 }
 
 // ─── Distribution functions ────────────────────────────────────────────────

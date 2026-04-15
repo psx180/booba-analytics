@@ -35,8 +35,8 @@ import {
 } from '../statistics';
 
 const MIN_POSITIONS  = 50;
-const MIN_GROUP_SIZE = 10;
-const MIN_FOR_3D     = 100;
+const MIN_GROUP_SIZE = 25;
+const MIN_FOR_3D     = 500;
 const FDR_RATE       = 0.10;
 const DEDUP_EPSILON  = 0.20;  // child within 20% of parent → drop child
 
@@ -52,7 +52,6 @@ const DIMENSIONS: DimensionDef[] = [
   { name: 'asset',            accessor: (p) => p.asset },
   { name: 'tradeType',        accessor: (p) => p.tradeType },
   { name: 'entrySession',     accessor: (p) => p.entrySession },
-  { name: 'entryDayOfWeek',   accessor: (p) => p.entryDayOfWeek != null ? String(p.entryDayOfWeek) : null },
   { name: 'holdTimeCategory', accessor: (p) => p.holdTimeCategory },
   { name: 'direction',        accessor: (p) => p.direction },
 ];

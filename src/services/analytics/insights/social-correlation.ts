@@ -10,6 +10,7 @@
 
 import type { InsightDetector, Insight, Position } from './base';
 import { sampleSizeConfidence } from './base';
+import { chiSquaredProportionTest } from '../statistics';
 
 const HIGH_SOCIAL_THRESHOLD = 100; // mentions/hr
 const MIN_PER_BUCKET = 10;
@@ -61,15 +62,19 @@ export const socialCorrelationDetector: InsightDetector = {
 
     const description = `You perform ${gapRounded}% better on trades entered during ${betterLabel} (${betterRounded}% win rate vs ${Math.round(worseWR)}%). Consider social momentum as a trade filter.`;
 
+    const highWins = highSocial.filter((p) => (p.aggregatePnl ?? 0) > 0).length;
+    const lowWins  = lowSocial.filter((p) => (p.aggregatePnl ?? 0) > 0).length;
+    const test = chiSquaredProportionTest(highWins, highSocial.length, lowWins, lowSocial.length);
+
     const confidence = sampleSizeConfidence(Math.min(highSocial.length, lowSocial.length));
-    const isSignificant = gap >= MIN_WIN_RATE_GAP && confidence > 0.5;
+    const isSignificant = test.isSignificant;
 
     return [
       {
         module: 'social-correlation',
         title: 'Social Attention Affects Your Win Rate',
         description,
-        severity: isSignificant ? 'info' : 'info',
+        severity: 'info',
         confidence,
         affectedPositions: closed.map((p) => p.id),
         data: {
@@ -81,17 +86,7 @@ export const socialCorrelationDetector: InsightDetector = {
           threshold: HIGH_SOCIAL_THRESHOLD,
           betterGroup,
         },
-        statistics: [
-          {
-            testName: 'proportion_difference',
-            pValue: isSignificant ? 0.04 : 0.1,
-            effectSize: gap / 100,
-            sampleSizeA: highSocial.length,
-            sampleSizeB: lowSocial.length,
-            isSignificant,
-            description: `Win rate gap of ${gapRounded}pp (N=${highSocial.length} high, ${lowSocial.length} low social)`,
-          },
-        ],
+        statistics: [test],
         impactScore: isSignificant ? gap * confidence : 0,
         category: 'social' as never,
         isSignificant,

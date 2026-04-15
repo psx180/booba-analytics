@@ -68,10 +68,9 @@ export const exitOptimizerDetector: InsightDetector = {
       if (bucket.length < MIN_REGIME_N) continue;
       const stats = summarize(bucket);
       const regimeEff = bucket.map((p) => p.exitEfficiency!);
-      // Compare this regime vs. all other positions
-      const others = allEfficiencies.filter(
-        (_, idx) => !regimeEff.includes(allEfficiencies[idx]),
-      );
+      // Compare this regime vs. all other positions (by ID to avoid value collision)
+      const regimeSet = new Set(bucket.map((p) => p.id));
+      const others = qualified.filter((p) => !regimeSet.has(p.id)).map((p) => p.exitEfficiency!);
       const test = others.length >= 2
         ? welchTTest(regimeEff, others)
         : welchTTest(regimeEff, allEfficiencies);

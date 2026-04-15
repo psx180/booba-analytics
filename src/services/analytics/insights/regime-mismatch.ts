@@ -12,7 +12,7 @@ import { welchTTest, chiSquaredProportionTest, bonferroniCorrect, computeImpactS
 import type { StatisticalTest } from '../types';
 
 const MIN_POSITIONS    = 40;
-const MIN_PER_BUCKET   = 5;
+const MIN_PER_BUCKET   = 10;
 const MIN_PER_TYPE     = 10;
 
 export const regimeMismatchDetector: InsightDetector = {

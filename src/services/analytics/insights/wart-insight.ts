@@ -133,7 +133,7 @@ function prettyAxis(name: string): string {
     case 'exit':       return 'Exit Quality';
     case 'risk':       return 'Risk Management';
     case 'timing':     return 'Timing';
-    case 'discipline': return 'Discipline';
+    case 'discipline': return 'Discipline (WART)';
     default:           return name;
   }
 }
