@@ -1154,7 +1154,8 @@ function ExecutionTab({
   onRunDeepAnalysis: () => void;
   runningDeepAnalysis: boolean;
 }) {
-  const inlineInsights = getInlineInsights('execution', insights);
+  const inlineInsights = getInlineInsights('execution', insights).filter((ins) => ins.impactScore >= 50);
+  const [timingExpanded, setTimingExpanded] = useState(false);
   return (
     <div className="space-y-4">
       <ExecutionVerdict insights={insights} tradeCount={tradeCount} />
@@ -1179,9 +1180,25 @@ function ExecutionTab({
           ))}
         </div>
       )}
+      <p className="text-[10px] uppercase tracking-widest text-[#6e7681] font-semibold px-0.5">Exit Quality</p>
       <ExitAnalysis {...chartProps} />
+      <p className="text-[10px] uppercase tracking-widest text-[#6e7681] font-semibold px-0.5">Timing Patterns</p>
       <TimeAnalysis {...chartProps} />
-      <CalendarHeatmap {...chartProps} />
+      <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setTimingExpanded((e) => !e)}
+          className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-[#1c2128] transition-colors"
+        >
+          <span className="text-sm font-semibold text-white">More Timing Details</span>
+          <span className="text-xs text-[#6e7681]">{timingExpanded ? '▲' : '▼'}</span>
+        </button>
+        {timingExpanded && (
+          <div className="border-t border-[#21262d] px-4 py-5">
+            <CalendarHeatmap {...chartProps} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1202,6 +1219,7 @@ function PsychologyTab({
   equitySeries: { date: string; cumulativePnl: number }[];
 }) {
   const psychologyInsights = getInlineInsights('psychology', insights, 10);
+  const [behaviorExpanded, setBehaviorExpanded] = useState(false);
 
   // Extract Markov data from the ml-patterns-markov insight
   const markovInsight = insights.find((i) => i.module === 'ml-patterns-markov');
@@ -1271,20 +1289,34 @@ function PsychologyTab({
         <SizeAfterOutcomeScatter positions={behaviorPositions} />
       </div>
 
-      {/* ── Existing insight cards ─────────────────────────────────── */}
-      {psychologyInsights.length > 0 ? (
-        <div className="space-y-2">
-          {psychologyInsights.map((ins, i) => (
-            <FullInsightCard key={`${ins.module}-${i}`} insight={ins} onDigDeeper={onSwitchTab} />
-          ))}
-        </div>
-      ) : (
-        <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-6 text-center">
-          <p className="text-sm text-[#6e7681]">
-            No behavioral patterns detected yet. Booba watches for tilt, revenge trading, size escalation, and discipline drift as your trade history grows.
-          </p>
-        </div>
-      )}
+      {/* ── Behavioral insight cards (collapsible) ─────────────────── */}
+      <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setBehaviorExpanded((e) => !e)}
+          className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-[#1c2128] transition-colors"
+        >
+          <span className="text-sm font-semibold text-white">
+            Behavioral Insights{psychologyInsights.length > 0 ? ` (${psychologyInsights.length} findings)` : ''}
+          </span>
+          <span className="text-xs text-[#6e7681]">{behaviorExpanded ? '▲' : '▼'}</span>
+        </button>
+        {behaviorExpanded && (
+          <div className="border-t border-[#21262d] px-4 py-5">
+            {psychologyInsights.length > 0 ? (
+              <div className="space-y-2">
+                {psychologyInsights.map((ins, i) => (
+                  <FullInsightCard key={`${ins.module}-${i}`} insight={ins} onDigDeeper={onSwitchTab} />
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-[#6e7681]">
+                No behavioral patterns detected yet. Booba watches for tilt, revenge trading, size escalation, and discipline drift as your trade history grows.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1324,9 +1356,18 @@ function StrategyTab({
           ))}
         </div>
       )}
+      {playbooks.length === 0 && (
+        <div className="bg-[#161b22] border border-[#21262d] rounded-lg px-4 py-3 text-sm text-[#8b949e]">
+          You haven&apos;t defined any strategies yet. Below is your performance by auto-detected trade
+          type. Create strategies on the Playbooks page to see how each approach performs.{' '}
+          <a href="/playbooks" className="text-blue-400 hover:text-blue-300 transition-colors">
+            → Go to Strategies &amp; Playbooks
+          </a>
+        </div>
+      )}
       <StrategyBreakdown {...chartProps} />
-      <RegimePerformance {...chartProps} />
       <WalkForwardChart journalId={chartProps.journalId} />
+      <RegimePerformance {...chartProps} />
 
       {/* ── Advanced Analysis (collapsed by default) ─────────────────── */}
       <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
