@@ -20,6 +20,8 @@ interface ChatMessage {
 export interface BoobaChatProps {
   isOpen: boolean;
   onClose: () => void;
+  /** When set, pre-fills the input field when the chat opens */
+  prefillMessage?: string;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -43,7 +45,7 @@ function looksLikeProposal(text: string): boolean {
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
-export default function BoobaChat({ isOpen, onClose }: BoobaChatProps) {
+export default function BoobaChat({ isOpen, onClose, prefillMessage }: BoobaChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -60,12 +62,13 @@ export default function BoobaChat({ isOpen, onClose }: BoobaChatProps) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Focus input when chat opens
+  // Focus input when chat opens; pre-fill message if provided
   useEffect(() => {
     if (isOpen) {
+      if (prefillMessage) setInput(prefillMessage);
       setTimeout(() => inputRef.current?.focus(), 100);
     }
-  }, [isOpen]);
+  }, [isOpen, prefillMessage]);
 
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim() || loading) return;

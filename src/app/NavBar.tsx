@@ -16,7 +16,7 @@ const tabs: { href: string; label: string; tourId?: string; disabled?: boolean }
   { href: '/trades', label: 'Trades', tourId: 'nav-trades' },
   { href: '/analytics', label: 'Analytics', tourId: 'nav-analytics' },
   { href: '/signals', label: 'Signals', tourId: 'nav-signals' },
-  { href: '/playbooks', label: 'Playbooks', tourId: 'nav-playbooks' },
+  { href: '/playbooks', label: 'Strategies & Playbooks', tourId: 'nav-playbooks' },
   { href: '/settings', label: 'Settings' },
 ];
 

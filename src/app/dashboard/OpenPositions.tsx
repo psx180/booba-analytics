@@ -49,7 +49,8 @@ function mergeRows(
   return Array.from(byKey.values()).sort((a, b) => a.symbol.localeCompare(b.symbol));
 }
 
-function fmtPrice(v: number): string {
+function fmtPrice(v: number | null | undefined): string {
+  if (v == null) return '—';
   if (v >= 1000) return `$${v.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
   if (v >= 1) return `$${v.toFixed(2)}`;
   return `$${v.toFixed(4)}`;
@@ -123,7 +124,7 @@ export default function OpenPositions({
               >
                 {r.side}
               </span>
-              <span className="col-span-2 text-[#8b949e] tabular-nums">{r.amount.toFixed(4)}</span>
+              <span className="col-span-2 text-[#8b949e] tabular-nums">{(r.amount ?? 0).toFixed(4)}</span>
               <span className="col-span-2 text-[#8b949e] tabular-nums">
                 {fmtPrice(r.entryPrice)}
               </span>

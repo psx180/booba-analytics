@@ -65,10 +65,13 @@ export async function GET(
       },
     });
 
+    const overall = statsFor(positions);
+
     if (positions.length < ENOUGH_DATA_THRESHOLD) {
       return NextResponse.json({
         analytics: {
           sampleSize: positions.length,
+          overall,
           highAdherence: null,
           lowAdherence: null,
           mostViolatedRule: null,
@@ -121,6 +124,7 @@ export async function GET(
     return NextResponse.json({
       analytics: {
         sampleSize: positions.length,
+        overall,
         highAdherence: highStats,
         lowAdherence: lowStats,
         mostViolatedRule,

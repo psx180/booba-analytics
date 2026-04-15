@@ -83,8 +83,14 @@ export function AccountProvider({
   }, []);
 
   // Fetch sub-accounts when wallet or network changes.
+  // The /api/v1/account/subaccounts endpoint only exists on testnet; skip on
+  // mainnet to avoid a 404 that can't be suppressed from the browser console.
   useEffect(() => {
     if (!walletAddress) return;
+    if (network === 'mainnet') {
+      setSubAccounts([]);
+      return;
+    }
     let cancelled = false;
 
     fetch(

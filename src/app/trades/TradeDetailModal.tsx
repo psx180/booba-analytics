@@ -578,9 +578,10 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
                   {position.direction.toUpperCase()}
                 </span>
 
-                {/* Trade type */}
+                {/* Trade type — 📊 = auto-classified (Part 5 auto vs manual pattern) */}
                 {position.tradeType && (
-                  <span className={`mt-1 px-2.5 py-0.5 rounded text-xs font-medium ${typeBadgeClass(position.tradeType)}`}>
+                  <span className={`mt-1 px-2.5 py-0.5 rounded text-xs font-medium flex items-center gap-1 ${typeBadgeClass(position.tradeType)}`}>
+                    <span className="opacity-70">📊</span>
                     {position.tradeType.replace(/_/g, ' ')}
                   </span>
                 )}

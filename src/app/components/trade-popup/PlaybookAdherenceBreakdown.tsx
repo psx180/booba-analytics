@@ -3,9 +3,15 @@
 import type { RuleResult } from '@/services/playbooks/types';
 
 /**
- * Renders a playbook adherence result block — score header + per-rule list
- * with ✓ / ✗ / ─ icons. Used both in the annotation popup (preview after
- * picking a playbook) and the trade detail modal (stored result).
+ * Renders a playbook adherence result block — score header + per-rule list.
+ *
+ * Icon convention (Part 5 — auto vs manual display pattern):
+ *   📊 ✓  rule passed   — auto-verified
+ *   📊 ✗  rule failed   — auto-verified
+ *   ─     inconclusive  — needs manual review (data unavailable)
+ *
+ * Regime rules (Part 4) append "(BTC 1h based)" to the detail line so
+ * the trader sees it's a BTC 1h proxy, not per-asset regime detection.
  */
 export default function PlaybookAdherenceBreakdown({
   score,
@@ -51,24 +57,38 @@ export default function PlaybookAdherenceBreakdown({
 }
 
 function RuleRow({ result }: { result: RuleResult }) {
-  const { outcome, ruleLabel, actual, expected } = result;
-  const icon =
+  const { outcome, ruleType, ruleLabel, actual, expected } = result;
+
+  // Part 5: 📊 for auto-checked (passed/failed), bare ─ for inconclusive
+  const isAutoChecked = outcome === 'passed' || outcome === 'failed';
+  const checkIcon =
     outcome === 'passed' ? <span className="text-green-400">✓</span> :
     outcome === 'failed' ? <span className="text-red-400">✗</span> :
     <span className="text-[#6e7681]">─</span>;
 
   const labelColor =
-    outcome === 'passed' ? 'text-[#e6edf3]' :
-    outcome === 'failed' ? 'text-[#e6edf3]' :
-    'text-[#8b949e]';
+    outcome === 'inconclusive' ? 'text-[#8b949e]' : 'text-[#e6edf3]';
 
-  const detail = outcome === 'inconclusive'
-    ? actual
-    : `${actual} (${outcome === 'passed' ? 'met' : 'limit'} ${expected})`;
+  // Part 4: regime rules get "(BTC 1h based)" appended to actual
+  const isRegime = ruleType === 'regime';
+
+  let detail: string;
+  if (outcome === 'inconclusive') {
+    detail = `${actual} — needs manual review`;
+  } else {
+    const actualDisplay = isRegime ? `${actual} (BTC 1h based)` : actual;
+    const verb = outcome === 'passed' ? 'met' : 'limit';
+    detail = `${actualDisplay} (${verb} ${expected})`;
+  }
 
   return (
-    <div className="flex items-start gap-2 text-xs py-0.5">
-      <span className="shrink-0 w-3 text-center">{icon}</span>
+    <div className="flex items-start gap-1.5 text-xs py-0.5">
+      {isAutoChecked && (
+        <span className="shrink-0 text-[#6e7681] text-[10px] leading-4 mt-px">📊</span>
+      )}
+      <span className={`shrink-0 w-3 text-center ${!isAutoChecked ? 'ml-0' : ''}`}>
+        {checkIcon}
+      </span>
       <div className="min-w-0 flex-1">
         <div className={labelColor}>{ruleLabel}</div>
         <div className="text-[10px] text-[#6e7681] truncate" title={detail}>{detail}</div>
