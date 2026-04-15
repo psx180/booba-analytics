@@ -88,11 +88,26 @@ export async function POST(req: NextRequest) {
     const ingestResult = await ingestTrades(newFills, walletAddress);
     const imported = ingestResult.tradesUpserted;
 
-    // 5. Incrementally group each new fill (serialized — groupNewFill reads and
-    //    writes open positions, so concurrent calls would race on the lookup).
+    // 5. Detect network from header and resolve target journal for new positions.
+    //    Testnet fills must land in the Testnet journal, not the default journal.
+    const networkHeader = req.headers.get('X-Pacifica-Network');
+    let syncJournalId: string | undefined;
+    if (networkHeader === 'testnet') {
+      let testnetJournal = await prisma.journal.findFirst({
+        where: { walletAddress, name: 'Testnet' },
+      });
+      if (!testnetJournal) {
+        testnetJournal = await prisma.journal.create({
+          data: { walletAddress, name: 'Testnet' },
+        });
+      }
+      syncJournalId = testnetJournal.id;
+    }
+
+    // Incrementally group each new fill (mutex inside groupNewFill serializes per wallet).
     for (const fill of newFills) {
       try {
-        await groupingService.groupNewFill(walletAddress, fillId(fill));
+        await groupingService.groupNewFill(walletAddress, fillId(fill), syncJournalId);
       } catch (err) {
         console.error('[sync] groupNewFill failed for', fillId(fill), err);
       }

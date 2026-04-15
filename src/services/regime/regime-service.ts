@@ -96,27 +96,31 @@ export class RegimeService {
     let tagged = 0;
 
     for (const trade of untagged) {
-      if (!trade.entryTime || trade.entryTime.getTime() === 0) continue;
+      try {
+        if (!trade.entryTime || trade.entryTime.getTime() === 0) continue;
 
-      // Find the most recent snapshot at or before entry time
-      const snapshot = await prisma.regimeSnapshot.findFirst({
-        where: {
-          timestamp: { lte: trade.entryTime },
-          method: this.detector.name,
-        },
-        orderBy: { timestamp: 'desc' },
-      });
+        // Find the most recent snapshot at or before entry time
+        const snapshot = await prisma.regimeSnapshot.findFirst({
+          where: {
+            timestamp: { lte: trade.entryTime },
+            method: this.detector.name,
+          },
+          orderBy: { timestamp: 'desc' },
+        });
 
-      if (!snapshot?.regimeClassification) continue;
+        if (!snapshot?.regimeClassification) continue;
 
-      await prisma.trade.update({
-        where: { id: trade.id },
-        data: {
-          regimeAtEntry: snapshot.regimeClassification,
-          updatedAt: new Date(),
-        },
-      });
-      tagged++;
+        await prisma.trade.update({
+          where: { id: trade.id },
+          data: {
+            regimeAtEntry: snapshot.regimeClassification,
+            updatedAt: new Date(),
+          },
+        });
+        tagged++;
+      } catch {
+        // Non-standard asset or unexpected value type — skip this trade
+      }
     }
 
     return tagged;
@@ -127,27 +131,31 @@ export class RegimeService {
    * Used for real-time tagging when a new trade is detected.
    */
   async getRegimeAt(asset: string, timestamp: Date): Promise<RegimeReading | null> {
-    const snapshot = await prisma.regimeSnapshot.findFirst({
-      where: {
-        asset,
-        timestamp: { lte: timestamp },
-        method: this.detector.name,
-      },
-      orderBy: { timestamp: 'desc' },
-    });
+    try {
+      const snapshot = await prisma.regimeSnapshot.findFirst({
+        where: {
+          asset,
+          timestamp: { lte: timestamp },
+          method: this.detector.name,
+        },
+        orderBy: { timestamp: 'desc' },
+      });
 
-    if (!snapshot?.regimeClassification) return null;
+      if (!snapshot?.regimeClassification) return null;
 
-    return {
-      timestamp: snapshot.timestamp,
-      classification: snapshot.regimeClassification as RegimeReading['classification'],
-      confidence: snapshot.confidence ?? 0,
-      indicators: {
-        adx: snapshot.adxValue ?? 0,
-        atr: snapshot.atrValue ?? 0,
-        atr_sma: snapshot.atrSmaValue ?? 0,
-      },
-    };
+      return {
+        timestamp: snapshot.timestamp,
+        classification: snapshot.regimeClassification as RegimeReading['classification'],
+        confidence: snapshot.confidence ?? 0,
+        indicators: {
+          adx: snapshot.adxValue ?? 0,
+          atr: snapshot.atrValue ?? 0,
+          atr_sma: snapshot.atrSmaValue ?? 0,
+        },
+      };
+    } catch {
+      return null;
+    }
   }
 }
 
