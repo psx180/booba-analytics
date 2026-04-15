@@ -449,12 +449,25 @@ export class AnalyticsService {
         // Legacy rows may not be JSON — skip.
       }
     }
+    // Deduplicate by module — keep the highest-impact insight per module.
+    // Multiple rows for the same module can accumulate when a detector runs
+    // on per-subset data (per cluster, per regime) and each subset emits its
+    // own observation. Group by module and keep the best representative.
+    const moduleMap = new Map<string, Insight>();
+    for (const insight of insights) {
+      const existing = moduleMap.get(insight.module);
+      if (!existing || (insight.impactScore ?? 0) > (existing.impactScore ?? 0)) {
+        moduleMap.set(insight.module, insight);
+      }
+    }
+    const deduped = Array.from(moduleMap.values());
+
     // Sort significant insights first, then by impactScore descending
-    insights.sort((a, b) => {
+    deduped.sort((a, b) => {
       if (a.isSignificant !== b.isSignificant) return a.isSignificant ? -1 : 1;
       return (b.impactScore ?? 0) - (a.impactScore ?? 0);
     });
-    return { insights, lastComputedAt };
+    return { insights: deduped, lastComputedAt };
   }
 
   // ─── Internal helpers ───────────────────────────────────────────────────

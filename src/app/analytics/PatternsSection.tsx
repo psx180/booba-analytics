@@ -150,7 +150,7 @@ export default function PatternsSection() {
     return <div className="text-xs text-[#6e7681]">Loading patterns…</div>;
   }
 
-  if (!data || (!data.clustering && !data.anomalies && !data.markov)) {
+  if (!data || (!data.clustering && !data.anomalies)) {
     return (
       <div className="text-xs text-[#6e7681]">
         No ML pattern data yet — analytics run automatically after trades are imported.
@@ -163,7 +163,6 @@ export default function PatternsSection() {
     <div className="space-y-8">
       {data.clustering && <ClusteringPanel result={data.clustering} onSelect={setOpenPositionId} />}
       {data.anomalies && <AnomalyPanel result={data.anomalies} onSelect={setOpenPositionId} />}
-      {data.markov && <MarkovPanel result={data.markov} />}
 
       {data.computedAt && (
         <div className="text-[10px] text-[#6e7681] pt-2 border-t border-[#21262d]">
@@ -189,12 +188,16 @@ function ClusteringPanel({
   result: ClusteringResult;
   onSelect: (id: string) => void;
 }) {
+  const [collapsed, setCollapsed] = useState(false);
+
   if (result.lowQuality || result.clusters.length === 0) {
     return (
       <div>
         <SectionHeader
           title="Trade Clusters"
           subtitle={`Silhouette ${result.silhouetteScore.toFixed(2)} — clusters not meaningful`}
+          collapsed={collapsed}
+          onToggle={() => setCollapsed((c) => !c)}
         />
         <div className="text-xs text-[#6e7681] bg-[#0d1117] border border-[#21262d] rounded p-4">
           No clear trading patterns detected yet. More trades with variety will help the algorithm find meaningful patterns.
@@ -224,8 +227,11 @@ function ClusteringPanel({
           `PC2 ${(result.pcaExplainedVariance[1] * 100).toFixed(0)}% var · ` +
           `winners filled, losers outlined`
         }
+        collapsed={collapsed}
+        onToggle={() => setCollapsed((c) => !c)}
       />
-
+      {collapsed ? null : (
+      <div className="space-y-4">
       {/* Scatter plot */}
       <div className="bg-[#0d1117] border border-[#21262d] rounded p-3 mb-4">
         <ResponsiveContainer width="100%" height={340}>
@@ -321,6 +327,8 @@ function ClusteringPanel({
           </tbody>
         </table>
       </div>
+      </div>
+      )}
     </div>
   );
 }
@@ -347,13 +355,22 @@ function AnomalyPanel({
   result: AnomalyResult;
   onSelect: (id: string) => void;
 }) {
+  const [collapsed, setCollapsed] = useState(false);
+
   if (result.flat || result.anomalies.length === 0) {
     return (
       <div>
-        <SectionHeader title="Anomalous Trades" subtitle="None detected" />
-        <div className="text-xs text-[#6e7681] bg-[#0d1117] border border-[#21262d] rounded p-4">
-          Anomaly scores are evenly distributed across your {result.totalPositions} trades — no clear outliers.
-        </div>
+        <SectionHeader
+          title="Trades Flagged for Review"
+          subtitle="None detected"
+          collapsed={collapsed}
+          onToggle={() => setCollapsed((c) => !c)}
+        />
+        {!collapsed && (
+          <div className="text-xs text-[#6e7681] bg-[#0d1117] border border-[#21262d] rounded p-4">
+            Anomaly scores are evenly distributed across your {result.totalPositions} trades — no clear outliers.
+          </div>
+        )}
       </div>
     );
   }
@@ -363,7 +380,10 @@ function AnomalyPanel({
       <SectionHeader
         title={`${result.anomalies.length} Trades Flagged for Review`}
         subtitle={`Deviate significantly from your normal patterns · threshold ${result.threshold.toFixed(2)}`}
+        collapsed={collapsed}
+        onToggle={() => setCollapsed((c) => !c)}
       />
+      {!collapsed && (
       <div className="bg-[#0d1117] border border-[#21262d] rounded overflow-hidden">
         <table className="w-full text-xs">
           <thead className="bg-[#161b22] text-[#6e7681]">
@@ -372,37 +392,46 @@ function AnomalyPanel({
               <th className="text-left px-3 py-2 font-medium">Entry</th>
               <th className="text-right px-3 py-2 font-medium">P&L</th>
               <th className="text-right px-3 py-2 font-medium">Score</th>
-              <th className="text-left px-3 py-2 font-medium">Top Anomalous Features</th>
+              <th className="text-left px-3 py-2 font-medium">Why it's unusual</th>
             </tr>
           </thead>
           <tbody>
-            {result.anomalies.map((a) => (
-              <tr
-                key={a.positionId}
-                className="border-t border-[#21262d] hover:bg-[#161b22] cursor-pointer transition-colors"
-                onClick={() => onSelect(a.positionId)}
-              >
-                <td className="px-3 py-2 text-[#e6edf3]">{a.position.asset}</td>
-                <td className="px-3 py-2 text-[#6e7681]">
-                  {a.position.entryTime ? new Date(a.position.entryTime).toLocaleDateString() : '—'}
-                </td>
-                <td className={`px-3 py-2 text-right ${a.position.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  ${a.position.pnl.toFixed(2)}
-                </td>
-                <td className="px-3 py-2 text-right text-amber-400">{a.anomalyScore.toFixed(2)}</td>
-                <td className="px-3 py-2 text-[#6e7681]">
-                  {a.topFeatures.map((f) => (
-                    <span key={f.feature} className="inline-block mr-2">
-                      <span className="text-[#8b949e]">{formatFeatureLabel(f.feature)}</span>
-                      <span className="text-[#6e7681]"> z={f.zScore.toFixed(1)}</span>
-                    </span>
-                  ))}
-                </td>
-              </tr>
-            ))}
+            {result.anomalies.map((a) => {
+              // Filter to notably unusual features (|z| > 1.5), sorted most unusual first
+              const notableFeatures = [...a.topFeatures]
+                .filter((f) => Math.abs(f.zScore) > 1.5)
+                .sort((x, y) => Math.abs(y.zScore) - Math.abs(x.zScore));
+              return (
+                <tr
+                  key={a.positionId}
+                  className="border-t border-[#21262d] hover:bg-[#161b22] cursor-pointer transition-colors"
+                  onClick={() => onSelect(a.positionId)}
+                >
+                  <td className="px-3 py-2 text-[#e6edf3]">{a.position.asset}</td>
+                  <td className="px-3 py-2 text-[#6e7681]">
+                    {a.position.entryTime ? new Date(a.position.entryTime).toLocaleDateString() : '—'}
+                  </td>
+                  <td className={`px-3 py-2 text-right ${a.position.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    ${a.position.pnl.toFixed(2)}
+                  </td>
+                  <td className="px-3 py-2 text-right text-amber-400">{a.anomalyScore.toFixed(2)}</td>
+                  <td className="px-3 py-2 text-[#8b949e]">
+                    {notableFeatures.length > 0
+                      ? notableFeatures.map((f) => (
+                          <span key={f.feature} className="block leading-snug">
+                            {describeFeature(f.feature, f.zScore)}
+                          </span>
+                        ))
+                      : <span className="text-[#6e7681]">Unusual overall pattern</span>
+                    }
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
+      )}
     </div>
   );
 }
@@ -486,13 +515,74 @@ function TransitionCell({
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }) {
+function SectionHeader({
+  title,
+  subtitle,
+  collapsed,
+  onToggle,
+}: {
+  title: string;
+  subtitle?: string;
+  collapsed?: boolean;
+  onToggle?: () => void;
+}) {
+  if (onToggle) {
+    return (
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full text-left mb-3 group"
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-[#6e7681] group-hover:text-[#c9d1d9] transition-colors">
+            {collapsed ? '▶' : '▼'}
+          </span>
+          <h3 className="text-sm font-semibold text-white group-hover:text-[#c9d1d9] transition-colors">{title}</h3>
+        </div>
+        {subtitle && <p className="text-[11px] text-[#6e7681] mt-0.5 pl-4">{subtitle}</p>}
+      </button>
+    );
+  }
   return (
     <div className="mb-3">
       <h3 className="text-sm font-semibold text-white">{title}</h3>
       {subtitle && <p className="text-[11px] text-[#6e7681] mt-0.5">{subtitle}</p>}
     </div>
   );
+}
+
+/** Map a raw feature name + z-score to a human-readable explanation. */
+function describeFeature(feature: string, zScore: number): string {
+  const absZ = Math.abs(zScore).toFixed(1);
+  switch (feature) {
+    case 'totalSize':
+      return `Unusually large position (${absZ}x normal variation)`;
+    case 'holdTimeSeconds':
+      return zScore > 0 ? 'Held much longer than usual' : 'Held much shorter than usual';
+    case 'aggregatePnl':
+    case 'pnl':
+      return zScore < 0 ? 'Unusually large loss' : 'Unusually large gain';
+    case 'tradesSinceLastLoss':
+      return 'Long time since previous loss';
+    case 'timeSinceLastTrade':
+      return 'Unusual time gap since last trade';
+    case 'entryHour':
+      return 'Unusual entry time';
+    case 'sizeVsAverage':
+      return `Position ${absZ}x larger than your average`;
+    case 'regimeEncoded':
+      return 'Unusual market conditions';
+    case 'entryDayOfWeek':
+      return 'Unusual trading day';
+    case 'rollingWinRate5':
+      return zScore < 0 ? 'During a losing streak' : 'During a winning streak';
+    case 'tradeTypeEncoded':
+      return 'Different trade type than usual';
+    default: {
+      const label = feature.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase()).trim();
+      return `${label} (${absZ}x normal)`;
+    }
+  }
 }
 
 function formatFeatureLabel(name: string): string {
@@ -507,4 +597,41 @@ function formatHold(seconds: number): string {
   if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
   if (seconds < 86400) return `${(seconds / 3600).toFixed(1)}h`;
   return `${(seconds / 86400).toFixed(1)}d`;
+}
+
+// ── Outcome Serial Dependence (Psychology tab) ────────────────────────────
+// Standalone export — fetches the ML data and renders only the Markov panel.
+// Lives here to share the type definitions and MarkovPanel component.
+
+export function OutcomeSerialDependence() {
+  const { journalId } = useJournal();
+  const authFetch = useAuthFetch();
+  const [markov, setMarkov] = useState<MarkovResult | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!journalId) return;
+    setLoading(true);
+    const p = new URLSearchParams({ journalId });
+    authFetch(`/api/analytics/ml?${p}`)
+      .then((r) => r.json())
+      .then((d: MlAnalyticsResponse) => setMarkov(d.markov ?? null))
+      .catch(() => setMarkov(null))
+      .finally(() => setLoading(false));
+  }, [journalId, authFetch]);
+
+  if (loading) {
+    return (
+      <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
+        <div className="text-xs text-[#6e7681]">Loading serial dependence…</div>
+      </div>
+    );
+  }
+  if (!markov) return null;
+
+  return (
+    <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
+      <MarkovPanel result={markov} />
+    </div>
+  );
 }

@@ -1,5 +1,7 @@
 'use client';
 
+import { useState } from 'react';
+
 /**
  * EdgeFinder — frontend for the combinatorial significance search.
  *
@@ -149,6 +151,60 @@ function EmptyColumn({ label }: { label: string }) {
   );
 }
 
+// ── Zero-significant state ────────────────────────────────────────────────
+
+function EdgeFinderZeroState({ result }: { result: CombinatorialSearchResult }) {
+  const [showDetails, setShowDetails] = useState(false);
+
+  // Extract unique dimension names from findings (the raw tested slices)
+  const dimensions = Array.from(
+    new Set(
+      result.findings.flatMap((f) => f.dimensions.map((d) => d.name)),
+    ),
+  );
+
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-[#c9d1d9] leading-relaxed">
+        Tested{' '}
+        <span className="text-white font-mono">{result.totalTestsRun}</span>{' '}
+        trading conditions. Your performance is consistent across all conditions tested — no hidden edge or vulnerability detected.
+      </p>
+      <p className="text-xs text-[#8b949e]">
+        This means your results aren't concentrated in specific conditions, which is a sign of disciplined, repeatable trading.
+      </p>
+      <button
+        type="button"
+        onClick={() => setShowDetails((s) => !s)}
+        className="text-xs text-[#6e7681] hover:text-[#c9d1d9] transition-colors"
+      >
+        {showDetails ? 'Hide details ▲' : 'Show details ▼'}
+      </button>
+      {showDetails && (
+        <div className="bg-[#0d1117] border border-[#21262d] rounded p-3 space-y-1.5">
+          <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-2">Dimensions tested</div>
+          {dimensions.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {dimensions.map((d) => (
+                <span key={d} className="px-2 py-0.5 bg-[#21262d] rounded text-[11px] text-[#8b949e]">
+                  {d}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-[#6e7681]">
+              FDR correction at {(result.fdrRate * 100).toFixed(0)}% · computed in {result.computeMs}ms
+            </p>
+          )}
+          <div className="text-[10px] text-[#484f58] pt-1">
+            FDR correction at {(result.fdrRate * 100).toFixed(0)}% · computed in {result.computeMs}ms
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────
 
 export default function EdgeFinder({ result }: { result: CombinatorialSearchResult | null }) {
@@ -164,17 +220,7 @@ export default function EdgeFinder({ result }: { result: CombinatorialSearchResu
   const { totalTestsRun, totalSurvivingBH, fdrRate, topEdges, topWeaknesses, estimatedSavings, computeMs } = result;
 
   if (totalSurvivingBH === 0) {
-    return (
-      <div className="space-y-3">
-        <div className="text-xs text-[#6e7681]">
-          Tested <span className="text-white font-mono">{totalTestsRun}</span> dimension
-          combinations at FDR=<span className="font-mono">{(fdrRate * 100).toFixed(0)}%</span>.
-          No statistically significant patterns found after multiple-comparison correction.
-          Your performance is consistent across all dimensions tested.
-        </div>
-        <div className="text-[10px] text-[#484f58]">Computed in {computeMs}ms.</div>
-      </div>
-    );
+    return <EdgeFinderZeroState result={result} />;
   }
 
   return (

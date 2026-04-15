@@ -290,6 +290,10 @@ function computeFeeAttribution(closed: Position[], totalPnl: number): FeeAttribu
     if ((p.aggregatePnl ?? 0) > 0) grossWins += p.aggregatePnl!;
   }
 
+  // Fees are a cost to the trader. Exchange APIs often report fees as positive
+  // absolute amounts — negate so totalFees is always negative (a debit).
+  totalFees = -Math.abs(totalFees);
+
   const directionalPnl = totalPnl - totalFunding;
   const feeImpact = grossWins > 0 ? r4(Math.abs(totalFees) / grossWins * 100) : 0;
   const fundingImpact = Math.abs(totalPnl) > 0 ? r4(totalFunding / Math.abs(totalPnl) * 100) : 0;

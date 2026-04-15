@@ -12,7 +12,7 @@ import ExitAnalysis from './ExitAnalysis';
 import StrategyBreakdown from './StrategyBreakdown';
 import WhatIfExplorer from './WhatIfExplorer';
 import RegimePerformance from './RegimePerformance';
-import PatternsSection from './PatternsSection';
+import PatternsSection, { OutcomeSerialDependence } from './PatternsSection';
 import EdgeFinder, { type CombinatorialSearchResult } from './EdgeFinder';
 import WartRadar, { type WartResult } from './WartRadar';
 import DisciplineGauge from './behavior/DisciplineGauge';
@@ -1253,7 +1253,10 @@ function PsychologyTab({
         </div>
       </div>
 
-      {/* ── Row 2: TiltEquityCurve (full width) ───────────────────── */}
+      {/* ── Row 2: Outcome Serial Dependence (Markov matrix) ─────── */}
+      <OutcomeSerialDependence />
+
+      {/* ── Row 3: TiltEquityCurve (full width) ───────────────────── */}
       <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
         <TiltEquityCurve
           series={equitySeries}
@@ -1263,7 +1266,7 @@ function PsychologyTab({
         />
       </div>
 
-      {/* ── Row 3: SizeAfterOutcomeScatter ────────────────────────── */}
+      {/* ── Row 4: SizeAfterOutcomeScatter ────────────────────────── */}
       <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
         <SizeAfterOutcomeScatter positions={behaviorPositions} />
       </div>
@@ -1304,6 +1307,9 @@ function StrategyTab({
   playbooks: { id: string; name: string }[];
 }) {
   const inlineInsights = getInlineInsights('strategy', insights);
+  const [advancedExpanded, setAdvancedExpanded] = useState(false);
+  const [edgeFinderExpanded, setEdgeFinderExpanded] = useState(true);
+
   return (
     <div className="space-y-4">
       <StrategyVerdict
@@ -1321,21 +1327,52 @@ function StrategyTab({
       <StrategyBreakdown {...chartProps} />
       <RegimePerformance {...chartProps} />
       <WalkForwardChart journalId={chartProps.journalId} />
-      <PatternsSection />
+
+      {/* ── Advanced Analysis (collapsed by default) ─────────────────── */}
       <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
-        <div className="px-4 py-3 border-b border-[#21262d]">
-          <h2 className="text-sm font-semibold text-white">
-            {combinatorialResult
-              ? `Edge Finder · ${combinatorialResult.totalTestsRun} combinations tested, ${combinatorialResult.totalSurvivingBH} significant`
-              : 'Edge Finder'}
-          </h2>
-          <p className="text-xs text-[#6e7681] mt-0.5">
-            Exhaustive slice-by-slice search with Benjamini-Hochberg FDR correction at 10%.
-          </p>
-        </div>
-        <div className="px-4 py-5">
-          <EdgeFinder result={combinatorialResult} />
-        </div>
+        <button
+          type="button"
+          onClick={() => setAdvancedExpanded((e) => !e)}
+          className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-[#1c2128] transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-white">Advanced Analysis</span>
+            <span className="text-xs text-[#6e7681]">(3 sections)</span>
+          </div>
+          <span className="text-xs text-[#6e7681]">{advancedExpanded ? '▲' : '▼'}</span>
+        </button>
+        {advancedExpanded && (
+          <div className="border-t border-[#21262d] px-4 py-5 space-y-6">
+            {/* Trade Clusters + Trades Flagged for Review */}
+            <PatternsSection />
+
+            {/* Edge Finder */}
+            <div>
+              <button
+                type="button"
+                onClick={() => setEdgeFinderExpanded((e) => !e)}
+                className="w-full flex items-center gap-2 text-left mb-3 group"
+              >
+                <span className="text-[10px] text-[#6e7681] group-hover:text-[#c9d1d9] transition-colors">
+                  {edgeFinderExpanded ? '▼' : '▶'}
+                </span>
+                <span className="text-sm font-semibold text-white group-hover:text-[#c9d1d9] transition-colors">
+                  {combinatorialResult && combinatorialResult.totalSurvivingBH > 0
+                    ? `Edge Finder — ${combinatorialResult.totalSurvivingBH} significant pattern${combinatorialResult.totalSurvivingBH === 1 ? '' : 's'} found`
+                    : 'Edge Finder'}
+                </span>
+              </button>
+              {edgeFinderExpanded && (
+                <>
+                  <p className="text-xs text-[#6e7681] mb-3 pl-4">
+                    Exhaustive slice-by-slice search with Benjamini-Hochberg FDR correction at 10%.
+                  </p>
+                  <EdgeFinder result={combinatorialResult} />
+                </>
+              )}
+            </div>
+          </div>
+        )}
       </div>
       {playbooks.length > 0 && (
         <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
@@ -1888,11 +1925,6 @@ export default function AnalyticsClient() {
 
   return (
     <div className="space-y-4">
-      {/* ── Page title ───────────────────────────────────────────────── */}
-      <div>
-        <h1 className="text-lg font-semibold text-white">Analytics</h1>
-      </div>
-
       {/* ── Filter Bar ─────────────────────────────────────────────────── */}
       <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-3">
         <div className="flex flex-wrap gap-4 items-end">
