@@ -32,10 +32,16 @@ export function parseFilters(sp: URLSearchParams): Filters {
   if (tradeType) filters.tradeType = tradeType;
 
   const dateFrom = sp.get('dateFrom');
-  if (dateFrom) filters.dateFrom = new Date(dateFrom);
+  if (dateFrom) {
+    const d = new Date(dateFrom);
+    if (isFinite(d.getTime())) filters.dateFrom = d;
+  }
 
   const dateTo = sp.get('dateTo');
-  if (dateTo) filters.dateTo = new Date(dateTo);
+  if (dateTo) {
+    const d = new Date(dateTo);
+    if (isFinite(d.getTime())) filters.dateTo = d;
+  }
 
   return filters;
 }

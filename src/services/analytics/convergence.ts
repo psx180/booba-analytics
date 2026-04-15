@@ -1,3 +1,5 @@
+import 'server-only';
+
 /**
  * Convergence detection — meta-analysis layer.
  *

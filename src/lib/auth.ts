@@ -66,14 +66,17 @@ export async function getAuthenticatedWallet(request: Request): Promise<string |
   // Extension bot-key auth — EventSource cannot set custom headers, so the
   // extension passes credentials as query params: ?apiKey=<BOT_KEY>&wallet=<ADDR>.
   // Only active when BOT_API_KEY is configured in the environment.
+  // The wallet param is validated against DEFAULT_WALLET_ADDRESS to prevent
+  // an attacker with a leaked key from impersonating arbitrary wallets.
   const BOT_KEY = process.env.BOT_API_KEY;
-  if (BOT_KEY) {
+  const BOT_WALLET = process.env.DEFAULT_WALLET_ADDRESS;
+  if (BOT_KEY && BOT_WALLET) {
     try {
       const url = new URL(request.url);
       const providedKey = url.searchParams.get('apiKey');
       const wallet = url.searchParams.get('wallet');
-      if (providedKey && wallet && providedKey === BOT_KEY) {
-        return wallet;
+      if (providedKey && wallet && wallet === BOT_WALLET && providedKey === BOT_KEY) {
+        return BOT_WALLET;
       }
     } catch {
       // Malformed URL — fall through to Privy

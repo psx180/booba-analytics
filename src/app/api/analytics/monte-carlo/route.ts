@@ -21,6 +21,7 @@ export async function GET(req: NextRequest) {
     const positions = await (prisma as any).position.findMany({
       where,
       select: { aggregatePnl: true, totalSize: true, averageEntryPrice: true },
+      take: 5000,
     });
 
     // Compute percentage return per trade: pnlPct = aggregatePnl / (averageEntryPrice * totalSize) * 100

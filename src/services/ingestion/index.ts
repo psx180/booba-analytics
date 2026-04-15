@@ -192,11 +192,13 @@ export async function ingestFunding(
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Check which fill IDs are already in the database.
+ * Check which fill IDs are already in the database for a specific wallet.
+ * Scoped by walletAddress to prevent cross-wallet fill ID collisions from
+ * silently dropping fills during import dedup.
  */
-export async function getExistingFillIds(): Promise<Set<string>> {
+export async function getExistingFillIds(walletAddress: string): Promise<Set<string>> {
   const trades = await prisma.trade.findMany({
-    where: { id: { startsWith: 'pacifica_fill_' } },
+    where: { walletAddress, id: { startsWith: 'pacifica_fill_' } },
     select: { id: true },
   });
   return new Set(trades.map((t) => t.id));

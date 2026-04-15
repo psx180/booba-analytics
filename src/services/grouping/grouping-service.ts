@@ -413,16 +413,23 @@ export class GroupingService {
     };
   }
 
-  async undoMerge(undoData: {
-    targetId: string;
-    originalPositions: Array<Record<string, unknown>>;
-    orderAssignments: Record<string, string>;
-  }) {
+  async undoMerge(
+    undoData: {
+      targetId: string;
+      originalPositions: Array<Record<string, unknown>>;
+      orderAssignments: Record<string, string>;
+    },
+    walletAddress: string,
+  ) {
     const { targetId, originalPositions, orderAssignments } = undoData;
 
     // Recreate deleted positions (everything except the target which still exists)
     for (const orig of originalPositions) {
       if (orig.id === targetId) continue;
+      // Reject any payload that tries to inject a different wallet's data
+      if ((orig as any).walletAddress !== walletAddress) {
+        throw new Error('Undo data wallet mismatch — rejecting');
+      }
       const { createdAt: _c, updatedAt: _u, ...rest } = orig as Record<string, unknown>;
       const posData: Record<string, unknown> = { ...rest };
       if (posData.firstEntryTime) posData.firstEntryTime = new Date(posData.firstEntryTime as string);

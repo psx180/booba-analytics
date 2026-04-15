@@ -43,23 +43,19 @@ export async function GET(req: NextRequest) {
     const caller = searchParams.get('caller') ?? undefined;
     const limit = Math.min(parseInt(searchParams.get('limit') ?? '50', 10), 200);
 
-    const signals = await prisma.signal.findMany({
-      where: {
-        walletAddress,
-        ...(status ? { status } : {}),
-        ...(caller ? { callerName: caller } : {}),
-      },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-    });
-
-    const total = await prisma.signal.count({
-      where: {
-        walletAddress,
-        ...(status ? { status } : {}),
-        ...(caller ? { callerName: caller } : {}),
-      },
-    });
+    const signalWhere = {
+      walletAddress,
+      ...(status ? { status } : {}),
+      ...(caller ? { callerName: caller } : {}),
+    };
+    const [signals, total] = await Promise.all([
+      prisma.signal.findMany({
+        where: signalWhere,
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+      }),
+      prisma.signal.count({ where: signalWhere }),
+    ]);
 
     return NextResponse.json({ signals, total });
   });

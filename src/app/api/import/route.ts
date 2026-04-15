@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
     steps.fetchedFills = fills.length;
 
     // 3. Deduplicate (incremental — skip fills already in DB)
-    const existingIds = await getExistingFillIds();
+    const existingIds = await getExistingFillIds(walletAddress);
     const newFills = filterNewFills(fills, existingIds);
     steps.newFills = newFills.length;
 

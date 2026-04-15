@@ -432,7 +432,13 @@ export class AnalyticsService {
     walletAddress: string,
     journalId?: string,
   ): Promise<{ insights: Insight[]; lastComputedAt: Date | null }> {
-    const where: any = { walletAddress, isActive: true };
+    const where: any = {
+      walletAddress,
+      isActive: true,
+      // Belt-and-suspenders: ignore observations older than 30 days to
+      // prevent stale-but-active rows from accumulating indefinitely.
+      createdAt: { gte: new Date(Date.now() - 30 * 86_400_000) },
+    };
     if (journalId) where.journalId = journalId;
     const rows = await this.db.boobaObservation.findMany({
       where,

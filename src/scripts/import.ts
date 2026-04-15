@@ -55,7 +55,7 @@ async function main() {
   console.log(`  Fetched ${fills.length} fills`);
 
   if (incremental) {
-    const existingIds = await getExistingFillIds();
+    const existingIds = await getExistingFillIds(walletAddress);
     fills = filterNewFills(fills, existingIds);
     console.log(`  ${fills.length} new fills after deduplication`);
   }

@@ -60,6 +60,7 @@ export async function GET(req: NextRequest) {
       where: positionWhere,
       include: { _count: { select: { orderGroups: true } } },
       orderBy: { [sortBy]: sortDir },
+      take: 2000,
     }),
     prisma.linkedStrategy.findMany({
       where: {

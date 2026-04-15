@@ -29,6 +29,7 @@
  *     -d '{"ticker":"BTCUSDT","action":"buy","price":"79000","tp":"82000","sl":"77000","strategy":"MA Crossover"}'
  */
 
+import crypto from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 
@@ -164,7 +165,9 @@ export async function POST(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const providedSecret = searchParams.get('secret');
-  if (!providedSecret || providedSecret !== expectedSecret) {
+  const secretsMatch = (a: string, b: string) =>
+    a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  if (!providedSecret || !secretsMatch(providedSecret, expectedSecret)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

@@ -28,6 +28,11 @@ export async function POST(
     return NextResponse.json({ error: 'Missing screenshot' }, { status: 400 });
   }
 
+  const MAX_SCREENSHOT_BYTES = 2 * 1024 * 1024; // 2 MB
+  if (screenshot.length > MAX_SCREENSHOT_BYTES) {
+    return NextResponse.json({ error: 'Screenshot too large (max 2 MB)' }, { status: 413 });
+  }
+
   await prisma.position.update({
     where: { id },
     data: { screenshot },
