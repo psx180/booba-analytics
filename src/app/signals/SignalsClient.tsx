@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuthFetch } from '@/lib/api-client';
 import SignalInput from './SignalInput';
 import CallerAnalyticsModal from './CallerAnalyticsModal';
-import BoobaChat from '@/app/components/booba/BoobaChat';
+import { useBooba } from '@/app/components/booba/BoobaContext';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -50,6 +50,7 @@ interface SourceInfo {
   status: 'active' | 'experimental' | 'not_configured';
   todayCount: number;
   experimental: boolean;
+  botApiKeyConfigured: boolean;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -154,9 +155,12 @@ function SimulationMeta({ sig }: { sig: Signal }) {
   return (
     <tr>
       <td colSpan={9} style={{ padding: '3px 12px 8px', borderBottom: '1px solid #161b22' }}>
-        <span style={{ fontSize: '11px', color: '#484f58' }}>
-          📊 Simulated: ~{candleCount.toLocaleString()} candles ({tf}) over {duration}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <span style={{ fontSize: '11px', color: '#484f58' }}>
+            📊 Simulated: ~{candleCount.toLocaleString()} candles ({tf}) over {duration}
+          </span>
+          <SignalSparkline sig={sig} />
+        </div>
       </td>
     </tr>
   );
@@ -174,7 +178,7 @@ export default function SignalsClient() {
   const [loading, setLoading]     = useState(true);
   const [checking, setChecking]   = useState(false);
   const [checkResult, setCheckResult] = useState<string | null>(null);
-  const [chatOpen, setChatOpen]   = useState(false);
+  const { openChat: openBoobaChat } = useBooba();
   const authFetch = useAuthFetch();
 
   const loadData = useCallback(async () => {
@@ -230,7 +234,7 @@ export default function SignalsClient() {
     .sort((a, b) => b.hitRate - a.hitRate)[0] ?? null;
 
   function handleAskBooba() {
-    setChatOpen(true);
+    openBoobaChat('Track a new signal for me.');
   }
 
   return (
@@ -387,12 +391,6 @@ export default function SignalsClient() {
         />
       )}
 
-      {/* Booba chat */}
-      <BoobaChat
-        isOpen={chatOpen}
-        onClose={() => setChatOpen(false)}
-        prefillMessage="Track a new signal for me."
-      />
     </div>
   );
 }
@@ -593,55 +591,108 @@ function LeaderboardTable({
   );
 }
 
-// ── Signal Sources (Fix 3) ───────────────────────────────────────────────────
+// ── Signal Sources ──────────────────────────────────────────────────────────
 
 function SignalSources({ sources }: { sources: SourceInfo[] }) {
+  const [expandedType, setExpandedType] = useState<string | null>(null);
+
   return (
     <div style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: '8px', overflow: 'hidden' }}>
-      {sources.map((src, i) => (
-        <div
-          key={src.type}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            padding: '10px 16px',
-            borderBottom: i < sources.length - 1 ? '1px solid #21262d' : 'none',
-            gap: '10px',
-          }}
-        >
-          <span style={{ fontSize: '16px', width: '22px', flexShrink: 0 }}>{src.icon}</span>
-          <span style={{ flex: 1, color: '#c9d1d9', fontSize: '13px', fontWeight: 500 }}>{src.label}</span>
+      {sources.map((src, i) => {
+        const isExpanded = expandedType === src.type;
+        const isLast = i === sources.length - 1;
+        const hasSetup = src.type === 'discord' || src.type === 'telegram' || src.type === 'tradingview';
 
-          <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {src.status === 'active' && (
-              <span style={{ color: '#3fb950', fontSize: '12px', fontWeight: 600 }}>Active</span>
-            )}
-            {src.status === 'experimental' && (
-              <span style={{
-                padding: '1px 7px', borderRadius: '4px',
-                background: 'rgba(210,153,34,0.15)', color: '#d29922',
-                fontSize: '11px', fontWeight: 700, letterSpacing: '0.04em',
-              }}>
-                Experimental
+        return (
+          <div key={src.type}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                padding: '10px 16px',
+                borderBottom: (!isLast || isExpanded) ? '1px solid #21262d' : 'none',
+                gap: '10px',
+                cursor: hasSetup ? 'pointer' : 'default',
+              }}
+              onClick={() => { if (hasSetup) setExpandedType(isExpanded ? null : src.type); }}
+            >
+              <span style={{ fontSize: '16px', width: '22px', flexShrink: 0 }}>{src.icon}</span>
+              <span style={{ flex: 1, color: '#c9d1d9', fontSize: '13px', fontWeight: 500 }}>{src.label}</span>
+
+              <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {src.status === 'active' && (
+                  <span style={{ color: '#3fb950', fontSize: '12px', fontWeight: 600 }}>Active</span>
+                )}
+                {src.status === 'experimental' && (
+                  <span style={{
+                    padding: '1px 7px', borderRadius: '4px',
+                    background: 'rgba(210,153,34,0.15)', color: '#d29922',
+                    fontSize: '11px', fontWeight: 700, letterSpacing: '0.04em',
+                  }}>
+                    Experimental
+                  </span>
+                )}
+                {src.status === 'not_configured' && (
+                  <span style={{ color: '#484f58', fontSize: '12px' }}>Not configured</span>
+                )}
+                {src.todayCount > 0 && (
+                  <span style={{ color: '#6e7681', fontSize: '12px' }}>
+                    · {src.todayCount} signal{src.todayCount !== 1 ? 's' : ''} today
+                  </span>
+                )}
+                {hasSetup && (
+                  <span style={{ color: '#58a6ff', fontSize: '11px', fontWeight: 600, marginLeft: '4px' }}>
+                    {isExpanded ? '▲' : '▼'} Setup
+                  </span>
+                )}
               </span>
-            )}
-            {src.status === 'not_configured' && (
-              <span style={{ color: '#484f58', fontSize: '12px' }}>Not configured</span>
+            </div>
+
+            {isExpanded && (src.type === 'discord' || src.type === 'telegram') && (
+              <div style={{ padding: '12px 16px', borderBottom: '1px solid #21262d', background: '#0d1117', fontSize: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                  <span style={{ color: '#8b949e' }}>Endpoint:</span>
+                  <code style={{ color: '#e6edf3', background: '#21262d', padding: '2px 6px', borderRadius: '4px' }}>
+                    POST /api/signals/parse
+                  </code>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                  <span style={{ color: '#8b949e' }}>BOT_API_KEY:</span>
+                  {src.botApiKeyConfigured ? (
+                    <span style={{ color: '#3fb950', fontWeight: 600 }}>✓ Configured</span>
+                  ) : (
+                    <span style={{ color: '#f85149' }}>✗ Not set — add to .env to enable bot auth</span>
+                  )}
+                </div>
+                <div style={{ color: '#6e7681', marginBottom: '6px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: '10px' }}>
+                  Setup Guide
+                </div>
+                <ol style={{ margin: 0, paddingLeft: '18px', color: '#8b949e', lineHeight: '1.8' }}>
+                  <li>Generate a secret key and add <code style={{ color: '#e6edf3', background: '#21262d', padding: '1px 4px', borderRadius: '3px' }}>BOT_API_KEY=&lt;secret&gt;</code> to your server&apos;s <code style={{ color: '#e6edf3', background: '#21262d', padding: '1px 4px', borderRadius: '3px' }}>.env</code></li>
+                  <li>In your bot, POST to <code style={{ color: '#e6edf3', background: '#21262d', padding: '1px 4px', borderRadius: '3px' }}>/api/signals/parse</code> with header <code style={{ color: '#e6edf3', background: '#21262d', padding: '1px 4px', borderRadius: '3px' }}>x-bot-api-key: &lt;secret&gt;</code> and the raw message text as the body</li>
+                  <li>The signal parser extracts asset, direction, and price levels from the message automatically</li>
+                  <li>Test by sending a trade signal in your channel — it should appear in the leaderboard within seconds</li>
+                </ol>
+              </div>
             )}
 
-            {src.todayCount > 0 && (
-              <span style={{ color: '#6e7681', fontSize: '12px' }}>
-                · {src.todayCount} signal{src.todayCount !== 1 ? 's' : ''} today
-              </span>
+            {isExpanded && src.type === 'tradingview' && (
+              <div style={{ padding: '12px 16px', borderBottom: isLast ? 'none' : '1px solid #21262d', background: '#0d1117', fontSize: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
+                  <span style={{ color: '#8b949e' }}>Webhook URL:</span>
+                  <code style={{ color: '#e6edf3', background: '#21262d', padding: '2px 6px', borderRadius: '4px' }}>
+                    https://your-domain/api/signals/webhook
+                  </code>
+                </div>
+                <p style={{ margin: 0, color: '#6e7681', lineHeight: '1.6' }}>
+                  Set this as your TradingView alert webhook. Alerts fire automatically when your conditions are met.
+                  Optionally add <code style={{ color: '#e6edf3', background: '#21262d', padding: '1px 4px', borderRadius: '3px' }}>TRADINGVIEW_WEBHOOK_SECRET</code> to your <code style={{ color: '#e6edf3', background: '#21262d', padding: '1px 4px', borderRadius: '3px' }}>.env</code> to verify request authenticity.
+                </p>
+              </div>
             )}
-            {src.status === 'experimental' && src.todayCount === 0 && (
-              <span style={{ color: '#6e7681', fontSize: '12px' }}>
-                · monitoring
-              </span>
-            )}
-          </span>
-        </div>
-      ))}
+          </div>
+        );
+      })}
 
       <div style={{ padding: '10px 16px', borderTop: '1px solid #21262d', display: 'flex', justifyContent: 'flex-end' }}>
         <a
@@ -786,3 +837,71 @@ const tableRow: React.CSSProperties = {
   padding: '10px 16px',
   gap: '8px',
 };
+
+// ── Signal Sparkline ─────────────────────────────────────────────────────────
+
+function SignalSparkline({ sig }: { sig: Signal }) {
+  const authFetch = useAuthFetch();
+  const [closes, setCloses] = useState<number[] | null>(null);
+
+  useEffect(() => {
+    if (!sig.resolvedAt || sig.status === 'open') return;
+    const tf = selectTimeframeClient(sig.entryPrice, sig.stopPrice, sig.targetPrice);
+    const start = encodeURIComponent(sig.createdAt);
+    const end = encodeURIComponent(sig.resolvedAt);
+    authFetch(`/api/candles?asset=${sig.asset}&timeframe=${tf}&start=${start}&end=${end}`)
+      .then((r) => r.json())
+      .then((data: { candles?: Array<{ close: number }> }) => {
+        setCloses((data.candles ?? []).map((c) => c.close));
+      })
+      .catch(() => setCloses([]));
+  }, [sig.id, authFetch]);
+
+  if (!sig.resolvedAt || sig.status === 'open') return null;
+  if (closes === null || closes.length === 0) return null;
+
+  const W = 200, H = 50;
+  const allVals = [...closes, sig.entryPrice];
+  const min = Math.min(...allVals);
+  const max = Math.max(...allVals);
+  const range = max - min || 1;
+
+  const toX = (i: number) =>
+    closes.length > 1 ? (i / (closes.length - 1)) * (W - 4) + 2 : W / 2;
+  const toY = (v: number) => 2 + ((max - v) / range) * (H - 4);
+
+  const polyPoints = closes
+    .map((v, i) => `${toX(i).toFixed(1)},${toY(v).toFixed(1)}`)
+    .join(' ');
+  const entryY = toY(sig.entryPrice);
+  const dotX = toX(closes.length - 1);
+  const dotY = toY(closes[closes.length - 1]);
+  const isGreen = sig.status === 'hit_target' || sig.status === 'partial_target';
+
+  return (
+    <svg
+      width={W}
+      height={H}
+      style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}
+    >
+      <line
+        x1={0} y1={entryY} x2={W} y2={entryY}
+        stroke="#1f6feb"
+        strokeWidth={1}
+        strokeDasharray="3,3"
+        opacity={0.7}
+      />
+      {closes.length > 1 && (
+        <polyline
+          points={polyPoints}
+          fill="none"
+          stroke="#8b949e"
+          strokeWidth={1.5}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+      )}
+      <circle cx={dotX} cy={dotY} r={3} fill={isGreen ? '#3fb950' : '#f85149'} />
+    </svg>
+  );
+}

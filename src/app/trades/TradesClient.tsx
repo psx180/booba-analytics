@@ -3,8 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from 'react';
 import TradeDetailModal from './TradeDetailModal';
 import TradeAnnotationPopup, { type PopupPosition } from '@/app/components/trade-popup/TradeAnnotationPopup';
-import BoobaAvatar from '@/app/components/booba/BoobaAvatar';
-import BoobaChat from '@/app/components/booba/BoobaChat';
+import { useBooba } from '@/app/components/booba/BoobaContext';
 import { useJournal } from '../JournalContext';
 import { useLive } from '../LiveContext';
 import { useSync } from '@/contexts/SyncContext';
@@ -1198,6 +1197,13 @@ function GroupingSettingsPopover({ onGroupingReset }: { onGroupingReset: () => P
 
 // ── Main chip bar component ──────────────────────────────────────────────────
 
+// Asset, Direction, Date Range are always visible as buttons/chips.
+// The remaining filters live behind + Add Filter.
+const PINNED_FILTER_TYPES: FilterType[] = ['asset', 'direction', 'dateRange'];
+const OVERFLOW_FILTER_TYPES: FilterType[] = ALL_FILTER_TYPES.filter(
+  (t) => !PINNED_FILTER_TYPES.includes(t),
+);
+
 function ChipFilterBar({
   filter, setFilter, assetOptions, strategies, playbooks, sourceTags,
   savedFilters, setSavedFilters, walletAddress,
@@ -1214,15 +1220,14 @@ function ChipFilterBar({
 }) {
   const [addOpen, setAddOpen] = useState(false);
   const [editingType, setEditingType] = useState<FilterType | null>(null);
-  const [saveOpen, setSaveOpen] = useState(false);
   const [savedDropOpen, setSavedDropOpen] = useState(false);
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const addRef = useRef<HTMLDivElement>(null);
   const editRef = useRef<HTMLDivElement>(null);
   const saveRef = useRef<HTMLDivElement>(null);
 
-  const activeTypes = ALL_FILTER_TYPES.filter((t) => isFilterTypeActive(t, filter));
-  const inactiveTypes = ALL_FILTER_TYPES.filter((t) => !isFilterTypeActive(t, filter));
+  const activeOverflowTypes = OVERFLOW_FILTER_TYPES.filter((t) => isFilterTypeActive(t, filter));
+  const inactiveOverflowTypes = OVERFLOW_FILTER_TYPES.filter((t) => !isFilterTypeActive(t, filter));
 
   const matchesSaved = savedFilters.some(
     (sf) => JSON.stringify(sf.filter) === JSON.stringify(filter),
@@ -1253,71 +1258,121 @@ function ChipFilterBar({
         />
       )}
 
+      {/* No overflow-x-auto here — that clips absolute-positioned dropdowns */}
       <div className="bg-[#161b22] border border-[#21262d] rounded-lg px-3 py-2">
-        <div className="flex items-center gap-2 min-w-0 overflow-x-auto">
+        <div className="flex flex-wrap items-center gap-2">
 
-          {/* + Add Filter */}
-          <div className="relative shrink-0" ref={editingType === null ? addRef : undefined}>
-            <button
-              onClick={() => { setAddOpen((o) => !o); setEditingType(null); }}
-              className="flex items-center gap-1 px-3 py-1.5 text-xs text-[#8b949e] hover:text-white bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] rounded transition-colors whitespace-nowrap"
-            >
-              <span>+</span> Add Filter
-            </button>
-            {addOpen && inactiveTypes.length > 0 && (
-              <div className="absolute left-0 top-full mt-1 bg-[#1c2128] border border-[#30363d] rounded shadow-xl z-30 min-w-[160px]">
-                {inactiveTypes.map((t) => (
-                  <button key={t} onClick={() => { setEditingType(t); setAddOpen(false); }}
-                    className="w-full text-left px-3 py-2 text-sm text-[#e6edf3] hover:bg-[#21262d] transition-colors">
-                    {FILTER_TYPE_LABELS[t]}
+          {/* ── Pinned filters: always visible ── */}
+          {PINNED_FILTER_TYPES.map((type) => {
+            const active = isFilterTypeActive(type, filter);
+            const isEditing = editingType === type;
+            return (
+              <div
+                key={type}
+                className="relative shrink-0"
+                ref={isEditing ? editRef : undefined}
+              >
+                {active ? (
+                  <div className="flex items-center bg-blue-900/20 border border-blue-700/40 rounded text-xs">
+                    <button
+                      onClick={() => setEditingType(isEditing ? null : type)}
+                      className="px-2.5 py-1.5 text-blue-300 hover:text-white transition-colors whitespace-nowrap"
+                    >
+                      {getChipLabel(type, filter, strategies, playbooks)}
+                    </button>
+                    <button
+                      onClick={() => { setFilter(clearFilterType(type, filter)); if (isEditing) setEditingType(null); }}
+                      className="pr-2 pl-1 text-blue-400/60 hover:text-red-400 transition-colors leading-none"
+                      title={`Remove ${FILTER_TYPE_LABELS[type]} filter`}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setEditingType(isEditing ? null : type)}
+                    className="px-2.5 py-1.5 text-xs text-[#8b949e] hover:text-white bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] rounded transition-colors whitespace-nowrap"
+                  >
+                    {FILTER_TYPE_LABELS[type]}
                   </button>
-                ))}
+                )}
+                {isEditing && (
+                  <div className="absolute left-0 top-full mt-1 bg-[#1c2128] border border-[#30363d] rounded shadow-xl z-30">
+                    <FilterEditor type={type} filter={filter} setFilter={setFilter}
+                      assetOptions={assetOptions} strategies={strategies} playbooks={playbooks}
+                      sourceTags={sourceTags} onClose={() => setEditingType(null)} />
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            );
+          })}
 
-          {/* Inline editor when adding a new filter type (not yet in chips) */}
-          {editingType !== null && !isFilterTypeActive(editingType, filter) && (
+          {/* ── Active overflow chips ── */}
+          {activeOverflowTypes.map((type) => {
+            const isEditing = editingType === type;
+            return (
+              <div key={type} className="relative shrink-0" ref={isEditing ? editRef : undefined}>
+                <div className="flex items-center bg-blue-900/20 border border-blue-700/40 rounded text-xs">
+                  <button
+                    onClick={() => setEditingType(isEditing ? null : type)}
+                    className="px-2.5 py-1.5 text-blue-300 hover:text-white transition-colors whitespace-nowrap"
+                  >
+                    {getChipLabel(type, filter, strategies, playbooks)}
+                  </button>
+                  <button
+                    onClick={() => { setFilter(clearFilterType(type, filter)); if (isEditing) setEditingType(null); }}
+                    className="pr-2 pl-1 text-blue-400/60 hover:text-red-400 transition-colors leading-none"
+                    title={`Remove ${FILTER_TYPE_LABELS[type]} filter`}
+                  >
+                    ×
+                  </button>
+                </div>
+                {isEditing && (
+                  <div className="absolute left-0 top-full mt-1 bg-[#1c2128] border border-[#30363d] rounded shadow-xl z-30">
+                    <FilterEditor type={type} filter={filter} setFilter={setFilter}
+                      assetOptions={assetOptions} strategies={strategies} playbooks={playbooks}
+                      sourceTags={sourceTags} onClose={() => setEditingType(null)} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {/* ── + Add Filter (inactive overflow types only) ── */}
+          {inactiveOverflowTypes.length > 0 && (
+            <div className="relative shrink-0" ref={addRef}>
+              <button
+                onClick={() => { setAddOpen((o) => !o); setEditingType(null); }}
+                className="flex items-center gap-1 px-3 py-1.5 text-xs text-[#8b949e] hover:text-white bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] rounded transition-colors whitespace-nowrap"
+              >
+                <span>+</span> Add Filter
+              </button>
+              {addOpen && (
+                <div className="absolute left-0 top-full mt-1 bg-[#1c2128] border border-[#30363d] rounded shadow-xl z-30 min-w-[160px]">
+                  {inactiveOverflowTypes.map((t) => (
+                    <button key={t} onClick={() => { setEditingType(t); setAddOpen(false); }}
+                      className="w-full text-left px-3 py-2 text-sm text-[#e6edf3] hover:bg-[#21262d] transition-colors">
+                      {FILTER_TYPE_LABELS[t]}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Inline editor for overflow type selected but not yet active ── */}
+          {editingType !== null && OVERFLOW_FILTER_TYPES.includes(editingType) && !isFilterTypeActive(editingType, filter) && (
             <div className="relative shrink-0" ref={editRef}>
               <div className="absolute left-0 top-full mt-1 bg-[#1c2128] border border-[#30363d] rounded shadow-xl z-30">
                 <FilterEditor type={editingType} filter={filter} setFilter={setFilter}
                   assetOptions={assetOptions} strategies={strategies} playbooks={playbooks}
                   sourceTags={sourceTags} onClose={() => setEditingType(null)} />
               </div>
-              {/* invisible anchor */}
               <span className="text-xs text-[#6e7681] px-2">{FILTER_TYPE_LABELS[editingType]}</span>
             </div>
           )}
 
-          {/* Active filter chips */}
-          {activeTypes.map((type) => (
-            <div key={type} className="relative shrink-0" ref={editingType === type ? editRef : undefined}>
-              <div className="flex items-center bg-blue-900/20 border border-blue-700/40 rounded text-xs">
-                <button
-                  onClick={() => setEditingType(editingType === type ? null : type)}
-                  className="px-2.5 py-1.5 text-blue-300 hover:text-white transition-colors whitespace-nowrap"
-                >
-                  {getChipLabel(type, filter, strategies, playbooks)}
-                </button>
-                <button
-                  onClick={() => { setFilter(clearFilterType(type, filter)); if (editingType === type) setEditingType(null); }}
-                  className="pr-2 pl-1 text-blue-400/60 hover:text-red-400 transition-colors leading-none"
-                  title={`Remove ${FILTER_TYPE_LABELS[type]} filter`}
-                >
-                  ×
-                </button>
-              </div>
-              {editingType === type && (
-                <div className="absolute left-0 top-full mt-1 bg-[#1c2128] border border-[#30363d] rounded shadow-xl z-30">
-                  <FilterEditor type={type} filter={filter} setFilter={setFilter}
-                    assetOptions={assetOptions} strategies={strategies} playbooks={playbooks}
-                    sourceTags={sourceTags} onClose={() => setEditingType(null)} />
-                </div>
-              )}
-            </div>
-          ))}
-
-          {/* Right side: clear all + save icon */}
+          {/* ── Right side: clear all + save ── */}
           <div className="ml-auto flex items-center gap-2 shrink-0">
             {isFilterActive(filter) && (
               <button onClick={() => setFilter(EMPTY_TRADES_FILTER)}
@@ -1325,8 +1380,6 @@ function ChipFilterBar({
                 × Clear all
               </button>
             )}
-
-            {/* Save / load saved filters */}
             <div className="relative" ref={saveRef}>
               <button
                 onClick={() => setSavedDropOpen((o) => !o)}
@@ -1370,6 +1423,7 @@ function ChipFilterBar({
               )}
             </div>
           </div>
+
         </div>
       </div>
     </>
@@ -1719,7 +1773,7 @@ export default function TradesClient() {
   const { syncImportCount } = useSync();
   const authFetch = useAuthFetch();
   const { filter, setFilter } = useTradesFilter();
-  const [chatOpen, setChatOpen] = useState(false);
+  const { setBoobaState } = useBooba();
   // All trade units fetched from server — filtering/sorting done client-side.
   const [allTradeUnits, setAllTradeUnits] = useState<TradeUnit[]>([]);
   const [sortBy, setSortBy] = useState('firstEntryTime');
@@ -1738,7 +1792,15 @@ export default function TradesClient() {
   const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
   const [annotatePositionId, setAnnotatePositionId] = useState<string | null>(null);
   const [annotateQueue, setAnnotateQueue] = useState<string[]>([]);
-  const [boobaInsight, setBoobaInsight] = useState<string | null>(null);
+  const setBoobaInsight = useCallback((msg: string | null) => {
+    setBoobaState({ insight: msg, healthScore: 70 });
+  }, [setBoobaState]);
+
+  // On mount: set health score to the trades-page default and clear any leftover insight
+  useEffect(() => {
+    setBoobaState({ healthScore: 70, insight: null });
+  }, [setBoobaState]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const [untaggedCount, setUntaggedCount] = useState(0);
   const [untaggedIds, setUntaggedIds] = useState<string[]>([]);
   const hasMountSynced = useRef(false);
@@ -2644,14 +2706,7 @@ export default function TradesClient() {
         )}
       </div>
 
-      {/* ── Booba Avatar + Chat ────────────────────────────────────── */}
-      <BoobaChat isOpen={chatOpen} onClose={() => setChatOpen(false)} />
-      <BoobaAvatar
-        healthScore={70}
-        insight={chatOpen ? null : boobaInsight}
-        onChatToggle={() => setChatOpen((o) => !o)}
-        chatOpen={chatOpen}
-      />
+      {/* Booba avatar + chat are rendered globally by AppShell/BoobaShellLayer */}
     </div>
   );
 }

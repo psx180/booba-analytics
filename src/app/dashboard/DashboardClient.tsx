@@ -9,10 +9,9 @@ import LiveToast, { type Toast } from './LiveToast';
 import { useJournal } from '../JournalContext';
 import { useLive } from '../LiveContext';
 import { useAuthFetch } from '@/lib/api-client';
-import BoobaAvatar from '@/app/components/booba/BoobaAvatar';
-import BoobaChat from '@/app/components/booba/BoobaChat';
 import { computeHealthScore } from '@/app/components/booba/computeHealthScore';
 import { getContextualMessage } from '@/app/components/booba/getContextualMessage';
+import { useBooba } from '@/app/components/booba/BoobaContext';
 import TradeAnnotationPopup, { type PopupPosition } from '@/app/components/trade-popup/TradeAnnotationPopup';
 import type {
   ConvergenceResult,
@@ -363,7 +362,7 @@ export default function DashboardClient() {
   const { journalId, buildParams } = useJournal();
   const authFetch = useAuthFetch();
   const router = useRouter();
-  const [chatOpen, setChatOpen] = useState(false);
+  const { setBoobaState } = useBooba();
   const [convergence, setConvergence] = useState<ConvergenceResult | null>(null);
   const [performance, setPerformance] = useState<PerformanceData | null>(null);
   const [equityCurve, setEquityCurve] = useState<EquityPoint[]>([]);
@@ -768,6 +767,57 @@ export default function DashboardClient() {
 
   const currentSuggestion = boobaSuggestions.length > 0 ? boobaSuggestions[suggestionIdx] : null;
 
+  // ── Push Booba state to AppShell ───────────────────────────────────────────
+  const computedHealthScore = useMemo(() => {
+    const live = liveUnrealizedDrawdownPct(openPositions);
+    const historic = drawdownStats && drawdownStats.currentDrawdown < 0
+      ? -Math.abs(drawdownStats.currentDrawdownPct)
+      : undefined;
+    const blendedDrawdown = live != null && historic != null
+      ? Math.min(live, historic)
+      : (live ?? historic);
+    return Math.max(0, Math.min(100, computeHealthScore({
+      wartComposite: wartResult?.composite,
+      tiltScore: performance ? Math.round((performance.avgTiltScore ?? 0) * 100) : undefined,
+      eloTrend: eloResult?.recentTrend,
+      recentWinRate: performance?.winRate,
+      currentDrawdownPct: blendedDrawdown,
+    })) + Math.round(liveHealthBoost));
+  }, [wartResult, performance, eloResult, drawdownStats, openPositions, liveHealthBoost]);
+
+  const computedInsight = useMemo(() =>
+    currentSuggestion?.text
+    ?? (convergence?.insufficientData ? 'Keep trading! I need more data to learn your patterns.' : null)
+    ?? getContextualMessage('dashboard', {
+      untaggedPositionCount,
+      lastComputedAt,
+      totalTrades: performance?.tradeCount ?? 0,
+      wartResult: wartResult ?? undefined,
+      tiltEpisodeCount: performance?.tiltEpisodeCount ?? undefined,
+      eloResult: eloResult ?? undefined,
+      entropyResult: entropyResult ?? undefined,
+      xpnlLuckScore: xpnlSummary?.luckScore ?? undefined,
+      insights: insights.map((i) => ({
+        module: i.module,
+        title: i.title,
+        description: i.description,
+        isSignificant: i.isSignificant,
+        impactScore: i.impactScore,
+        data: i.data,
+      })),
+      drawdownAnalysis: drawdownAnalysis ?? undefined,
+    }),
+  [currentSuggestion, convergence, untaggedPositionCount, lastComputedAt, performance,
+    wartResult, eloResult, entropyResult, xpnlSummary, insights, drawdownAnalysis]);
+
+  useEffect(() => {
+    setBoobaState({
+      healthScore: computedHealthScore,
+      insight: computedInsight,
+      insightLink: currentSuggestion?.link ?? null,
+    });
+  }, [computedHealthScore, computedInsight, currentSuggestion?.link, setBoobaState]);
+
   // ── Peak equity for corrected drawdown % ───────────────────────────────────
   const peakEquity = useMemo(
     () => equityCurve.reduce((max, p) => Math.max(max, p.cumulativePnl), 0),
@@ -1162,57 +1212,7 @@ export default function DashboardClient() {
         )}
       </div>
 
-      {/* ── Booba Avatar + Chat ──────────────────────────────────────────── */}
-      <BoobaChat isOpen={chatOpen} onClose={() => setChatOpen(false)} />
-      <BoobaAvatar
-        healthScore={Math.max(0, Math.min(100, computeHealthScore({
-          wartComposite: wartResult?.composite,
-          tiltScore: performance ? Math.round((performance.avgTiltScore ?? 0) * 100) : undefined,
-          eloTrend: eloResult?.recentTrend,
-          recentWinRate: performance?.winRate,
-          currentDrawdownPct:
-            // Blend historical drawdown with live unrealized drawdown so
-            // a negative unrealized P&L below -5% of notional drags Booba
-            // into nervous territory even before the trade closes.
-            (() => {
-              const live = liveUnrealizedDrawdownPct(openPositions);
-              const historic = drawdownStats && drawdownStats.currentDrawdown < 0
-                ? -Math.abs(drawdownStats.currentDrawdownPct)
-                : undefined;
-              if (live != null && historic != null) return Math.min(live, historic);
-              return live ?? historic;
-            })(),
-        })) + Math.round(liveHealthBoost))}
-        insight={chatOpen ? null : (
-          // Priority: convergence suggestions → insufficientData fallback → general contextual message
-          currentSuggestion?.text
-          ?? (convergence?.insufficientData ? 'Keep trading! I need more data to learn your patterns.' : null)
-          ?? getContextualMessage('dashboard', {
-            untaggedPositionCount,
-            lastComputedAt,
-            totalTrades: performance?.tradeCount ?? 0,
-            wartResult: wartResult ?? undefined,
-            tiltEpisodeCount: performance?.tiltEpisodeCount ?? undefined,
-            eloResult: eloResult ?? undefined,
-            entropyResult: entropyResult ?? undefined,
-            xpnlLuckScore: xpnlSummary?.luckScore ?? undefined,
-            insights: insights.map((i) => ({
-              module: i.module,
-              title: i.title,
-              description: i.description,
-              isSignificant: i.isSignificant,
-              impactScore: i.impactScore,
-              data: i.data,
-            })),
-            drawdownAnalysis: drawdownAnalysis ?? undefined,
-          })
-        )}
-        onInsightClick={!chatOpen && currentSuggestion ? () => router.push(currentSuggestion.link) : undefined}
-        eloTrend={eloResult?.recentTrend}
-        wartTrend={wartResult?.composite}
-        onChatToggle={() => setChatOpen((o) => !o)}
-        chatOpen={chatOpen}
-      />
+      {/* Booba avatar + chat are rendered globally by AppShell/BoobaShellLayer */}
 
       {/* ── Live notifications ───────────────────────────────────────────── */}
       <LiveToast toasts={toasts} />

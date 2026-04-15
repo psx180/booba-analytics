@@ -6,7 +6,7 @@ import { RULE_TYPES } from '@/services/playbooks/rule-type-descriptors';
 import { PLAYBOOK_TEMPLATES } from '@/services/playbooks/templates';
 import type { PlaybookRule } from '@/services/playbooks/types';
 import type { PlaybookTemplate } from '@/services/playbooks/templates';
-import BoobaChat from '@/app/components/booba/BoobaChat';
+import { useBooba } from '@/app/components/booba/BoobaContext';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -103,8 +103,7 @@ export default function PlaybooksClient() {
   const [prefillName, setPrefillName] = useState('');
   const [templateToUse, setTemplateToUse] = useState<PlaybookTemplate | null>(null);
 
-  // Part 6: Booba chat for "Ask Booba to help"
-  const [boobaOpen, setBoobaOpen] = useState(false);
+  const { openChat: openBoobaChat } = useBooba();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -272,7 +271,7 @@ export default function PlaybooksClient() {
             <OnboardingGuide
               onCreateFromScratch={() => openCreateForm()}
               onBrowseTemplates={() => setActiveTab('templates')}
-              onAskBooba={() => setBoobaOpen(true)}
+              onAskBooba={() => openBoobaChat('Help me create a playbook for my trading strategy.')}
             />
           ) : (
             /* Section B: Your Playbooks (Part 1) */
@@ -304,12 +303,6 @@ export default function PlaybooksClient() {
         <TemplatesSection onUseTemplate={(t) => openCreateForm(t.name, t)} />
       )}
 
-      {/* ── Booba Chat (Part 6) ──────────────────────────────────────────── */}
-      <BoobaChat
-        isOpen={boobaOpen}
-        onClose={() => setBoobaOpen(false)}
-        prefillMessage="Help me create a playbook for my trading strategy."
-      />
     </div>
   );
 }

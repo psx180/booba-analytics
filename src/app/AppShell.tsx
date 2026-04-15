@@ -31,7 +31,7 @@
  */
 
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { usePrivy } from '@privy-io/react-auth';
 import { JournalProvider } from './JournalContext';
 import { LiveProvider } from './LiveContext';
@@ -41,6 +41,9 @@ import { AccountProvider } from '@/contexts/AccountContext';
 import { SyncProvider } from '@/contexts/SyncContext';
 import IntroOverlay from './components/onboarding/IntroOverlay';
 import { startGuidedTour } from './components/onboarding/GuidedTour';
+import { BoobaProvider, useBooba } from './components/booba/BoobaContext';
+import BoobaAvatar from './components/booba/BoobaAvatar';
+import BoobaChat from './components/booba/BoobaChat';
 
 const CONNECT_PATH = '/connect';
 
@@ -122,24 +125,76 @@ function AuthedShell({
       <JournalProvider walletAddress={walletAddress}>
         <LiveProvider>
           <SyncProvider>
-          <NavBar />
-          <main className="max-w-[1400px] mx-auto px-4 py-6">{children}</main>
-          {showIntro && (
-            <IntroOverlay
-              onStartTour={() => {
-                setShowIntro(false);
-                startGuidedTour();
-              }}
-              onSkip={() => {
-                setShowIntro(false);
-                localStorage.setItem('hasSeenAppIntro', 'true');
-              }}
-            />
-          )}
+            <BoobaProvider>
+              <NavBar />
+              <main className="max-w-[1400px] mx-auto px-4 py-6">{children}</main>
+              {showIntro && (
+                <IntroOverlay
+                  onStartTour={() => {
+                    setShowIntro(false);
+                    startGuidedTour();
+                  }}
+                  onSkip={() => {
+                    setShowIntro(false);
+                    localStorage.setItem('hasSeenAppIntro', 'true');
+                  }}
+                />
+              )}
+              <BoobaShellLayer />
+            </BoobaProvider>
           </SyncProvider>
         </LiveProvider>
       </JournalProvider>
     </AccountProvider>
+  );
+}
+
+// ── Booba shell layer ────────────────────────────────────────────────────────
+// Renders BoobaAvatar + BoobaChat globally. Contextual messages are derived
+// from the current pathname; dynamic state (health score, insight) is pushed
+// here by individual page components via BoobaContext.setBoobaState.
+
+function BoobaShellLayer() {
+  const pathname = usePathname();
+  const router = useRouter();
+  const { healthScore, insight, insightLink, chatOpen, prefillMessage, openChat, closeChat } = useBooba();
+
+  // Per-page static fallback messages (shown when no dynamic insight is set)
+  const staticInsight = useMemo((): string | null => {
+    if (pathname?.startsWith('/trades')) return 'Click any trade to see details';
+    if (pathname?.startsWith('/analytics')) return 'Check the tabs for deep analysis';
+    if (pathname?.startsWith('/signals')) return 'Your best caller is shown at the top';
+    if (pathname?.startsWith('/playbooks')) return "Define your rules and I'll check every trade";
+    return null; // /dashboard (comes from context) and /settings (silent)
+  }, [pathname]);
+
+  const isDashboard = pathname === '/dashboard';
+  // On dashboard, context.insight is the fully-computed message from DashboardClient.
+  // On other pages, context.insight is cleared on mount by the page component;
+  // use it for dynamic overrides (e.g. trade annotations) and fall back to static.
+  const effectiveInsight = chatOpen
+    ? null
+    : isDashboard
+      ? insight
+      : (insight ?? staticInsight);
+
+  const effectiveInsightLink = isDashboard ? insightLink : null;
+
+  return (
+    <>
+      <BoobaChat
+        isOpen={chatOpen}
+        onClose={closeChat}
+        prefillMessage={prefillMessage}
+      />
+      <BoobaAvatar
+        healthScore={healthScore}
+        insight={effectiveInsight}
+        onInsightClick={effectiveInsightLink ? () => router.push(effectiveInsightLink) : undefined}
+        onChatToggle={() => (chatOpen ? closeChat() : openChat())}
+        chatOpen={chatOpen}
+      />
+    </>
   );
 }
 

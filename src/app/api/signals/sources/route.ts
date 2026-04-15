@@ -76,6 +76,7 @@ export async function GET(req: NextRequest) {
         status,
         todayCount,
         experimental: meta.experimental,
+        botApiKeyConfigured: !!process.env.BOT_API_KEY,
       };
     });
 
