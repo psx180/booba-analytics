@@ -605,6 +605,7 @@ export default function DashboardClient() {
             targetPrice: p.targetPrice ?? null,
             mistakes: p.mistakes ?? null,
             playbookId: p.playbookId ?? null,
+            confirmation: p.confirmation ?? null,
           });
         })
         .catch((err) => console.warn('[live] failed to load new position detail', err));

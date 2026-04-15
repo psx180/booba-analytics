@@ -101,6 +101,7 @@ export async function GET(req: NextRequest) {
     averageExitPrice: number | null;
     holdTimeSeconds: number | null;
     confidence: number | null;
+    groupingConfirmed?: boolean;
     firstEntryTime: string | null;
     lastExitTime: string | null;
     regimeAtEntry: string | null;
@@ -115,6 +116,7 @@ export async function GET(req: NextRequest) {
     targetPrice?: string | null;
     mistakes?: string | null;
     playbookId?: string | null;
+    confirmation?: string | null;
     adherenceScore?: number | null;
     // Linked strategy extras
     strategyType?: string;
@@ -141,6 +143,7 @@ export async function GET(req: NextRequest) {
       averageExitPrice: p.averageExitPrice,
       holdTimeSeconds: p.holdTimeSeconds,
       confidence: p.confidence,
+      groupingConfirmed: p.groupingConfirmed,
       firstEntryTime: p.firstEntryTime?.toISOString() ?? null,
       lastExitTime: p.lastExitTime?.toISOString() ?? null,
       regimeAtEntry: p.regimeAtEntry,
@@ -154,6 +157,7 @@ export async function GET(req: NextRequest) {
       targetPrice: p.targetPrice,
       mistakes: p.mistakes,
       playbookId: p.playbookId,
+      confirmation: p.confirmation,
       adherenceScore: p.adherenceScore,
     });
   }

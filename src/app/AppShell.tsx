@@ -38,6 +38,7 @@ import { LiveProvider } from './LiveContext';
 import NavBar from './NavBar';
 import { isDevBypass, DEV_WALLET } from './privy-env';
 import { AccountProvider } from '@/contexts/AccountContext';
+import { SyncProvider } from '@/contexts/SyncContext';
 import IntroOverlay from './components/onboarding/IntroOverlay';
 import { startGuidedTour } from './components/onboarding/GuidedTour';
 
@@ -120,6 +121,7 @@ function AuthedShell({
     <AccountProvider walletAddress={walletAddress}>
       <JournalProvider walletAddress={walletAddress}>
         <LiveProvider>
+          <SyncProvider>
           <NavBar />
           <main className="max-w-[1400px] mx-auto px-4 py-6">{children}</main>
           {showIntro && (
@@ -134,6 +136,7 @@ function AuthedShell({
               }}
             />
           )}
+          </SyncProvider>
         </LiveProvider>
       </JournalProvider>
     </AccountProvider>

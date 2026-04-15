@@ -27,6 +27,7 @@ export interface PopupPosition {
   targetPrice: string | null;
   mistakes: string | null;
   playbookId: string | null;
+  confirmation: string | null;
 }
 
 interface PositionAnnotation {
@@ -34,12 +35,13 @@ interface PositionAnnotation {
   conviction: number | null;
   emotion: string | null;
   strategyId: string | null;
+  playbookId: string | null;
+  confirmation: string;
   sourceTag: string;
   invalidationPrice: string;
   targetPrice: string;
   mistakes: string[];
   notes: string;
-  playbookId: string | null;
 }
 
 interface Strategy {
@@ -50,32 +52,13 @@ interface Strategy {
 interface Playbook {
   id: string;
   name: string;
+  rules: string; // JSON string — used to compute rule count
 }
 
 interface AdherencePreview {
   playbookId: string;
   score: number;
   results: RuleResult[];
-}
-
-interface SectionProps {
-  position: PopupPosition;
-  formData: PositionAnnotation;
-  strategies: Strategy[];
-  playbooks: Playbook[];
-  sourceTags: string[];
-  onUpdate: (data: Partial<PositionAnnotation>) => void;
-  onNewStrategy: (name: string) => Promise<Strategy | null>;
-  adherencePreview: AdherencePreview | null;
-  adherenceLoading: boolean;
-}
-
-interface PopupSection {
-  id: string;
-  label: string;
-  component: React.FC<SectionProps>;
-  defaultExpanded: boolean;
-  priority: number;
 }
 
 export interface TradeAnnotationPopupProps {
@@ -126,309 +109,24 @@ function fmtHoldTime(s: number | null) {
   return `${(s / 86400).toFixed(1)}d`;
 }
 
-// ── Section: Quick Capture ────────────────────────────────────────────────────
-
-function QuickCaptureSection({
-  position, formData, strategies, playbooks, sourceTags, onUpdate, onNewStrategy,
-  adherencePreview, adherenceLoading,
-}: SectionProps) {
-  const [newStrategyMode, setNewStrategyMode] = useState(false);
-  const [newStrategyName, setNewStrategyName] = useState('');
-  const [creatingStrategy, setCreatingStrategy] = useState(false);
-  const newStratRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (newStrategyMode) newStratRef.current?.focus();
-  }, [newStrategyMode]);
-
-  const handleCreateStrategy = async () => {
-    if (!newStrategyName.trim()) return;
-    setCreatingStrategy(true);
-    const created = await onNewStrategy(newStrategyName.trim());
-    setCreatingStrategy(false);
-    if (created) {
-      onUpdate({ strategyId: created.id });
-      setNewStrategyMode(false);
-      setNewStrategyName('');
-    }
-  };
-
-  const convictionLabels = ['Low', 'Med', 'High'];
-
-  return (
-    <div className="space-y-3">
-      {/* Strategy */}
-      <div>
-        <label className="block text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
-          Strategy
-        </label>
-        {newStrategyMode ? (
-          <div className="flex gap-2">
-            <input
-              ref={newStratRef}
-              type="text"
-              value={newStrategyName}
-              onChange={(e) => setNewStrategyName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleCreateStrategy();
-                if (e.key === 'Escape') { setNewStrategyMode(false); setNewStrategyName(''); }
-              }}
-              placeholder="Strategy name"
-              className="flex-1 bg-[#0d1117] border border-[#30363d] text-sm text-[#e6edf3] rounded px-3 py-1.5 focus:outline-none focus:border-blue-500"
-            />
-            <button
-              onClick={handleCreateStrategy}
-              disabled={creatingStrategy || !newStrategyName.trim()}
-              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-[#21262d] disabled:text-[#6e7681] text-white text-xs rounded transition-colors"
-            >
-              {creatingStrategy ? '...' : 'Add'}
-            </button>
-            <button
-              onClick={() => { setNewStrategyMode(false); setNewStrategyName(''); }}
-              className="px-2 py-1.5 text-[#6e7681] hover:text-white text-xs transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        ) : (
-          <select
-            value={formData.strategyId ?? ''}
-            onChange={(e) => {
-              if (e.target.value === '__new__') {
-                setNewStrategyMode(true);
-              } else {
-                onUpdate({ strategyId: e.target.value || null });
-              }
-            }}
-            className="w-full bg-[#0d1117] border border-[#30363d] text-sm text-[#e6edf3] rounded px-3 py-1.5 focus:outline-none focus:border-blue-500"
-          >
-            <option value="">— No strategy —</option>
-            {strategies.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-            <option value="__new__">+ New Strategy</option>
-          </select>
-        )}
-      </div>
-
-      {/* Playbook */}
-      <div>
-        <label className="block text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
-          Playbook
-        </label>
-        <select
-          value={formData.playbookId ?? ''}
-          onChange={(e) => onUpdate({ playbookId: e.target.value || null })}
-          className="w-full bg-[#0d1117] border border-[#30363d] text-sm text-[#e6edf3] rounded px-3 py-1.5 focus:outline-none focus:border-blue-500"
-        >
-          <option value="">— No playbook —</option>
-          {playbooks.map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
-        {adherenceLoading && (
-          <div className="text-[10px] text-[#6e7681] mt-1">Scoring adherence…</div>
-        )}
-        {adherencePreview && !adherenceLoading && (
-          <div className="mt-2">
-            <PlaybookAdherenceBreakdown
-              score={adherencePreview.score}
-              results={adherencePreview.results}
-              playbookName={playbooks.find((p) => p.id === adherencePreview.playbookId)?.name}
-            />
-          </div>
-        )}
-      </div>
-
-      {/* Thesis */}
-      <div>
-        <label className="block text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
-          Thesis
-        </label>
-        <input
-          type="text"
-          value={formData.thesis}
-          onChange={(e) => onUpdate({ thesis: e.target.value })}
-          placeholder="Why did you take this trade?"
-          className="w-full bg-[#0d1117] border border-[#30363d] text-sm text-[#e6edf3] rounded px-3 py-1.5 focus:outline-none focus:border-blue-500 placeholder-[#6e7681]"
-        />
-      </div>
-
-      {/* Conviction */}
-      <div>
-        <label className="block text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
-          Conviction
-        </label>
-        <div className="flex gap-2">
-          {convictionLabels.map((label, i) => {
-            const value = i + 1;
-            const active = formData.conviction === value;
-            return (
-              <button
-                key={label}
-                type="button"
-                onClick={() => onUpdate({ conviction: active ? null : value })}
-                className={`flex-1 py-1.5 text-xs rounded border transition-colors ${
-                  active
-                    ? 'bg-blue-600 border-blue-500 text-white'
-                    : 'bg-[#0d1117] border-[#30363d] text-[#8b949e] hover:border-[#6e7681] hover:text-[#e6edf3]'
-                }`}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Emotion */}
-      <div>
-        <label className="block text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
-          Emotion
-        </label>
-        <div className="flex flex-wrap gap-1.5">
-          {EMOTION_OPTIONS.map((emotion) => {
-            const active = formData.emotion === emotion;
-            return (
-              <button
-                key={emotion}
-                type="button"
-                onClick={() => onUpdate({ emotion: active ? null : emotion })}
-                className={`px-3 py-1 text-xs rounded-full border transition-colors ${
-                  active
-                    ? 'bg-purple-700 border-purple-500 text-white'
-                    : 'bg-[#0d1117] border-[#30363d] text-[#8b949e] hover:border-[#6e7681] hover:text-[#e6edf3]'
-                }`}
-              >
-                {emotion}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
+function getRuleCount(rules: string): number {
+  try {
+    const arr = JSON.parse(rules);
+    return Array.isArray(arr) ? arr.length : 0;
+  } catch {
+    return 0;
+  }
 }
 
-// ── Section: More Details ─────────────────────────────────────────────────────
-
-// DetailSection ignores playbooks/preview props but accepts SectionProps
-// so the registry stays uniform.
-function DetailSection({ position, formData, sourceTags, onUpdate }: SectionProps) {
-  return (
-    <div className="space-y-3">
-      {/* Source / Caller */}
-      <div>
-        <label className="block text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
-          Source / Caller
-        </label>
-        <select
-          value={formData.sourceTag}
-          onChange={(e) => onUpdate({ sourceTag: e.target.value })}
-          className="w-full bg-[#0d1117] border border-[#30363d] text-sm text-[#e6edf3] rounded px-3 py-1.5 focus:outline-none focus:border-blue-500"
-        >
-          <option value="">— None —</option>
-          <option value="Manual">Manual</option>
-          {sourceTags.filter((t) => t !== 'Manual').map((tag) => (
-            <option key={tag} value={tag}>{tag}</option>
-          ))}
-        </select>
-      </div>
-
-      {/* Invalidation Price */}
-      <div>
-        <label className="block text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
-          Invalidation Price
-        </label>
-        <input
-          type="number"
-          value={formData.invalidationPrice}
-          onChange={(e) => onUpdate({ invalidationPrice: e.target.value })}
-          placeholder={position.averageEntryPrice != null ? `e.g. near ${fmtPrice(position.averageEntryPrice)}` : 'Price where thesis is wrong'}
-          className="w-full bg-[#0d1117] border border-[#30363d] text-sm text-[#e6edf3] rounded px-3 py-1.5 focus:outline-none focus:border-blue-500 placeholder-[#6e7681]"
-        />
-      </div>
-
-      {/* Target Price */}
-      <div>
-        <label className="block text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
-          Target Price
-        </label>
-        <input
-          type="number"
-          value={formData.targetPrice}
-          onChange={(e) => onUpdate({ targetPrice: e.target.value })}
-          placeholder="Price target"
-          className="w-full bg-[#0d1117] border border-[#30363d] text-sm text-[#e6edf3] rounded px-3 py-1.5 focus:outline-none focus:border-blue-500 placeholder-[#6e7681]"
-        />
-      </div>
-
-      {/* Mistakes */}
-      <div>
-        <label className="block text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
-          Mistakes
-        </label>
-        <div className="flex flex-wrap gap-1.5">
-          {MISTAKE_OPTIONS.map((mistake) => {
-            const active = formData.mistakes.includes(mistake);
-            return (
-              <button
-                key={mistake}
-                type="button"
-                onClick={() => {
-                  const next = active
-                    ? formData.mistakes.filter((m) => m !== mistake)
-                    : [...formData.mistakes, mistake];
-                  onUpdate({ mistakes: next });
-                }}
-                className={`px-3 py-1 text-xs rounded-full border transition-colors ${
-                  active
-                    ? 'bg-red-900/50 border-red-500/60 text-red-300'
-                    : 'bg-[#0d1117] border-[#30363d] text-[#8b949e] hover:border-[#6e7681] hover:text-[#e6edf3]'
-                }`}
-              >
-                {mistake}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Notes */}
-      <div>
-        <label className="block text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
-          Notes
-        </label>
-        <textarea
-          value={formData.notes}
-          onChange={(e) => onUpdate({ notes: e.target.value })}
-          rows={3}
-          placeholder="Additional notes..."
-          className="w-full bg-[#0d1117] border border-[#30363d] text-sm text-[#e6edf3] rounded px-3 py-2 focus:outline-none focus:border-blue-500 placeholder-[#6e7681] resize-none"
-        />
-      </div>
-    </div>
-  );
-}
-
-// ── Section Registry ──────────────────────────────────────────────────────────
-
-const POPUP_SECTIONS: PopupSection[] = [
-  { id: 'quick', label: 'Quick Capture',  component: QuickCaptureSection, defaultExpanded: true,  priority: 0 },
-  { id: 'detail', label: 'More Details',  component: DetailSection,        defaultExpanded: false, priority: 10 },
-  // Future: { id: 'order-mgmt', label: 'Order Management', component: OrderMgmtSection, defaultExpanded: false, priority: 20 },
-  // Future: { id: 'xpnl', label: 'Expected P&L', component: XpnlSection, defaultExpanded: false, priority: 30 },
-];
-
-// ── Collapsible Section Wrapper ───────────────────────────────────────────────
+// ── Section Wrapper ───────────────────────────────────────────────────────────
 
 function SectionWrapper({
-  section,
+  label,
   expanded,
   onToggle,
   children,
 }: {
-  section: PopupSection;
+  label: string;
   expanded: boolean;
   onToggle: () => void;
   children: React.ReactNode;
@@ -441,7 +139,7 @@ function SectionWrapper({
         className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-[#1c2128] transition-colors"
       >
         <span className="text-xs font-medium text-[#8b949e] uppercase tracking-widest">
-          {section.label}
+          {label}
         </span>
         <span className="text-[#6e7681] text-xs">{expanded ? '▾' : '▸'}</span>
       </button>
@@ -463,35 +161,39 @@ export default function TradeAnnotationPopup({
 }: TradeAnnotationPopupProps) {
   const authFetch = useAuthFetch();
 
-  // Split existing thesis into one-liner + notes on load
-  const [thesisOneLiner, setThesisOneLiner] = useState('');
-  const [existingNotes, setExistingNotes] = useState('');
-  useEffect(() => {
+  const [formData, setFormData] = useState<PositionAnnotation>(() => {
+    // Split existing thesis: first para → thesis, rest → notes
     const raw = position.thesis ?? '';
-    const split = raw.split('\n\n');
-    setThesisOneLiner(split[0] ?? '');
-    setExistingNotes(split.slice(1).join('\n\n'));
-  }, [position.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const [formData, setFormData] = useState<PositionAnnotation>(() => ({
-    thesis: position.thesis?.split('\n\n')[0] ?? '',
-    conviction: position.conviction ?? null,
-    emotion: position.emotion ?? null,
-    strategyId: position.strategyId ?? null,
-    sourceTag: position.sourceTag ?? '',
-    invalidationPrice: position.invalidationPrice != null ? String(position.invalidationPrice) : '',
-    targetPrice: position.targetPrice ?? '',
-    mistakes: position.mistakes ? (JSON.parse(position.mistakes) as string[]) : [],
-    notes: position.thesis?.includes('\n\n') ? position.thesis.split('\n\n').slice(1).join('\n\n') : '',
-    playbookId: position.playbookId ?? null,
-  }));
+    const parts = raw.split('\n\n');
+    const thesis = parts[0] ?? '';
+    const notes = parts.slice(1).join('\n\n');
+    return {
+      thesis,
+      conviction: position.conviction ?? null,
+      emotion: position.emotion ?? null,
+      strategyId: position.strategyId ?? null,
+      playbookId: position.playbookId ?? null,
+      confirmation: position.confirmation ?? '',
+      sourceTag: position.sourceTag ?? '',
+      invalidationPrice: position.invalidationPrice != null ? String(position.invalidationPrice) : '',
+      targetPrice: position.targetPrice ?? '',
+      mistakes: position.mistakes ? (JSON.parse(position.mistakes) as string[]) : [],
+      notes,
+    };
+  });
 
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
   const [sourceTags, setSourceTags] = useState<string[]>([]);
-  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>(
-    () => Object.fromEntries(POPUP_SECTIONS.map((s) => [s.id, s.defaultExpanded])),
-  );
+
+  // Section expansion — REFLECT always open, others collapsed
+  const [expanded, setExpanded] = useState({ reflect: true, myplan: false, source: false });
+
+  const [newStrategyMode, setNewStrategyMode] = useState(false);
+  const [newStrategyName, setNewStrategyName] = useState('');
+  const [creatingStrategy, setCreatingStrategy] = useState(false);
+  const newStratRef = useRef<HTMLInputElement>(null);
+
   const [saving, setSaving] = useState(false);
   const [adherencePreview, setAdherencePreview] = useState<AdherencePreview | null>(null);
   const [adherenceLoading, setAdherenceLoading] = useState(false);
@@ -510,9 +212,14 @@ export default function TradeAnnotationPopup({
       .catch(() => {});
   }, [authFetch]);
 
-  // Preview adherence whenever the user picks a different playbook. The
-  // result isn't persisted until they click Save — server re-runs the
-  // check at that point so what they saw matches what gets stored.
+  // Auto-expand MY PLAN when a playbook is selected
+  useEffect(() => {
+    if (formData.playbookId) {
+      setExpanded((prev) => ({ ...prev, myplan: true }));
+    }
+  }, [formData.playbookId]);
+
+  // Preview adherence whenever playbookId changes
   useEffect(() => {
     const id = formData.playbookId;
     if (!id) { setAdherencePreview(null); return; }
@@ -542,30 +249,63 @@ export default function TradeAnnotationPopup({
     return () => document.removeEventListener('keydown', handler);
   }, [onClose]);
 
+  useEffect(() => {
+    if (newStrategyMode) newStratRef.current?.focus();
+  }, [newStrategyMode]);
+
   const handleUpdate = (patch: Partial<PositionAnnotation>) => {
     setFormData((prev) => ({ ...prev, ...patch }));
   };
 
-  const handleNewStrategy = async (name: string): Promise<Strategy | null> => {
+  const toggleSection = (key: keyof typeof expanded) => {
+    setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  // ── Merged strategy/playbook dropdown ──────────────────────────────────────
+
+  const mergedValue = formData.playbookId
+    ? `p:${formData.playbookId}`
+    : formData.strategyId
+    ? `s:${formData.strategyId}`
+    : '';
+
+  const handleMergedChange = (val: string) => {
+    if (val === '__new__') {
+      setNewStrategyMode(true);
+      return;
+    }
+    if (val === '') {
+      handleUpdate({ strategyId: null, playbookId: null });
+    } else if (val.startsWith('s:')) {
+      handleUpdate({ strategyId: val.slice(2), playbookId: null });
+    } else if (val.startsWith('p:')) {
+      handleUpdate({ strategyId: null, playbookId: val.slice(2) });
+    }
+  };
+
+  const handleCreateStrategy = async () => {
+    if (!newStrategyName.trim()) return;
+    setCreatingStrategy(true);
     try {
       const res = await authFetch('/api/strategies', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name: newStrategyName.trim() }),
       });
       const data = await res.json();
       if (data.strategy) {
         setStrategies((prev) => [...prev, data.strategy].sort((a, b) => a.name.localeCompare(b.name)));
-        return data.strategy;
+        handleUpdate({ strategyId: data.strategy.id, playbookId: null });
+        setNewStrategyMode(false);
+        setNewStrategyName('');
       }
     } catch {}
-    return null;
+    setCreatingStrategy(false);
   };
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      // Combine thesis + notes
       const fullThesis = formData.notes.trim()
         ? `${formData.thesis}\n\n${formData.notes.trim()}`
         : formData.thesis;
@@ -580,6 +320,7 @@ export default function TradeAnnotationPopup({
         targetPrice: formData.targetPrice || null,
         mistakes: formData.mistakes.length > 0 ? JSON.stringify(formData.mistakes) : null,
         playbookId: formData.playbookId,
+        confirmation: formData.confirmation || null,
       };
 
       await authFetch(`/api/positions/${position.id}`, {
@@ -588,9 +329,11 @@ export default function TradeAnnotationPopup({
         body: JSON.stringify(patch),
       });
 
-      // Contextual save message
       const strategyName = strategies.find((s) => s.id === formData.strategyId)?.name;
-      const msg = strategyName
+      const playbookName = playbooks.find((p) => p.id === formData.playbookId)?.name;
+      const msg = playbookName
+        ? `Noted — checked against ${playbookName}`
+        : strategyName
         ? `Noted — tagged as ${strategyName}`
         : formData.thesis
         ? 'Got it!'
@@ -606,8 +349,7 @@ export default function TradeAnnotationPopup({
 
   const regime = position.regimeAtEntry ? REGIME_BADGE[position.regimeAtEntry] : null;
   const pnlColor = position.pnl == null ? 'text-[#6e7681]' : position.pnl >= 0 ? 'text-green-400' : 'text-red-400';
-
-  const sortedSections = [...POPUP_SECTIONS].sort((a, b) => a.priority - b.priority);
+  const convictionLabels = ['Low', 'Med', 'High'];
 
   return (
     <div
@@ -655,32 +397,271 @@ export default function TradeAnnotationPopup({
 
         {/* Scrollable sections */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3 min-h-0">
-          {sortedSections.map((section) => {
-            const expanded = expandedSections[section.id] ?? section.defaultExpanded;
-            const SectionComponent = section.component;
-            return (
-              <SectionWrapper
-                key={section.id}
-                section={section}
-                expanded={expanded}
-                onToggle={() =>
-                  setExpandedSections((prev) => ({ ...prev, [section.id]: !expanded }))
-                }
-              >
-                <SectionComponent
-                  position={position}
-                  formData={formData}
-                  strategies={strategies}
-                  playbooks={playbooks}
-                  sourceTags={sourceTags}
-                  onUpdate={handleUpdate}
-                  onNewStrategy={handleNewStrategy}
-                  adherencePreview={adherencePreview}
-                  adherenceLoading={adherenceLoading}
+
+          {/* ── REFLECT (always open) ── */}
+          <SectionWrapper label="Reflect" expanded={expanded.reflect} onToggle={() => toggleSection('reflect')}>
+            <div className="space-y-3 mt-2">
+              {/* Thesis — large textarea, first */}
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
+                  Thesis
+                </label>
+                <textarea
+                  value={formData.thesis}
+                  onChange={(e) => handleUpdate({ thesis: e.target.value })}
+                  rows={4}
+                  placeholder="Why did you take this trade?"
+                  className="w-full bg-[#0d1117] border border-[#30363d] text-sm text-[#e6edf3] rounded px-3 py-2 focus:outline-none focus:border-blue-500 placeholder-[#6e7681] resize-none"
                 />
-              </SectionWrapper>
-            );
-          })}
+              </div>
+
+              {/* Conviction */}
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
+                  Conviction
+                </label>
+                <div className="flex gap-2">
+                  {convictionLabels.map((label, i) => {
+                    const value = i + 1;
+                    const active = formData.conviction === value;
+                    return (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() => handleUpdate({ conviction: active ? null : value })}
+                        className={`flex-1 py-1.5 text-xs rounded border transition-colors ${
+                          active
+                            ? 'bg-blue-600 border-blue-500 text-white'
+                            : 'bg-[#0d1117] border-[#30363d] text-[#8b949e] hover:border-[#6e7681] hover:text-[#e6edf3]'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Emotion */}
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
+                  Emotion
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {EMOTION_OPTIONS.map((emotion) => {
+                    const active = formData.emotion === emotion;
+                    return (
+                      <button
+                        key={emotion}
+                        type="button"
+                        onClick={() => handleUpdate({ emotion: active ? null : emotion })}
+                        className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+                          active
+                            ? 'bg-purple-700 border-purple-500 text-white'
+                            : 'bg-[#0d1117] border-[#30363d] text-[#8b949e] hover:border-[#6e7681] hover:text-[#e6edf3]'
+                        }`}
+                      >
+                        {emotion}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Mistakes */}
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
+                  Mistakes
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {MISTAKE_OPTIONS.map((mistake) => {
+                    const active = formData.mistakes.includes(mistake);
+                    return (
+                      <button
+                        key={mistake}
+                        type="button"
+                        onClick={() => {
+                          const next = active
+                            ? formData.mistakes.filter((m) => m !== mistake)
+                            : [...formData.mistakes, mistake];
+                          handleUpdate({ mistakes: next });
+                        }}
+                        className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+                          active
+                            ? 'bg-red-900/50 border-red-500/60 text-red-300'
+                            : 'bg-[#0d1117] border-[#30363d] text-[#8b949e] hover:border-[#6e7681] hover:text-[#e6edf3]'
+                        }`}
+                      >
+                        {mistake}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </SectionWrapper>
+
+          {/* ── MY PLAN (collapsed, auto-opens when playbook picked) ── */}
+          <SectionWrapper label="My Plan" expanded={expanded.myplan} onToggle={() => toggleSection('myplan')}>
+            <div className="space-y-3 mt-2">
+              {/* Strategy / Playbook merged dropdown */}
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
+                  Strategy / Playbook
+                </label>
+                {newStrategyMode ? (
+                  <div className="flex gap-2">
+                    <input
+                      ref={newStratRef}
+                      type="text"
+                      value={newStrategyName}
+                      onChange={(e) => setNewStrategyName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleCreateStrategy();
+                        if (e.key === 'Escape') { setNewStrategyMode(false); setNewStrategyName(''); }
+                      }}
+                      placeholder="Strategy name"
+                      className="flex-1 bg-[#0d1117] border border-[#30363d] text-sm text-[#e6edf3] rounded px-3 py-1.5 focus:outline-none focus:border-blue-500"
+                    />
+                    <button
+                      onClick={handleCreateStrategy}
+                      disabled={creatingStrategy || !newStrategyName.trim()}
+                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-[#21262d] disabled:text-[#6e7681] text-white text-xs rounded transition-colors"
+                    >
+                      {creatingStrategy ? '...' : 'Add'}
+                    </button>
+                    <button
+                      onClick={() => { setNewStrategyMode(false); setNewStrategyName(''); }}
+                      className="px-2 py-1.5 text-[#6e7681] hover:text-white text-xs transition-colors"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ) : (
+                  <select
+                    value={mergedValue}
+                    onChange={(e) => handleMergedChange(e.target.value)}
+                    className="w-full bg-[#0d1117] border border-[#30363d] text-sm text-[#e6edf3] rounded px-3 py-1.5 focus:outline-none focus:border-blue-500"
+                  >
+                    <option value="">— None —</option>
+                    <optgroup label="Strategies">
+                      {strategies.map((s) => (
+                        <option key={s.id} value={`s:${s.id}`}>{s.name}</option>
+                      ))}
+                      <option value="__new__">+ New Strategy</option>
+                    </optgroup>
+                    {playbooks.length > 0 && (
+                      <optgroup label="Playbooks">
+                        {playbooks.map((p) => (
+                          <option key={p.id} value={`p:${p.id}`}>
+                            📘 {p.name} ({getRuleCount(p.rules)} rules)
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+                )}
+
+                {/* Adherence preview */}
+                {adherenceLoading && (
+                  <div className="text-[10px] text-[#6e7681] mt-1.5">Scoring adherence…</div>
+                )}
+                {adherencePreview && !adherenceLoading && (
+                  <div className="mt-2">
+                    <PlaybookAdherenceBreakdown
+                      score={adherencePreview.score}
+                      results={adherencePreview.results}
+                      playbookName={playbooks.find((p) => p.id === adherencePreview.playbookId)?.name}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Confirmation */}
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
+                  Confirmation
+                </label>
+                <input
+                  type="text"
+                  value={formData.confirmation}
+                  onChange={(e) => handleUpdate({ confirmation: e.target.value })}
+                  placeholder="What confirmed the entry?"
+                  className="w-full bg-[#0d1117] border border-[#30363d] text-sm text-[#e6edf3] rounded px-3 py-1.5 focus:outline-none focus:border-blue-500 placeholder-[#6e7681]"
+                />
+              </div>
+
+              {/* Planned Stop */}
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
+                  Planned Stop
+                </label>
+                <input
+                  type="number"
+                  value={formData.invalidationPrice}
+                  onChange={(e) => handleUpdate({ invalidationPrice: e.target.value })}
+                  placeholder={
+                    position.averageEntryPrice != null
+                      ? `e.g. near ${fmtPrice(position.averageEntryPrice)}`
+                      : 'Price where thesis is wrong'
+                  }
+                  className="w-full bg-[#0d1117] border border-[#30363d] text-sm text-[#e6edf3] rounded px-3 py-1.5 focus:outline-none focus:border-blue-500 placeholder-[#6e7681]"
+                />
+              </div>
+
+              {/* Planned Target */}
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
+                  Planned Target
+                </label>
+                <input
+                  type="number"
+                  value={formData.targetPrice}
+                  onChange={(e) => handleUpdate({ targetPrice: e.target.value })}
+                  placeholder="Price target"
+                  className="w-full bg-[#0d1117] border border-[#30363d] text-sm text-[#e6edf3] rounded px-3 py-1.5 focus:outline-none focus:border-blue-500 placeholder-[#6e7681]"
+                />
+              </div>
+            </div>
+          </SectionWrapper>
+
+          {/* ── SOURCE & NOTES (collapsed) ── */}
+          <SectionWrapper label="Source & Notes" expanded={expanded.source} onToggle={() => toggleSection('source')}>
+            <div className="space-y-3 mt-2">
+              {/* Source / Caller */}
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
+                  Source / Caller
+                </label>
+                <select
+                  value={formData.sourceTag}
+                  onChange={(e) => handleUpdate({ sourceTag: e.target.value })}
+                  className="w-full bg-[#0d1117] border border-[#30363d] text-sm text-[#e6edf3] rounded px-3 py-1.5 focus:outline-none focus:border-blue-500"
+                >
+                  <option value="">— None —</option>
+                  <option value="Manual">Manual</option>
+                  {sourceTags.filter((t) => t !== 'Manual').map((tag) => (
+                    <option key={tag} value={tag}>{tag}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
+                  Notes
+                </label>
+                <textarea
+                  value={formData.notes}
+                  onChange={(e) => handleUpdate({ notes: e.target.value })}
+                  rows={3}
+                  placeholder="Additional notes…"
+                  className="w-full bg-[#0d1117] border border-[#30363d] text-sm text-[#e6edf3] rounded px-3 py-2 focus:outline-none focus:border-blue-500 placeholder-[#6e7681] resize-none"
+                />
+              </div>
+            </div>
+          </SectionWrapper>
+
         </div>
 
         {/* Footer */}

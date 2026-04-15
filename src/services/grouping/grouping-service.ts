@@ -396,8 +396,12 @@ export class GroupingService {
     // Delete the other positions
     await prisma.position.deleteMany({ where: { id: { in: otherIds } } });
 
-    // Recompute aggregates
+    // Recompute aggregates and mark as user-confirmed
     await this.recomputePosition(target.id);
+    await prisma.position.update({
+      where: { id: target.id },
+      data: { groupingConfirmed: true },
+    });
 
     const merged = await prisma.position.findUnique({ where: { id: target.id } });
     return {
@@ -485,6 +489,12 @@ export class GroupingService {
       this.recomputePosition(newPosition.id),
     ]);
 
+    // Mark both halves as user-confirmed
+    await prisma.position.updateMany({
+      where: { id: { in: [position.id, newPosition.id] } },
+      data: { groupingConfirmed: true },
+    });
+
     return Promise.all([
       prisma.position.findUnique({ where: { id: position.id } }),
       prisma.position.findUnique({ where: { id: newPosition.id } }),
@@ -564,7 +574,7 @@ export class GroupingService {
   async reclassifyPosition(positionId: string, newType: string) {
     return prisma.position.update({
       where: { id: positionId },
-      data: { tradeType: newType },
+      data: { tradeType: newType, groupingConfirmed: true },
     });
   }
 

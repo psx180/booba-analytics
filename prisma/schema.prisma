@@ -105,6 +105,7 @@ model Position {
   maePrice            Float?
   maePnl              Float?
   confidence          Float?
+  groupingConfirmed   Boolean         @default(false) // true when user has manually merged, split, or reclassified
   tradeType           String?         // scalp | directional | scaled_directional | carry_trade | market_making
   regimeAtEntry       String?
   sentimentAtEntry    String?
@@ -136,6 +137,9 @@ model Position {
   sourceTag           String?
   emotion             String?
   mistakes            String?         // JSON array of mistake tags
+
+  // Trade annotation fields (set via post-trade popup / detail modal)
+  confirmation        String?         // What confirmed the entry? (free text)
 
   // Playbook adherence (set when user tags a playbook; auto-computed on import/tag)
   playbookId          String?

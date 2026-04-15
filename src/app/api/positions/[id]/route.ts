@@ -71,7 +71,7 @@ export async function PATCH(
     const annotationFields = [
       'thesis', 'strategyTag', 'sourceTag', 'conviction',
       'strategyId', 'invalidationPrice', 'targetPrice',
-      'emotion', 'mistakes', 'playbookId',
+      'emotion', 'mistakes', 'playbookId', 'confirmation',
     ] as const;
     const updateData: Record<string, string | number | null> = {};
     for (const field of annotationFields) {

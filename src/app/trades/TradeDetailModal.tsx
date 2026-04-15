@@ -513,6 +513,12 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
     if (e.target === overlayRef.current) onClose();
   };
 
+  // Orphaned-position detection: open status but exit time >24h in the past
+  const isPossiblyOrphaned =
+    position?.status === 'open' &&
+    position?.lastExitTime != null &&
+    Date.now() - new Date(position.lastExitTime).getTime() > 24 * 60 * 60 * 1000;
+
   // Derived metrics
   const tiltScore100 = position?.tiltScore != null ? Math.round(position.tiltScore * 100) : null;
   const rMultiple = (position?.aggregatePnl != null && position?.maePnl != null && position.maePnl !== 0)
@@ -580,13 +586,19 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
                 )}
 
                 {/* Status */}
-                <span className={`mt-1 px-2.5 py-0.5 rounded text-xs font-medium ${
-                  position.status === 'open'
-                    ? 'bg-blue-900/30 text-blue-400'
-                    : 'bg-[#21262d] text-[#8b949e]'
-                }`}>
-                  {position.status}
-                </span>
+                {isPossiblyOrphaned ? (
+                  <span className="mt-1 px-2.5 py-0.5 rounded text-xs font-medium bg-yellow-900/20 border border-yellow-700/40 text-yellow-400">
+                    ⚠ Possibly closed
+                  </span>
+                ) : (
+                  <span className={`mt-1 px-2.5 py-0.5 rounded text-xs font-medium ${
+                    position.status === 'open'
+                      ? 'bg-blue-900/30 text-blue-400'
+                      : 'bg-[#21262d] text-[#8b949e]'
+                  }`}>
+                    {position.status}
+                  </span>
+                )}
 
                 {/* Regime */}
                 {regime && (
@@ -611,6 +623,18 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
                 </div>
               </div>
             </div>
+
+            {/* ── Orphaned position warning ────────────────────────────── */}
+            {isPossiblyOrphaned && (
+              <div className="mx-6 mt-3 mb-0 flex items-start gap-2 bg-yellow-900/10 border border-yellow-700/30 rounded-lg px-4 py-3 text-xs text-yellow-300">
+                <span className="shrink-0">⚠</span>
+                <span>
+                  This position appears to be closed but may have orphaned fills. Its closing fills
+                  may have been moved to another journal. Use{' '}
+                  <strong>Reset Grouping</strong> in Settings to recalculate.
+                </span>
+              </div>
+            )}
 
             {/* ── Tabs ─────────────────────────────────────────────────── */}
             <div className="px-6 border-b border-[#21262d] flex gap-1">

@@ -6,17 +6,17 @@ import { usePrivy, useLogout } from '@privy-io/react-auth';
 import { useRef, useEffect, useState } from 'react';
 import { useJournal } from './JournalContext';
 import { useLive } from './LiveContext';
+import { useSync } from '@/contexts/SyncContext';
 import { isDevBypass } from './privy-env';
 import JournalSelector from './JournalSelector';
 import { useAccount, type Network } from '@/contexts/AccountContext';
 
-const tabs = [
+const tabs: { href: string; label: string; tourId?: string; disabled?: boolean }[] = [
   { href: '/dashboard', label: 'Dashboard' },
   { href: '/trades', label: 'Trades', tourId: 'nav-trades' },
   { href: '/analytics', label: 'Analytics', tourId: 'nav-analytics' },
   { href: '/signals', label: 'Signals', tourId: 'nav-signals' },
   { href: '/playbooks', label: 'Playbooks', tourId: 'nav-playbooks' },
-  { href: '#', label: 'Auctions', disabled: true },
   { href: '/settings', label: 'Settings' },
 ];
 
@@ -63,6 +63,7 @@ export default function NavBar() {
             {/* Right edge: network → sub-account → journal → wallet */}
             <div className="ml-auto flex items-center gap-2">
               <LiveIndicator />
+              <SyncButton />
               <NetworkSelector />
               <SubAccountSelector />
               <JournalSelector />
@@ -205,6 +206,33 @@ function SubAccountSelector() {
         </div>
       )}
     </div>
+  );
+}
+
+// ── Sync button ─────────────────────────────────────────────────────────────
+
+function SyncButton() {
+  const { syncLoading, syncCooldown, handleManualSync } = useSync();
+  return (
+    <button
+      onClick={handleManualSync}
+      disabled={syncLoading || syncCooldown}
+      title={syncCooldown ? 'Up to date' : 'Sync new trades from Pacifica'}
+      className={`flex items-center justify-center w-7 h-7 rounded transition-colors ${
+        syncCooldown
+          ? 'text-emerald-400 cursor-default'
+          : syncLoading
+          ? 'text-[#6e7681] cursor-wait'
+          : 'text-[#6e7681] hover:text-white hover:bg-[#21262d]'
+      }`}
+    >
+      <span
+        className={`text-sm leading-none ${syncLoading ? 'animate-spin' : ''}`}
+        style={syncLoading ? { display: 'inline-block' } : undefined}
+      >
+        {syncCooldown ? '✓' : '↻'}
+      </span>
+    </button>
   );
 }
 

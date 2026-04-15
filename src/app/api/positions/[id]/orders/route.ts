@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { withAuth, requireOwnedPosition } from '@/lib/api-auth';
+import { createDefaultOrderTypeDetector } from '@/services/grouping/order-type-detector';
 
 export async function GET(
   req: NextRequest,
@@ -28,6 +29,8 @@ export async function GET(
     },
     orderBy: { firstEntryTime: 'asc' },
   });
+
+  const detector = createDefaultOrderTypeDetector();
 
   // Augment each order with role and execution type from raw data
   const augmented = orders.map((order) => {
@@ -59,10 +62,13 @@ export async function GET(
       role = 'unknown';
     }
 
-    // Execution type from raw data
-    const executionType: string | null = raw.order_type ?? raw.type ?? null;
-
+    // Execution type: try API raw data first, fall back to stored heuristic type
     const { trades: _trades, ...orderData } = order;
+    const executionType = detector.detect({
+      tradeType: orderData.tradeType,
+      firstFillRawData: firstFill?.rawData ?? null,
+    });
+
     return {
       ...orderData,
       role,
