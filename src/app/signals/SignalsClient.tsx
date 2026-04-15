@@ -194,7 +194,11 @@ export default function SignalsClient() {
       const src = await srcRes.json();
       setCallers(lb.callers ?? []);
       setSignals(sig.signals ?? []);
-      setSources(src.sources ?? []);
+      setSources(
+        (src.sources ?? []).filter(
+          (s: SourceInfo) => s.label !== 'Manual Entry' && s.label !== 'Carry Monitor',
+        ),
+      );
     } catch (err) {
       console.error('[SignalsClient] load error', err);
     } finally {
@@ -620,10 +624,10 @@ function SignalSources({ sources }: { sources: SourceInfo[] }) {
               <span style={{ flex: 1, color: '#c9d1d9', fontSize: '13px', fontWeight: 500 }}>{src.label}</span>
 
               <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                {src.status === 'active' && (
-                  <span style={{ color: '#3fb950', fontSize: '12px', fontWeight: 600 }}>Active</span>
+                {src.status === 'active' && src.type !== 'tradingview' && (
+                  <span style={{ color: '#3fb950', fontSize: '12px', fontWeight: 600 }}>Configured</span>
                 )}
-                {src.status === 'experimental' && (
+                {(src.status === 'experimental' || src.type === 'tradingview') && (
                   <span style={{
                     padding: '1px 7px', borderRadius: '4px',
                     background: 'rgba(210,153,34,0.15)', color: '#d29922',
@@ -695,17 +699,17 @@ function SignalSources({ sources }: { sources: SourceInfo[] }) {
       })}
 
       <div style={{ padding: '10px 16px', borderTop: '1px solid #21262d', display: 'flex', justifyContent: 'flex-end' }}>
-        <a
-          href="/settings"
+        <span
+          title="Configure webhooks and bots in Settings (coming soon)"
           style={{
             color: '#58a6ff',
             fontSize: '12px',
             fontWeight: 600,
-            textDecoration: 'none',
+            cursor: 'help',
           }}
         >
           + Connect Source
-        </a>
+        </span>
       </div>
     </div>
   );
