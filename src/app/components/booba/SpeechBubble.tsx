@@ -5,11 +5,12 @@ import { useEffect, useState, useRef } from 'react';
 interface SpeechBubbleProps {
   text: string;
   onDismiss: () => void;
+  onClick?: () => void;
 }
 
 const PREVIEW_LENGTH = 120;
 
-export default function SpeechBubble({ text, onDismiss }: SpeechBubbleProps) {
+export default function SpeechBubble({ text, onDismiss, onClick }: SpeechBubbleProps) {
   const [visible, setVisible] = useState(false);
   const onDismissRef = useRef(onDismiss);
   onDismissRef.current = onDismiss;
@@ -34,6 +35,7 @@ export default function SpeechBubble({ text, onDismiss }: SpeechBubbleProps) {
 
   return (
     <div
+      onClick={onClick}
       style={{
         opacity: visible ? 1 : 0,
         transform: visible ? 'translateY(0)' : 'translateY(4px)',
@@ -49,6 +51,7 @@ export default function SpeechBubble({ text, onDismiss }: SpeechBubbleProps) {
         color: '#c9d1d9',
         position: 'relative',
         flexShrink: 0,
+        cursor: onClick ? 'pointer' : undefined,
       }}
     >
       {displayText}

@@ -3,13 +3,14 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { usePrivy, useLogout } from '@privy-io/react-auth';
-import { useRef, useEffect, useState } from 'react';
-import { useJournal } from './JournalContext';
+import { useRef, useEffect, useState, useCallback } from 'react';
+import { useJournal, useJournalOptional } from './JournalContext';
 import { useLive } from './LiveContext';
 import { useSync } from '@/contexts/SyncContext';
 import { isDevBypass } from './privy-env';
 import JournalSelector from './JournalSelector';
 import { useAccount, type Network } from '@/contexts/AccountContext';
+import { useAuthFetch } from '@/lib/api-client';
 
 const tabs: { href: string; label: string; tourId?: string; disabled?: boolean }[] = [
   { href: '/dashboard', label: 'Dashboard' },
@@ -85,9 +86,14 @@ export default function NavBar() {
 
 // ── Network selector ───────────────────────────────────────────────────────
 
+const LAST_MAINNET_JOURNAL_KEY = 'lastMainnetJournal';
+
 function NetworkSelector() {
   const { network, setNetwork } = useAccount();
+  const journal = useJournalOptional();
+  const authFetch = useAuthFetch();
   const [open, setOpen] = useState(false);
+  const [switching, setSwitching] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -98,14 +104,64 @@ function NetworkSelector() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  const handleSwitch = useCallback(async (n: Network) => {
+    if (n === network) { setOpen(false); return; }
+    setSwitching(true);
+    try {
+      if (n === 'testnet' && journal) {
+        // Save the current journal so we can restore it on mainnet switch
+        if (journal.journalId) {
+          localStorage.setItem(LAST_MAINNET_JOURNAL_KEY, journal.journalId);
+        }
+        // Find or create the Testnet journal
+        let testnetJournal = journal.journals.find((j) => j.name === 'Testnet');
+        if (!testnetJournal) {
+          const res = await authFetch('/api/journals', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: 'Testnet' }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            await journal.refresh();
+            testnetJournal = (data as { journal?: { id: string; name: string } }).journal as any;
+          }
+        } else {
+          // Refresh list in case it changed
+          await journal.refresh();
+          testnetJournal = journal.journals.find((j) => j.name === 'Testnet');
+        }
+        if (testnetJournal?.id) {
+          journal.setJournalId(testnetJournal.id);
+        }
+      } else if (n === 'mainnet' && journal) {
+        // Restore previously-active mainnet journal
+        const prev = localStorage.getItem(LAST_MAINNET_JOURNAL_KEY);
+        if (prev && journal.journals.some((j) => j.id === prev)) {
+          journal.setJournalId(prev);
+        } else {
+          const def = journal.journals.find((j) => j.isDefault);
+          if (def) journal.setJournalId(def.id);
+        }
+      }
+    } catch {
+      // Journal switch failed — still switch the network
+    } finally {
+      setSwitching(false);
+    }
+    setNetwork(n);
+    setOpen(false);
+  }, [network, journal, authFetch, setNetwork]);
+
   const isTestnet = network === 'testnet';
 
   return (
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen((o) => !o)}
+        disabled={switching}
         data-tour="network-switcher"
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] text-[#e6edf3] transition-colors"
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] text-[#e6edf3] transition-colors disabled:opacity-60"
         title="Switch network"
       >
         <span
@@ -113,7 +169,7 @@ function NetworkSelector() {
             isTestnet ? 'bg-orange-400' : 'bg-green-400'
           }`}
         />
-        {isTestnet ? 'Testnet' : 'Mainnet'}
+        {switching ? '…' : isTestnet ? 'Testnet' : 'Mainnet'}
         <span className="text-[10px] text-[#6e7681]">▾</span>
       </button>
 
@@ -122,7 +178,7 @@ function NetworkSelector() {
           {(['mainnet', 'testnet'] as Network[]).map((n) => (
             <button
               key={n}
-              onClick={() => { setNetwork(n); setOpen(false); }}
+              onClick={() => handleSwitch(n)}
               className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 transition-colors ${
                 network === n
                   ? 'bg-blue-900/30 text-white'

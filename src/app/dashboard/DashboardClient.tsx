@@ -1,11 +1,10 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import EquityCurve, { EquityPoint, TradeMeta, REGIME_LABELS } from './EquityCurve';
 import UnderwaterCurve, { UnderwaterPoint } from './UnderwaterCurve';
 import OpenPositions from './OpenPositions';
-import CarryOpportunities, { type CarryDataForBooba } from './CarryOpportunities';
 import LiveToast, { type Toast } from './LiveToast';
 import { useJournal } from '../JournalContext';
 import { useLive } from '../LiveContext';
@@ -202,11 +201,29 @@ function pnlColor(v: number) {
 }
 
 function formatPnl(v: number) {
-  return `${v >= 0 ? '+' : ''}$${Math.abs(v).toFixed(2)}`;
+  const abs = Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return v >= 0 ? `+$${abs}` : `-$${abs}`;
 }
 
 function formatPercent(fraction: number) {
   return `${(fraction * 100).toFixed(1)}%`;
+}
+
+function pfColor(v: number): string {
+  if (v >= 1.5) return 'text-green-400';
+  if (v >= 1.0) return 'text-yellow-400';
+  return 'text-red-400';
+}
+
+function computeDateRange(series: { date: string }[]): string | null {
+  if (series.length < 2) return null;
+  const start = new Date(series[0].date);
+  const end = new Date(series[series.length - 1].date);
+  const diffDays = (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24);
+  if (diffDays < 14) return `${Math.max(1, Math.round(diffDays))} days`;
+  if (diffDays < 30) return `${Math.max(1, Math.round(diffDays / 7))} weeks`;
+  const months = Math.max(1, Math.round(diffDays / 30.44));
+  return `${months} month${months === 1 ? '' : 's'}`;
 }
 
 // Tilt score shown on a 0-100 scale with a green/amber/red band.
@@ -303,7 +320,17 @@ function pickHeadlineTheme(c: ConvergenceResult | null): ConvergentTheme | null 
   return c.biggestLeak ?? c.weeklyFocus ?? c.biggestStrength ?? null;
 }
 
-// ── Stat Card ────────────────────────────────────────────────────────────────
+// ── Stat Cards ───────────────────────────────────────────────────────────────
+
+function BigStatCard({ label, value, sub }: { label: string; value: React.ReactNode; sub?: React.ReactNode }) {
+  return (
+    <div className="bg-[#161b22] border border-[#21262d] rounded-lg px-5 py-4">
+      <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-2">{label}</div>
+      <div className="text-3xl font-semibold leading-none">{value}</div>
+      {sub != null && <div className="mt-2">{sub}</div>}
+    </div>
+  );
+}
 
 function StatCard({ label, value, sub, tooltip }: { label: string; value: React.ReactNode; sub?: string; tooltip?: string }) {
   return (
@@ -311,6 +338,16 @@ function StatCard({ label, value, sub, tooltip }: { label: string; value: React.
       <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">{label}</div>
       <div className="text-xl font-semibold">{value}</div>
       {sub && <div className="text-xs text-[#6e7681] mt-0.5">{sub}</div>}
+    </div>
+  );
+}
+
+function WinRateBar({ rate }: { rate: number }) {
+  const pct = rate * 100;
+  const color = pct >= 50 ? 'bg-green-500' : pct >= 40 ? 'bg-yellow-500' : 'bg-red-500';
+  return (
+    <div className="w-full bg-[#21262d] rounded-full h-1.5">
+      <div className={`h-1.5 rounded-full ${color} transition-all`} style={{ width: `${Math.min(100, pct)}%` }} />
     </div>
   );
 }
@@ -365,7 +402,8 @@ export default function DashboardClient() {
     maxDrawdown: number;
   } | null>(null);
 
-  const [carryData, setCarryData] = useState<CarryDataForBooba | null>(null);
+  // ── Booba convergence suggestion cycling ──
+  const [suggestionIdx, setSuggestionIdx] = useState(0);
 
   // ── Live websocket state ──
   const { openPositions, initialPositions, lastTrade, lastClosedTrade, connected, lastSyncImport } = useLive();
@@ -694,6 +732,48 @@ export default function DashboardClient() {
 
   const hasData = performance && performance.tradeCount > 0;
 
+  // ── Booba convergence suggestions ──────────────────────────────────────────
+  const boobaSuggestions = useMemo(() => {
+    const suggestions: { text: string; link: string }[] = [];
+    if (convergence?.biggestLeak) {
+      suggestions.push({
+        text: `Check your ${convergence.biggestLeak.tabLink} tab — ${convergence.biggestLeak.headline.toLowerCase()}`,
+        link: `/analytics?tab=${convergence.biggestLeak.tabLink}`,
+      });
+    }
+    if (convergence?.weeklyFocus) {
+      suggestions.push({
+        text: `Focus this week: ${convergence.weeklyFocus.prescription}`,
+        link: `/analytics?tab=${convergence.weeklyFocus.tabLink}`,
+      });
+    }
+    if (convergence?.biggestStrength) {
+      suggestions.push({
+        text: `Good news: ${convergence.biggestStrength.headline.toLowerCase()}`,
+        link: `/analytics?tab=${convergence.biggestStrength.tabLink}`,
+      });
+    }
+    return suggestions;
+  }, [convergence]);
+
+  // Reset to first suggestion whenever the list changes
+  useEffect(() => { setSuggestionIdx(0); }, [boobaSuggestions]);
+
+  // Cycle every 10 seconds
+  useEffect(() => {
+    if (boobaSuggestions.length <= 1) return;
+    const id = setInterval(() => setSuggestionIdx((i) => (i + 1) % boobaSuggestions.length), 10_000);
+    return () => clearInterval(id);
+  }, [boobaSuggestions.length]);
+
+  const currentSuggestion = boobaSuggestions.length > 0 ? boobaSuggestions[suggestionIdx] : null;
+
+  // ── Peak equity for corrected drawdown % ───────────────────────────────────
+  const peakEquity = useMemo(
+    () => equityCurve.reduce((max, p) => Math.max(max, p.cumulativePnl), 0),
+    [equityCurve],
+  );
+
   // ── Onboarding import handler ───────────────────────────────────────────
   const handleImport = async () => {
     setImporting(true);
@@ -701,10 +781,12 @@ export default function DashboardClient() {
     setImportDone(false);
     setImportSummary(null);
     try {
+      const importBody: Record<string, unknown> = { regimes: true };
+      if (journalId) importBody.journalId = journalId;
       const res = await authFetch('/api/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ regimes: true }),
+        body: JSON.stringify(importBody),
       });
       const data = await res.json();
       const summary = data.summary;
@@ -820,146 +902,83 @@ export default function DashboardClient() {
 
   return (
     <div className="space-y-6">
-      {/* ── Header ───────────────────────────────────────────────────────── */}
-      <div>
-        <h1 className="text-lg font-semibold text-white">Dashboard</h1>
-      </div>
-
       {/* ── Stats Bar ─────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-12 gap-3">
-        <StatCard
-          label="Total P&L"
-          value={
-            <span className={performance ? pnlColor(performance.totalPnl) : 'text-[#6e7681]'}>
-              {performance ? formatPnl(performance.totalPnl) : '—'}
-            </span>
-          }
-        />
-        <StatCard
-          label="Win Rate"
-          value={performance ? formatPercent(performance.winRate) : '—'}
-        />
-        <StatCard
-          label="Total Trades"
-          value={performance?.tradeCount ?? '—'}
-        />
-        <StatCard
-          label="Expectancy"
-          value={
-            <span className={performance ? pnlColor(performance.expectancy) : 'text-[#6e7681]'}>
-              {performance ? formatPnl(performance.expectancy) : '—'}
-            </span>
-          }
-          sub="avg $ per trade"
-        />
-        <StatCard
-          label="Profit Factor"
-          value={performance ? performance.profitFactor.toFixed(2) : '—'}
-        />
-        <StatCard
-          label="Tilt Score"
-          value={
-            performance && (performance.tiltCoverage ?? 0) > 0 ? (
-              <span className={tiltColor(Math.round((performance.avgTiltScore ?? 0) * 100))}>
-                {Math.round((performance.avgTiltScore ?? 0) * 100)}
+      <div className="space-y-3">
+        {/* Row 1 — two large hero cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Total P&L */}
+          <BigStatCard
+            label="Total P&L"
+            value={
+              <span className={performance ? pnlColor(performance.totalPnl) : 'text-[#6e7681]'}>
+                {performance ? formatPnl(performance.totalPnl) : '—'}
               </span>
-            ) : (
-              <span className="text-[#6e7681]">—</span>
-            )
-          }
-          sub={
-            performance && (performance.tiltEpisodeCount ?? 0) > 0
-              ? `${performance.tiltEpisodeCount} episode${performance.tiltEpisodeCount === 1 ? '' : 's'}`
-              : 'avg 0-100, wallet-wide'
-          }
-        />
-        <StatCard
-          label="ELO"
-          value={
-            eloResult ? (
-              <span className="flex items-center gap-1.5">
-                <span className={eloColor(eloResult.currentElo)}>
-                  {Math.round(eloResult.currentElo)}
+            }
+            sub={
+              performance && equityCurve.length > 0 ? (
+                <span className="text-xs text-[#6e7681]">
+                  {performance.tradeCount} trades
+                  {(() => { const r = computeDateRange(equityCurve); return r ? ` · ${r}` : ''; })()}
                 </span>
-                <span className="text-xs text-[#6e7681]">{trendArrow(eloResult.recentTrend)}</span>
+              ) : undefined
+            }
+          />
+          {/* Win Rate */}
+          <BigStatCard
+            label="Win Rate"
+            value={
+              <span className={performance ? (performance.winRate >= 0.5 ? 'text-green-400' : performance.winRate >= 0.4 ? 'text-yellow-400' : 'text-red-400') : 'text-[#6e7681]'}>
+                {performance ? formatPercent(performance.winRate) : '—'}
               </span>
-            ) : (
-              <span className="text-[#6e7681]">—</span>
-            )
-          }
-          sub={eloResult ? `${eloResult.tier} · peak ${Math.round(eloResult.peakElo)}` : 'chess-style rating'}
-        />
-        <StatCard
-          label="Discipline"
-          value={
-            entropyResult ? (
-              <span className="flex items-center gap-1.5">
-                <span className={disciplineColor(entropyResult.compositeScore)}>
-                  {Math.round(entropyResult.compositeScore)}
+            }
+            sub={performance ? <WinRateBar rate={performance.winRate} /> : undefined}
+          />
+        </div>
+
+        {/* Row 2 — three smaller cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {/* Expectancy */}
+          <StatCard
+            label="Expectancy"
+            value={
+              <span className={performance ? pnlColor(performance.expectancy) : 'text-[#6e7681]'}>
+                {performance ? formatPnl(performance.expectancy) : '—'}
+              </span>
+            }
+            sub="per trade"
+          />
+          {/* Profit Factor */}
+          <StatCard
+            label="Profit Factor"
+            value={
+              performance ? (
+                <span className={pfColor(performance.profitFactor)}>
+                  {performance.profitFactor.toFixed(2)}
                 </span>
-                <span className="text-xs text-[#6e7681]">/100</span>
-                <span className="text-xs text-[#6e7681]">{trendArrow(entropyResult.trend)}</span>
-              </span>
-            ) : (
-              <span className="text-[#6e7681]">—</span>
-            )
-          }
-          sub="Shannon entropy"
-        />
-        <StatCard
-          label="Consistency"
-          value={
-            equityConsistency != null ? (
-              <span className={consistencyColor(equityConsistency)}>
-                {Math.round(equityConsistency * 100)}%
-              </span>
-            ) : (
-              <span className="text-[#6e7681]">—</span>
-            )
-          }
-          sub="equity curve R²"
-        />
-        <StatCard
-          label="WART"
-          value={
-            wartResult ? (
-              <span className={wartColor(wartResult.composite)}>
-                {formatWart(wartResult.composite)}
-              </span>
-            ) : (
-              <span className="text-[#6e7681]">—</span>
-            )
-          }
-          sub={wartResult ? wartResult.tier : 'composite trader score'}
-        />
-        <StatCard
-          label="Sharpe"
-          value={
-            sharpeRatio != null ? (
-              <span className={sharpeColor(sharpeRatio)}>
-                {sharpeRatio.toFixed(2)}
-              </span>
-            ) : (
-              <span className="text-[#6e7681]">—</span>
-            )
-          }
-          sub="risk-adjusted return"
-          tooltip="Risk-adjusted return. Above 1.0 is good, above 2.0 is excellent."
-        />
-        <StatCard
-          label="Payoff"
-          value={
-            payoffRatio != null ? (
-              <span className={payoffColor(payoffRatio)}>
-                {payoffRatio.toFixed(1)}:1
-              </span>
-            ) : (
-              <span className="text-[#6e7681]">—</span>
-            )
-          }
-          sub="avg win vs avg loss"
-          tooltip="Average win size vs average loss size. Above 2.0 is excellent."
-        />
+              ) : (
+                <span className="text-[#6e7681]">—</span>
+              )
+            }
+          />
+          {/* Current Drawdown */}
+          <StatCard
+            label="Current Drawdown"
+            value={
+              drawdownAnalysis && drawdownAnalysis.currentDrawdown < 0 ? (
+                <span className="text-red-400">
+                  {formatPnl(drawdownAnalysis.currentDrawdown)}
+                </span>
+              ) : (
+                <span className="text-green-400">At equity high ✓</span>
+              )
+            }
+            sub={
+              drawdownAnalysis && drawdownAnalysis.currentDrawdown < 0
+                ? `${Math.round(drawdownAnalysis.currentDrawdownDuration)} days · max was ${formatPnl(drawdownAnalysis.maxDrawdown)}`
+                : undefined
+            }
+          />
+        </div>
       </div>
 
       {/* ── Convergence headline ──────────────────────────────────────────── */}
@@ -1012,9 +1031,6 @@ export default function DashboardClient() {
         connected={connected}
       />
 
-      {/* ── Carry Opportunities ───────────────────────────────────────────── */}
-      <CarryOpportunities onDataLoaded={setCarryData} />
-
       {/* ── Equity Curve ──────────────────────────────────────────────────── */}
       <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
@@ -1032,19 +1048,13 @@ export default function DashboardClient() {
                   </span>
                 )}
                 {equityConsistency != null && (
-                  <span>
+                  <span
+                    title="Consistency is the R² of the equity curve — how closely your growth follows a straight line. 100% = perfectly linear growth."
+                    className="cursor-help"
+                  >
                     Consistency:{' '}
                     <span className={consistencyColor(equityConsistency)}>
                       {Math.round(equityConsistency * 100)}%
-                    </span>
-                  </span>
-                )}
-                {xpnlSummary && (
-                  <span>
-                    Luck score:{' '}
-                    <span className={xpnlSummary.luckScore >= 0 ? 'text-green-400' : 'text-red-400'}>
-                      {xpnlSummary.luckScore >= 0 ? '+' : ''}
-                      {Math.round(xpnlSummary.luckScore * 100)}%
                     </span>
                   </span>
                 )}
@@ -1052,15 +1062,22 @@ export default function DashboardClient() {
                   <span>
                     Max DD:{' '}
                     <span className="text-red-400">
-                      -${Math.abs(drawdownStats.maxDrawdown).toFixed(2)} (
-                      {drawdownStats.maxDrawdownPct.toFixed(1)}%)
+                      -${Math.abs(drawdownStats.maxDrawdown).toFixed(2)}
+                      {peakEquity > 0 && drawdownStats.maxDrawdown < 0
+                        ? ` (${Math.min(100, Math.abs(drawdownStats.maxDrawdown) / peakEquity * 100).toFixed(1)}%)`
+                        : ''}
                     </span>
-                    {' · Current: '}
-                    <span className={drawdownStats.currentDrawdown < 0 ? 'text-red-400' : 'text-[#8b949e]'}>
-                      {drawdownStats.currentDrawdown < 0
-                        ? `-$${Math.abs(drawdownStats.currentDrawdown).toFixed(2)} (${drawdownStats.currentDrawdownPct.toFixed(1)}%)`
-                        : '$0.00'}
-                    </span>
+                    {drawdownStats.currentDrawdown < 0 && (
+                      <>
+                        {' · Current drawdown: '}
+                        <span className="text-red-400">
+                          -${Math.abs(drawdownStats.currentDrawdown).toFixed(2)}
+                          {peakEquity > 0
+                            ? ` (${Math.min(100, Math.abs(drawdownStats.currentDrawdown) / peakEquity * 100).toFixed(1)}%)`
+                            : ''}
+                        </span>
+                      </>
+                    )}
                   </span>
                 )}
               </p>
@@ -1166,32 +1183,31 @@ export default function DashboardClient() {
               return live ?? historic;
             })(),
         })) + Math.round(liveHealthBoost))}
-        insight={chatOpen ? null : getContextualMessage('dashboard', {
-          untaggedPositionCount,
-          lastComputedAt,
-          totalTrades: performance?.tradeCount ?? 0,
-          wartResult: wartResult ?? undefined,
-          tiltEpisodeCount: performance?.tiltEpisodeCount ?? undefined,
-          eloResult: eloResult ?? undefined,
-          entropyResult: entropyResult ?? undefined,
-          xpnlLuckScore: xpnlSummary?.luckScore ?? undefined,
-          insights: insights.map((i) => ({
-            module: i.module,
-            title: i.title,
-            description: i.description,
-            isSignificant: i.isSignificant,
-            impactScore: i.impactScore,
-            data: i.data,
-          })),
-          drawdownAnalysis: drawdownAnalysis ?? undefined,
-          carryData: carryData
-            ? {
-                topOpportunity: carryData.topOpportunity ?? undefined,
-                utilizationPct: carryData.utilizationPct,
-                payingFundingSymbols: carryData.payingFundingSymbols,
-              }
-            : undefined,
-        })}
+        insight={chatOpen ? null : (
+          // Priority: convergence suggestions → insufficientData fallback → general contextual message
+          currentSuggestion?.text
+          ?? (convergence?.insufficientData ? 'Keep trading! I need more data to learn your patterns.' : null)
+          ?? getContextualMessage('dashboard', {
+            untaggedPositionCount,
+            lastComputedAt,
+            totalTrades: performance?.tradeCount ?? 0,
+            wartResult: wartResult ?? undefined,
+            tiltEpisodeCount: performance?.tiltEpisodeCount ?? undefined,
+            eloResult: eloResult ?? undefined,
+            entropyResult: entropyResult ?? undefined,
+            xpnlLuckScore: xpnlSummary?.luckScore ?? undefined,
+            insights: insights.map((i) => ({
+              module: i.module,
+              title: i.title,
+              description: i.description,
+              isSignificant: i.isSignificant,
+              impactScore: i.impactScore,
+              data: i.data,
+            })),
+            drawdownAnalysis: drawdownAnalysis ?? undefined,
+          })
+        )}
+        onInsightClick={!chatOpen && currentSuggestion ? () => router.push(currentSuggestion.link) : undefined}
         eloTrend={eloResult?.recentTrend}
         wartTrend={wartResult?.composite}
         onChatToggle={() => setChatOpen((o) => !o)}

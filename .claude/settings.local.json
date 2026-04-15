@@ -9,7 +9,8 @@
       "Bash(node -e \"console.log\\(typeof AbortSignal.timeout\\)\")",
       "Bash(npm install:*)",
       "Bash(grep -n \"playbookId\\\\|adherence\\\\|strategyId\\\\|invalidation\\\\|confirmation\" /d/IdeaProjects/pacibooba/src/app/api/positions/[id]/route.ts)",
-      "Bash(grep -n \"executionType\\\\|execution_type\" /d/IdeaProjects/pacibooba/src/app/api/positions/[id]/orders/route.ts)"
+      "Bash(grep -n \"executionType\\\\|execution_type\" /d/IdeaProjects/pacibooba/src/app/api/positions/[id]/orders/route.ts)",
+      "Bash(grep -v '//\\\\|<\\\\|^\\\\s*//')"
     ]
   }
 }

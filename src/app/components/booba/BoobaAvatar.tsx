@@ -22,6 +22,8 @@ export interface BoobaAvatarProps {
   onChatToggle?: () => void;
   /** Whether the chat panel is currently open */
   chatOpen?: boolean;
+  /** When set, clicking the speech bubble calls this (e.g. navigate to a link) */
+  onInsightClick?: () => void;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -77,6 +79,7 @@ export default function BoobaAvatar({
   onShow,
   onChatToggle,
   chatOpen,
+  onInsightClick,
 }: BoobaAvatarProps) {
   const px = size === 'medium' ? 120 : 60;
 
@@ -237,6 +240,7 @@ export default function BoobaAvatar({
           key={bubbleKey}
           text={bubbleText}
           onDismiss={() => setBubbleText(null)}
+          onClick={onInsightClick}
         />
       )}
 

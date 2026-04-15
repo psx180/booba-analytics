@@ -1087,6 +1087,115 @@ function FilterEditor({
   }
 }
 
+// ── Grouping Settings Popover ─────────────────────────────────────────────────
+
+const GROUPING_THRESHOLD_KEY = 'groupingThresholdHours';
+const GROUPING_THRESHOLD_OPTIONS: { label: string; value: number }[] = [
+  { label: '30m', value: 0.5 },
+  { label: '1h',  value: 1 },
+  { label: '2h',  value: 2 },
+  { label: '4h',  value: 4 },
+  { label: '8h',  value: 8 },
+  { label: '24h', value: 24 },
+];
+
+function GroupingSettingsPopover({ onGroupingReset }: { onGroupingReset: () => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [threshold, setThreshold] = useState(4);
+  const [resetting, setResetting] = useState(false);
+  const [resetMsg, setResetMsg] = useState<string | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const stored = localStorage.getItem(GROUPING_THRESHOLD_KEY);
+    if (stored) {
+      const n = parseFloat(stored);
+      if (!isNaN(n)) setThreshold(n);
+    }
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const handleThreshold = (v: number) => {
+    setThreshold(v);
+    localStorage.setItem(GROUPING_THRESHOLD_KEY, String(v));
+  };
+
+  const handleReset = async () => {
+    setResetting(true);
+    setResetMsg(null);
+    try {
+      await onGroupingReset();
+      setResetMsg('Done');
+    } catch {
+      setResetMsg('Failed');
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  return (
+    <div className="relative shrink-0" ref={ref}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        title="Grouping settings"
+        className={`w-8 h-8 flex items-center justify-center rounded text-base transition-colors ${
+          open ? 'bg-[#30363d] text-white' : 'bg-[#21262d] text-[#8b949e] hover:text-white hover:bg-[#30363d]'
+        }`}
+      >
+        ⚙
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-1 bg-[#1c2128] border border-[#30363d] rounded-lg shadow-xl z-20 w-56 p-3 space-y-3">
+          <div>
+            <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-2">
+              Grouping Threshold
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {GROUPING_THRESHOLD_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => handleThreshold(opt.value)}
+                  className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                    threshold === opt.value
+                      ? 'bg-blue-700 text-white'
+                      : 'bg-[#21262d] text-[#8b949e] hover:text-white'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="border-t border-[#30363d] pt-2">
+            <button
+              onClick={handleReset}
+              disabled={resetting}
+              className="w-full text-left px-2 py-1.5 text-xs text-[#e6edf3] hover:bg-[#21262d] rounded transition-colors disabled:opacity-50 flex items-center gap-2"
+            >
+              <span>⟳</span>
+              <span>{resetting ? 'Resetting…' : 'Reset Grouping'}</span>
+            </button>
+            {resetMsg && (
+              <p className={`text-[10px] mt-1 pl-2 ${resetMsg === 'Done' ? 'text-emerald-400' : 'text-red-400'}`}>
+                {resetMsg}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main chip bar component ──────────────────────────────────────────────────
 
 function ChipFilterBar({
@@ -2034,6 +2143,12 @@ export default function TradesClient() {
     [clearSelection, fetchData, refreshJournals, journals, showToast],
   );
 
+  const handleResetGrouping = useCallback(async () => {
+    const res = await authFetch('/api/grouping/run', { method: 'POST' });
+    if (!res.ok) throw new Error('Reset failed');
+    await fetchData();
+  }, [authFetch, fetchData]);
+
   // Lite projection of journals for the menu components — they only need
   // id/name/isDefault, not the full summary type.
   const journalLite: JournalSummaryLite[] = journals.map((j) => ({
@@ -2207,18 +2322,23 @@ export default function TradesClient() {
         </div>
       )}
 
-      {/* ── Filter Bar ─────────────────────────────────────────────── */}
-      <ChipFilterBar
-        filter={filter}
-        setFilter={(f) => { setFilter(f); setPage(1); }}
-        assetOptions={assetOptions}
-        strategies={strategies}
-        playbooks={playbooks}
-        sourceTags={sourceTags}
-        savedFilters={savedFilters}
-        setSavedFilters={(next) => { setSavedFilters(next); persistSavedFilters(walletAddress, next); }}
-        walletAddress={walletAddress}
-      />
+      {/* ── Filter Bar + Grouping Settings ───────────────────────── */}
+      <div className="flex items-start gap-2">
+        <div className="flex-1 min-w-0">
+          <ChipFilterBar
+            filter={filter}
+            setFilter={(f) => { setFilter(f); setPage(1); }}
+            assetOptions={assetOptions}
+            strategies={strategies}
+            playbooks={playbooks}
+            sourceTags={sourceTags}
+            savedFilters={savedFilters}
+            setSavedFilters={(next) => { setSavedFilters(next); persistSavedFilters(walletAddress, next); }}
+            walletAddress={walletAddress}
+          />
+        </div>
+        <GroupingSettingsPopover onGroupingReset={handleResetGrouping} />
+      </div>
 
       {/* ── Floating Toolbar ───────────────────────────────────────── */}
       {selectedIds.size > 0 && (

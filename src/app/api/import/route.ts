@@ -37,12 +37,19 @@ export async function POST(req: NextRequest) {
   return withAuth(req, async (walletAddress) => {
     const body = await req.json().catch(() => ({}));
     const withRegimes = body.regimes !== false;
+    // If a specific journalId is provided (e.g. testnet journal), newly-created
+    // positions are re-assigned to that journal after grouping completes.
+    const targetJournalId: string | undefined = typeof body.journalId === 'string' ? body.journalId : undefined;
 
     const steps: Record<string, unknown> = {};
 
     // 1. Ensure default journal
     const journal = await ensureDefaultJournal(walletAddress);
     steps.journal = { id: journal.id, name: journal.name };
+
+    // Record the start time so we can target only newly-created positions
+    // when re-assigning to a non-default journal.
+    const importStartedAt = new Date();
 
     // 2. Fetch trade history from Pacifica
     const apiConfigKey = process.env.PF_API_KEY;
@@ -95,6 +102,21 @@ export async function POST(req: NextRequest) {
     const groupingService = new GroupingService();
     const groupingSummary = await groupingService.groupAllFills(walletAddress);
     steps.grouping = groupingSummary;
+
+    // 6b. Re-assign newly-created positions to the target journal when a
+    //     non-default journal was requested (e.g. the Testnet journal).
+    if (targetJournalId && targetJournalId !== journal.id) {
+      const { prisma: db } = await import('@/lib/prisma');
+      await db.position.updateMany({
+        where: {
+          walletAddress,
+          journalId: journal.id,
+          createdAt: { gte: importStartedAt },
+        },
+        data: { journalId: targetJournalId },
+      });
+      steps.journalAssignment = { targetJournalId };
+    }
 
     // 7. Full analytics compute (fast + slow) — awaited since user is already waiting
     try {

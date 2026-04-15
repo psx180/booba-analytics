@@ -76,7 +76,7 @@ export default function UnderwaterCurve({ series }: Props) {
           minTickGap={60}
         />
         <YAxis
-          tickFormatter={(v) => `${v}%`}
+          tickFormatter={(value) => `${value.toFixed(0)}%`}
           tick={{ fill: '#6e7681', fontSize: 11 }}
           axisLine={false}
           tickLine={false}
