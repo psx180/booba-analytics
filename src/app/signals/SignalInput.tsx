@@ -16,7 +16,6 @@ interface ParsedSignal {
 interface PreviewCard {
   raw: string;
   parsed: ParsedSignal | null;
-  // Editable fields
   callerName: string;
   source: string;
   channelName: string;
@@ -27,39 +26,39 @@ interface PreviewCard {
 
 interface SignalInputProps {
   onSignalAdded: () => void;
+  onAskBooba?: () => void;
 }
 
 const ASSETS = ['BTC', 'ETH', 'SOL', 'BNB', 'ARB', 'OP', 'AVAX', 'MATIC', 'LINK', 'Other'];
 const SOURCES = ['discord', 'twitter', 'telegram', 'manual'];
 
-export default function SignalInput({ onSignalAdded }: SignalInputProps) {
-  const [mode, setMode] = useState<'paste' | 'manual'>('paste');
-  const [pasteText, setPasteText] = useState('');
-  const [parsing, setParsing] = useState(false);
-  const [previews, setPreviews] = useState<PreviewCard[]>([]);
+export default function SignalInput({ onSignalAdded, onAskBooba }: SignalInputProps) {
+  const [pasteText, setPasteText]     = useState('');
+  const [parsing, setParsing]         = useState(false);
+  const [previews, setPreviews]       = useState<PreviewCard[]>([]);
   const [defaultSource, setDefaultSource] = useState('discord');
-  const [defaultChannel, setDefaultChannel] = useState('');
+  const [showManual, setShowManual]   = useState(false);
+  const [isFocused, setIsFocused]     = useState(false);
 
-  // Manual form state
-  const [manualAsset, setManualAsset] = useState('BTC');
+  // Manual form
+  const [manualAsset, setManualAsset]           = useState('BTC');
   const [manualCustomAsset, setManualCustomAsset] = useState('');
-  const [manualDirection, setManualDirection] = useState<'LONG' | 'SHORT'>('LONG');
-  const [manualEntry, setManualEntry] = useState('');
-  const [manualTarget, setManualTarget] = useState('');
-  const [manualStop, setManualStop] = useState('');
-  const [manualCaller, setManualCaller] = useState('');
-  const [manualSource, setManualSource] = useState('manual');
-  const [manualChannel, setManualChannel] = useState('');
-  const [manualSaving, setManualSaving] = useState(false);
-  const [manualError, setManualError] = useState<string | null>(null);
+  const [manualDirection, setManualDirection]   = useState<'LONG' | 'SHORT'>('LONG');
+  const [manualEntry, setManualEntry]           = useState('');
+  const [manualTarget, setManualTarget]         = useState('');
+  const [manualStop, setManualStop]             = useState('');
+  const [manualCaller, setManualCaller]         = useState('');
+  const [manualSource, setManualSource]         = useState('manual');
+  const [manualChannel, setManualChannel]       = useState('');
+  const [manualSaving, setManualSaving]         = useState(false);
+  const [manualError, setManualError]           = useState<string | null>(null);
 
   const authFetch = useAuthFetch();
 
+  const isExpanded = isFocused || pasteText.length > 0;
+
   async function handleParse() {
-    const lines = pasteText
-      .split('\n')
-      .map((l) => l.trim())
-      .filter(Boolean);
+    const lines = pasteText.split('\n').map((l) => l.trim()).filter(Boolean);
     if (lines.length === 0) return;
 
     setParsing(true);
@@ -77,21 +76,15 @@ export default function SignalInput({ onSignalAdded }: SignalInputProps) {
           parsed: data.signal,
           callerName: data.signal?.callerName ?? '',
           source: defaultSource,
-          channelName: defaultChannel,
+          channelName: '',
           confirmed: false,
           saving: false,
           error: null,
         });
       } catch {
         newPreviews.push({
-          raw: line,
-          parsed: null,
-          callerName: '',
-          source: defaultSource,
-          channelName: defaultChannel,
-          confirmed: false,
-          saving: false,
-          error: 'Parse failed',
+          raw: line, parsed: null, callerName: '', source: defaultSource,
+          channelName: '', confirmed: false, saving: false, error: 'Parse failed',
         });
       }
     }
@@ -107,13 +100,9 @@ export default function SignalInput({ onSignalAdded }: SignalInputProps) {
   async function handleAddSignal(index: number) {
     const card = previews[index];
     if (!card.parsed) return;
-    if (!card.callerName.trim()) {
-      updatePreview(index, { error: 'Caller name required' });
-      return;
-    }
+    if (!card.callerName.trim()) { updatePreview(index, { error: 'Caller name required' }); return; }
 
     updatePreview(index, { saving: true, error: null });
-
     try {
       const res = await authFetch('/api/signals', {
         method: 'POST',
@@ -150,7 +139,6 @@ export default function SignalInput({ onSignalAdded }: SignalInputProps) {
 
     setManualSaving(true);
     setManualError(null);
-
     try {
       const res = await authFetch('/api/signals', {
         method: 'POST',
@@ -172,10 +160,10 @@ export default function SignalInput({ onSignalAdded }: SignalInputProps) {
         setManualSaving(false);
         return;
       }
-      // Reset
       setManualEntry(''); setManualTarget(''); setManualStop('');
       setManualCaller(''); setManualChannel('');
       setManualSaving(false);
+      setShowManual(false);
       onSignalAdded();
     } catch {
       setManualError('Network error');
@@ -184,163 +172,131 @@ export default function SignalInput({ onSignalAdded }: SignalInputProps) {
   }
 
   return (
-    <div style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: '8px', padding: '20px' }}>
-      {/* Mode toggle */}
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-        {(['paste', 'manual'] as const).map((m) => (
-          <button
-            key={m}
-            onClick={() => setMode(m)}
+    <div>
+      {/* ── Compact input row ── */}
+      <div style={{
+        background: '#161b22',
+        border: '1px solid #30363d',
+        borderRadius: '8px',
+        padding: '8px 12px',
+        display: 'flex',
+        gap: '8px',
+        alignItems: 'flex-start',
+      }}>
+        {/* Paste textarea — single line when collapsed, grows on focus */}
+        <textarea
+          value={pasteText}
+          onChange={(e) => setPasteText(e.target.value)}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
+          placeholder="📋 Paste a signal or call…"
+          rows={isExpanded ? 3 : 1}
+          style={{
+            flex: 1,
+            padding: '6px 10px',
+            borderRadius: '6px',
+            border: '1px solid #30363d',
+            background: '#0d1117',
+            color: '#c9d1d9',
+            fontSize: '13px',
+            outline: 'none',
+            boxSizing: 'border-box',
+            resize: 'none',
+            fontFamily: 'inherit',
+            height: isExpanded ? '72px' : '34px',
+            transition: 'height 150ms ease',
+            lineHeight: '1.4',
+          }}
+        />
+
+        {/* Controls — stay in the row, align to top */}
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexShrink: 0, paddingTop: '1px' }}>
+          <select
+            value={defaultSource}
+            onChange={(e) => setDefaultSource(e.target.value)}
             style={{
-              padding: '6px 16px',
+              padding: '5px 8px',
               borderRadius: '6px',
-              border: '1px solid',
-              borderColor: mode === m ? '#1f6feb' : '#30363d',
-              background: mode === m ? 'rgba(31,111,235,0.15)' : 'transparent',
-              color: mode === m ? '#58a6ff' : '#8b949e',
-              fontSize: '13px',
-              fontWeight: 600,
+              border: '1px solid #30363d',
+              background: '#21262d',
+              color: '#c9d1d9',
+              fontSize: '12px',
               cursor: 'pointer',
+              outline: 'none',
             }}
           >
-            {m === 'paste' ? 'Paste & Parse' : 'Manual Entry'}
-          </button>
-        ))}
-      </div>
-
-      {mode === 'paste' ? (
-        <div>
-          {/* Source / channel row */}
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-            <select
-              value={defaultSource}
-              onChange={(e) => setDefaultSource(e.target.value)}
-              style={selectStyle}
-            >
-              {SOURCES.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-            <input
-              value={defaultChannel}
-              onChange={(e) => setDefaultChannel(e.target.value)}
-              placeholder="Channel / handle (optional)"
-              style={{ ...inputStyle, flex: 1 }}
-            />
-          </div>
-
-          <textarea
-            value={pasteText}
-            onChange={(e) => setPasteText(e.target.value)}
-            placeholder={"Paste one or more messages, one per line:\nLong BTC at 79k, target 82k, stop 77k — @AlphaTrader\nShort ETH 3200, SL 3350, TP 2900"}
-            rows={4}
-            style={{
-              ...inputStyle,
-              width: '100%',
-              resize: 'vertical',
-              fontFamily: 'inherit',
-              marginBottom: '12px',
-            }}
-          />
+            {SOURCES.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
 
           <button
             onClick={handleParse}
             disabled={parsing || !pasteText.trim()}
             style={{
-              ...btnPrimary,
-              opacity: parsing || !pasteText.trim() ? 0.5 : 1,
+              padding: '5px 14px',
+              borderRadius: '6px',
+              border: 'none',
+              background: parsing || !pasteText.trim() ? '#21262d' : '#1f6feb',
+              color: parsing || !pasteText.trim() ? '#484f58' : '#ffffff',
+              fontSize: '13px',
+              fontWeight: 600,
               cursor: parsing || !pasteText.trim() ? 'not-allowed' : 'pointer',
+              whiteSpace: 'nowrap',
             }}
           >
-            {parsing ? 'Parsing…' : 'Parse Signals'}
+            {parsing ? '…' : 'Parse'}
           </button>
 
-          {/* Preview cards */}
-          {previews.length > 0 && (
-            <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {previews.map((card, i) => (
-                <div
-                  key={i}
-                  style={{
-                    background: card.confirmed ? 'rgba(35,134,54,0.1)' : '#0d1117',
-                    border: `1px solid ${card.confirmed ? '#238636' : card.parsed ? '#30363d' : '#6e3b3b'}`,
-                    borderRadius: '8px',
-                    padding: '12px',
-                  }}
-                >
-                  {card.parsed ? (
-                    <>
-                      {/* Signal summary */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' }}>
-                        <span style={{ ...dirBadge, background: card.parsed.direction === 'LONG' ? 'rgba(35,134,54,0.3)' : 'rgba(218,54,51,0.3)', color: card.parsed.direction === 'LONG' ? '#3fb950' : '#f85149' }}>
-                          {card.parsed.direction}
-                        </span>
-                        <span style={{ color: '#e6edf3', fontWeight: 700, fontSize: '14px' }}>{card.parsed.asset}</span>
-                        <span style={{ color: '#c9d1d9', fontSize: '13px' }}>@ ${card.parsed.entryPrice.toLocaleString()}</span>
-                        {card.parsed.targetPrices && card.parsed.targetPrices.length > 1 ? (
-                          card.parsed.targetPrices.map((tp, i) => (
-                            <span key={i} style={{ color: '#3fb950', fontSize: '12px' }}>
-                              TP{i + 1}:&nbsp;${tp.toLocaleString()}
-                            </span>
-                          ))
-                        ) : card.parsed.targetPrice ? (
-                          <span style={{ color: '#3fb950', fontSize: '12px' }}>→ ${card.parsed.targetPrice.toLocaleString()}</span>
-                        ) : null}
-                        {card.parsed.stopPrice && (
-                          <span style={{ color: '#f85149', fontSize: '12px' }}>SL ${card.parsed.stopPrice.toLocaleString()}</span>
-                        )}
-                      </div>
+          <button
+            onClick={() => setShowManual(!showManual)}
+            style={{
+              padding: '5px 12px',
+              borderRadius: '6px',
+              border: '1px solid',
+              borderColor: showManual ? '#1f6feb' : '#30363d',
+              background: showManual ? 'rgba(31,111,235,0.15)' : 'transparent',
+              color: showManual ? '#58a6ff' : '#8b949e',
+              fontSize: '13px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            + Manual
+          </button>
 
-                      {!card.confirmed && (
-                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-                          <input
-                            value={card.callerName}
-                            onChange={(e) => updatePreview(i, { callerName: e.target.value })}
-                            placeholder="Caller name *"
-                            style={{ ...inputStyle, width: '140px' }}
-                          />
-                          <select
-                            value={card.source}
-                            onChange={(e) => updatePreview(i, { source: e.target.value })}
-                            style={selectStyle}
-                          >
-                            {SOURCES.map((s) => <option key={s} value={s}>{s}</option>)}
-                          </select>
-                          <input
-                            value={card.channelName}
-                            onChange={(e) => updatePreview(i, { channelName: e.target.value })}
-                            placeholder="Channel"
-                            style={{ ...inputStyle, width: '120px' }}
-                          />
-                          <button
-                            onClick={() => handleAddSignal(i)}
-                            disabled={card.saving}
-                            style={{ ...btnPrimary, padding: '5px 14px', opacity: card.saving ? 0.5 : 1 }}
-                          >
-                            {card.saving ? 'Saving…' : 'Add Signal'}
-                          </button>
-                          {card.error && <span style={{ color: '#f85149', fontSize: '12px' }}>{card.error}</span>}
-                        </div>
-                      )}
-
-                      {card.confirmed && (
-                        <span style={{ color: '#3fb950', fontSize: '12px', fontWeight: 600 }}>Saved</span>
-                      )}
-                    </>
-                  ) : (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ color: '#6e7681', fontSize: '12px', fontStyle: 'italic', flex: 1, marginRight: '8px' }}>
-                        Not a signal: "{card.raw.slice(0, 80)}{card.raw.length > 80 ? '…' : ''}"
-                      </span>
-                      <span style={{ color: '#484f58', fontSize: '11px', whiteSpace: 'nowrap' }}>skipped</span>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
+          {onAskBooba && (
+            <button
+              onClick={onAskBooba}
+              style={{
+                padding: '5px 12px',
+                borderRadius: '6px',
+                border: '1px solid #30363d',
+                background: 'transparent',
+                color: '#8b949e',
+                fontSize: '13px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Ask Booba
+            </button>
           )}
         </div>
-      ) : (
-        /* Manual form */
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '10px' }}>
+      </div>
+
+      {/* ── Manual form (toggled) ── */}
+      {showManual && (
+        <div style={{
+          marginTop: '8px',
+          background: '#161b22',
+          border: '1px solid #30363d',
+          borderRadius: '8px',
+          padding: '16px',
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+          gap: '10px',
+        }}>
           <div>
             <label style={labelStyle}>Asset</label>
             <select value={manualAsset} onChange={(e) => setManualAsset(e.target.value)} style={selectStyle}>
@@ -426,11 +382,99 @@ export default function SignalInput({ onSignalAdded }: SignalInputProps) {
           </div>
         </div>
       )}
+
+      {/* ── Preview cards ── */}
+      {previews.length > 0 && (
+        <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {previews.map((card, i) => (
+            <div
+              key={i}
+              style={{
+                background: card.confirmed ? 'rgba(35,134,54,0.1)' : '#0d1117',
+                border: `1px solid ${card.confirmed ? '#238636' : card.parsed ? '#30363d' : '#6e3b3b'}`,
+                borderRadius: '8px',
+                padding: '12px',
+              }}
+            >
+              {card.parsed ? (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' }}>
+                    <span style={{
+                      ...dirBadge,
+                      background: card.parsed.direction === 'LONG' ? 'rgba(35,134,54,0.3)' : 'rgba(218,54,51,0.3)',
+                      color: card.parsed.direction === 'LONG' ? '#3fb950' : '#f85149',
+                    }}>
+                      {card.parsed.direction}
+                    </span>
+                    <span style={{ color: '#e6edf3', fontWeight: 700, fontSize: '14px' }}>{card.parsed.asset}</span>
+                    <span style={{ color: '#c9d1d9', fontSize: '13px' }}>@ ${card.parsed.entryPrice.toLocaleString()}</span>
+                    {card.parsed.targetPrices && card.parsed.targetPrices.length > 1 ? (
+                      card.parsed.targetPrices.map((tp, j) => (
+                        <span key={j} style={{ color: '#3fb950', fontSize: '12px' }}>
+                          TP{j + 1}:&nbsp;${tp.toLocaleString()}
+                        </span>
+                      ))
+                    ) : card.parsed.targetPrice ? (
+                      <span style={{ color: '#3fb950', fontSize: '12px' }}>→ ${card.parsed.targetPrice.toLocaleString()}</span>
+                    ) : null}
+                    {card.parsed.stopPrice && (
+                      <span style={{ color: '#f85149', fontSize: '12px' }}>SL ${card.parsed.stopPrice.toLocaleString()}</span>
+                    )}
+                  </div>
+
+                  {!card.confirmed && (
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                      <input
+                        value={card.callerName}
+                        onChange={(e) => updatePreview(i, { callerName: e.target.value })}
+                        placeholder="Caller name *"
+                        style={{ ...inputStyle, width: '140px' }}
+                      />
+                      <select
+                        value={card.source}
+                        onChange={(e) => updatePreview(i, { source: e.target.value })}
+                        style={selectStyle}
+                      >
+                        {SOURCES.map((s) => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                      <input
+                        value={card.channelName}
+                        onChange={(e) => updatePreview(i, { channelName: e.target.value })}
+                        placeholder="Channel"
+                        style={{ ...inputStyle, width: '120px' }}
+                      />
+                      <button
+                        onClick={() => handleAddSignal(i)}
+                        disabled={card.saving}
+                        style={{ ...btnPrimary, padding: '5px 14px', opacity: card.saving ? 0.5 : 1 }}
+                      >
+                        {card.saving ? 'Saving…' : 'Add Signal'}
+                      </button>
+                      {card.error && <span style={{ color: '#f85149', fontSize: '12px' }}>{card.error}</span>}
+                    </div>
+                  )}
+
+                  {card.confirmed && (
+                    <span style={{ color: '#3fb950', fontSize: '12px', fontWeight: 600 }}>Saved</span>
+                  )}
+                </>
+              ) : (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ color: '#6e7681', fontSize: '12px', fontStyle: 'italic', flex: 1, marginRight: '8px' }}>
+                    Not a signal: &ldquo;{card.raw.slice(0, 80)}{card.raw.length > 80 ? '…' : ''}&rdquo;
+                  </span>
+                  <span style={{ color: '#484f58', fontSize: '11px', whiteSpace: 'nowrap' }}>skipped</span>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-// ── Shared styles ────────────────────────────────────────────────────────────
+// ── Shared styles ─────────────────────────────────────────────────────────────
 
 const inputStyle: React.CSSProperties = {
   width: '100%',
