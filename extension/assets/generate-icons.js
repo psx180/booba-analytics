@@ -1,5 +1,5 @@
 // Run with: node generate-icons.js
-// Generates icon-16.png, icon-48.png, icon-128.png from booba-calm.svg
+// Generates icon-16.png, icon-48.png, icon-128.png from booba-calm.png
 // Requires: npm install -g sharp (or use with canvas)
 // For hackathon: icons are simple programmatic PNGs — no external deps needed
 // This script uses pure Node.js Buffer to write minimal valid PNGs

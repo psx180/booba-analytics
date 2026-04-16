@@ -269,6 +269,7 @@ function FloatingToolbar({
   onSplit,
   onReclassify,
   onMoveJournal,
+  isMerging,
 }: {
   selectedIds: Set<string>;
   selectedUnits: TradeUnit[];
@@ -280,6 +281,7 @@ function FloatingToolbar({
   onSplit: () => void;
   onReclassify: () => void;
   onMoveJournal: (targetJournalId: string) => void;
+  isMerging: boolean;
 }) {
   const count = selectedIds.size;
   const [linkOpen, setLinkOpen] = useState(false);
@@ -335,11 +337,21 @@ function FloatingToolbar({
         <>
           <button
             onClick={onMerge}
-            disabled={hasLinkedStrategy || mixedAssets}
+            disabled={hasLinkedStrategy || mixedAssets || isMerging}
             title={hasLinkedStrategy ? 'Cannot merge linked strategies' : mixedAssets ? 'Can only merge same-asset positions' : undefined}
-            className="px-3 py-1.5 bg-[#21262d] hover:bg-[#30363d] disabled:opacity-40 text-sm text-[#e6edf3] border border-[#30363d] rounded transition-colors"
+            className="px-3 py-1.5 bg-[#21262d] hover:bg-[#30363d] disabled:opacity-40 text-sm text-[#e6edf3] border border-[#30363d] rounded transition-colors flex items-center gap-1.5"
           >
-            Merge Positions
+            {isMerging ? (
+              <>
+                <svg className="animate-spin h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                Merging…
+              </>
+            ) : (
+              'Merge Positions'
+            )}
           </button>
           <div className="relative" ref={linkRef}>
             <button
@@ -1098,11 +1110,15 @@ const GROUPING_THRESHOLD_OPTIONS: { label: string; value: number }[] = [
   { label: '24h', value: 24 },
 ];
 
-function GroupingSettingsPopover({ onGroupingReset }: { onGroupingReset: () => Promise<void> }) {
+function GroupingSettingsPopover({
+  onGroupingReset,
+  resetProgress,
+}: {
+  onGroupingReset: () => void;
+  resetProgress: { msg: string; percent: number; done: boolean } | null;
+}) {
   const [open, setOpen] = useState(false);
   const [threshold, setThreshold] = useState(4);
-  const [resetting, setResetting] = useState(false);
-  const [resetMsg, setResetMsg] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1126,18 +1142,7 @@ function GroupingSettingsPopover({ onGroupingReset }: { onGroupingReset: () => P
     localStorage.setItem(GROUPING_THRESHOLD_KEY, String(v));
   };
 
-  const handleReset = async () => {
-    setResetting(true);
-    setResetMsg(null);
-    try {
-      await onGroupingReset();
-      setResetMsg('Done');
-    } catch {
-      setResetMsg('Failed');
-    } finally {
-      setResetting(false);
-    }
-  };
+  const isResetting = resetProgress !== null && !resetProgress.done;
 
   return (
     <div className="relative shrink-0" ref={ref}>
@@ -1176,16 +1181,28 @@ function GroupingSettingsPopover({ onGroupingReset }: { onGroupingReset: () => P
 
           <div className="border-t border-[#30363d] pt-2">
             <button
-              onClick={handleReset}
-              disabled={resetting}
+              onClick={onGroupingReset}
+              disabled={isResetting}
               className="w-full text-left px-2 py-1.5 text-xs text-[#e6edf3] hover:bg-[#21262d] rounded transition-colors disabled:opacity-50 flex items-center gap-2"
             >
-              <span>⟳</span>
-              <span>{resetting ? 'Resetting…' : 'Reset Grouping'}</span>
+              {isResetting ? (
+                <>
+                  <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  <span>Rebuilding… {resetProgress!.percent}%</span>
+                </>
+              ) : (
+                <>
+                  <span>⟳</span>
+                  <span>Reset Grouping</span>
+                </>
+              )}
             </button>
-            {resetMsg && (
-              <p className={`text-[10px] mt-1 pl-2 ${resetMsg === 'Done' ? 'text-emerald-400' : 'text-red-400'}`}>
-                {resetMsg}
+            {resetProgress?.done && (
+              <p className={`text-[10px] mt-1 pl-2 ${resetProgress.msg.toLowerCase().includes('fail') || resetProgress.msg.toLowerCase().includes('error') ? 'text-red-400' : 'text-emerald-400'}`}>
+                {resetProgress.msg}
               </p>
             )}
           </div>
@@ -1787,6 +1804,9 @@ export default function TradesClient() {
   const [toast, setToast] = useState<ToastState | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [mergeConfirm, setMergeConfirm] = useState(false);
+  const [isMerging, setIsMerging] = useState(false);
+  const [resetProgress, setResetProgress] = useState<{ msg: string; percent: number; done: boolean } | null>(null);
+  const resetPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [splitPositionId, setSplitPositionId] = useState<string | null>(null);
   const [reclassifyUnit, setReclassifyUnit] = useState<TradeUnit | null>(null);
   const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
@@ -2019,6 +2039,8 @@ export default function TradesClient() {
 
   const handleMerge = useCallback(async () => {
     const ids = [...selectedIds];
+    setIsMerging(true);
+    setMergeConfirm(false); // close dialog immediately so user sees spinner
     try {
       const res = await authFetch('/api/positions/merge', {
         method: 'POST',
@@ -2027,7 +2049,6 @@ export default function TradesClient() {
       });
       const data = await res.json();
       clearSelection();
-      setMergeConfirm(false);
       if (data.merged?.id) flashRows([data.merged.id]);
       await fetchData();
 
@@ -2042,8 +2063,10 @@ export default function TradesClient() {
       });
     } catch (err) {
       console.error('Merge failed', err);
+    } finally {
+      setIsMerging(false);
     }
-  }, [selectedIds, clearSelection, fetchData, showToast, flashRows]);
+  }, [selectedIds, clearSelection, fetchData, showToast, flashRows, authFetch]);
 
   const handleLink = useCallback(async (strategyType: 'delta_neutral' | 'pairs_trade' | 'basis_trade') => {
     const ids = [...selectedIds].filter((id) => allTradeUnits.find((u) => u.id === id)?.kind === 'position');
@@ -2205,10 +2228,52 @@ export default function TradesClient() {
     [clearSelection, fetchData, refreshJournals, journals, showToast],
   );
 
-  const handleResetGrouping = useCallback(async () => {
-    const res = await authFetch('/api/grouping/run', { method: 'POST' });
-    if (!res.ok) throw new Error('Reset failed');
-    await fetchData();
+  const handleResetGrouping = useCallback(() => {
+    // Clear any existing poll
+    if (resetPollRef.current) {
+      clearInterval(resetPollRef.current);
+      resetPollRef.current = null;
+    }
+
+    authFetch('/api/grouping/run', { method: 'POST' })
+      .then((res) => {
+        if (!res.ok) throw new Error('Reset failed to start');
+        setResetProgress({ msg: 'Starting…', percent: 5, done: false });
+
+        // Poll every 2s until the job completes or errors
+        const poll = setInterval(async () => {
+          try {
+            const statusRes = await authFetch('/api/grouping/status');
+            const status = await statusRes.json();
+
+            if (status.stage === 'done') {
+              clearInterval(poll);
+              resetPollRef.current = null;
+              setResetProgress({ msg: status.message, percent: 100, done: true });
+              fetchData();
+              setTimeout(() => setResetProgress(null), 4000);
+            } else if (status.stage === 'error') {
+              clearInterval(poll);
+              resetPollRef.current = null;
+              setResetProgress({ msg: status.message, percent: 0, done: true });
+              setTimeout(() => setResetProgress(null), 6000);
+            } else {
+              setResetProgress({
+                msg: status.message || 'Rebuilding…',
+                percent: status.percent ?? 15,
+                done: false,
+              });
+            }
+          } catch {
+            // Transient poll error — keep polling
+          }
+        }, 2000);
+        resetPollRef.current = poll;
+      })
+      .catch(() => {
+        setResetProgress({ msg: 'Reset failed to start.', percent: 0, done: true });
+        setTimeout(() => setResetProgress(null), 6000);
+      });
   }, [authFetch, fetchData]);
 
   // Lite projection of journals for the menu components — they only need
@@ -2399,7 +2464,7 @@ export default function TradesClient() {
             walletAddress={walletAddress}
           />
         </div>
-        <GroupingSettingsPopover onGroupingReset={handleResetGrouping} />
+        <GroupingSettingsPopover onGroupingReset={handleResetGrouping} resetProgress={resetProgress} />
       </div>
 
       {/* ── Floating Toolbar ───────────────────────────────────────── */}
@@ -2429,12 +2494,19 @@ export default function TradesClient() {
               targetJournalId,
             )
           }
+          isMerging={isMerging}
         />
       )}
 
       {/* ── Trade Units Table ──────────────────────────────────────── */}
       <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
-        {loading ? (
+        {/* Subtle refetch indicator: shown when data is reloading but rows are already displayed */}
+        {loading && allTradeUnits.length > 0 && (
+          <div className="h-0.5 bg-[#21262d] overflow-hidden">
+            <div className="h-full bg-blue-500/60 animate-pulse w-1/2 rounded-full" />
+          </div>
+        )}
+        {loading && allTradeUnits.length === 0 ? (
           <div className="h-48 flex items-center justify-center text-[#6e7681] text-sm">Loading...</div>
         ) : allTradeUnits.length === 0 ? (
           <div className="h-48 flex flex-col items-center justify-center text-[#6e7681] text-sm gap-2">

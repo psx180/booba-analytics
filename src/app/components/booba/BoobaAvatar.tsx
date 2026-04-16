@@ -263,7 +263,7 @@ export default function BoobaAvatar({
         {ALL_MOODS.map((mood) => (
           <img
             key={mood}
-            src={`/booba/${mood === 'money_mode' ? 'money-mode' : mood}.svg`}
+            src={`/booba/${mood === 'money_mode' ? 'money-mode' : mood}.png`}
             alt={mood}
             width={px}
             height={px}

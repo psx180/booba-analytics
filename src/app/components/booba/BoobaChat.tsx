@@ -216,7 +216,7 @@ export default function BoobaChat({ isOpen, onClose, prefillMessage }: BoobaChat
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <img
-            src="/booba/excited.svg"
+            src="/booba/excited.png"
             alt="Booba"
             width={24}
             height={24}
@@ -288,7 +288,7 @@ export default function BoobaChat({ isOpen, onClose, prefillMessage }: BoobaChat
             }}>
               {msg.role === 'assistant' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '4px' }}>
-                  <img src="/booba/calm.svg" alt="" width={16} height={16} />
+                  <img src="/booba/calm.png" alt="" width={16} height={16} />
                   <span style={{ color: '#6e7681', fontSize: '11px', fontWeight: 600 }}>Booba</span>
                 </div>
               )}
@@ -360,7 +360,7 @@ export default function BoobaChat({ isOpen, onClose, prefillMessage }: BoobaChat
             gap: '6px',
             padding: '8px 12px',
           }}>
-            <img src="/booba/calm.svg" alt="" width={16} height={16} />
+            <img src="/booba/calm.png" alt="" width={16} height={16} />
             <div style={{
               display: 'flex',
               gap: '4px',

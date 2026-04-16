@@ -5,13 +5,13 @@
   const EXTENSION_URL = chrome.runtime.getURL('');
 
   const MOODS = {
-    calm:      'assets/booba-calm.svg',
-    alert:     'assets/booba-alert.svg',
-    nervous:   'assets/booba-nervous.svg',
-    panicking: 'assets/booba-panicking.svg',
-    money:     'assets/booba-money.svg',
-    pout:      'assets/booba-pout.svg',
-    excited:   'assets/booba-alert.svg',
+    calm:      'assets/booba-calm.png',
+    alert:     'assets/booba-alert.png',
+    nervous:   'assets/booba-nervous.png',
+    panicking: 'assets/booba-panicking.png',
+    money:     'assets/booba-money.png',
+    pout:      'assets/booba-pout.png',
+    excited:   'assets/booba-alert.png',
   };
 
   // ── Persistent state ─────────────────────────────────────────────────────────

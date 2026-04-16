@@ -372,35 +372,64 @@ export class GroupingService {
   async mergePositions(positionIds: string[]) {
     if (positionIds.length < 2) throw new Error('Need at least 2 positions to merge');
 
-    const positions = await prisma.position.findMany({
-      where: { id: { in: positionIds } },
-      include: { orderGroups: true },
-    });
-    if (positions.length !== positionIds.length) throw new Error('One or more positions not found');
+    // Wrap destructive ops in a transaction so reads, updates, and deletes are
+    // atomic. This prevents P2025 ("record to update not found") from a concurrent
+    // delete racing against us between the initial read and the final deleteMany.
+    const { target, movedOrderGroupIds, orderAssignments, originalPositions } =
+      await prisma.$transaction(async (tx) => {
+        // Re-fetch positions inside the transaction — use these IDs only, never
+        // the stale client-sent ones.
+        const positions = await tx.position.findMany({
+          where: { id: { in: positionIds } },
+          include: { orderGroups: true },
+        });
+        if (positions.length !== positionIds.length) {
+          throw new Error('One or more positions not found');
+        }
 
-    const target = positions[0];
-    const otherIds = positionIds.slice(1);
+        // Use the DB-returned target (first positionId) so we don't rely on
+        // the client's ordering surviving a concurrent regroup.
+        const target = positions.find((p) => p.id === positionIds[0])!;
+        const otherIds = positionIds.slice(1);
 
-    // Capture pre-merge state for undo
-    const orderAssignments: Record<string, string> = {};
-    for (const p of positions) {
-      for (const og of p.orderGroups) {
-        if (og.positionId) orderAssignments[og.id] = og.positionId;
-      }
+        // Capture pre-merge state for undo
+        const orderAssignments: Record<string, string> = {};
+        for (const p of positions) {
+          for (const og of p.orderGroups) {
+            if (og.positionId) orderAssignments[og.id] = og.positionId;
+          }
+        }
+        const originalPositions = positions.map(({ orderGroups: _og, ...p }) => p);
+
+        // Collect IDs of order groups being moved so we can recompute them below.
+        const movedOrderGroupIds = positions
+          .filter((p) => p.id !== target.id)
+          .flatMap((p) => p.orderGroups.map((og) => og.id));
+
+        // Move all order groups to the surviving (target) position
+        await tx.orderGroup.updateMany({
+          where: { positionId: { in: otherIds } },
+          data: { positionId: target.id },
+        });
+
+        // Delete the now-empty source positions
+        await tx.position.deleteMany({ where: { id: { in: otherIds } } });
+
+        return { target, movedOrderGroupIds, orderAssignments, originalPositions };
+      });
+
+    // Recompute each moved order group so its aggregate fields reflect its fills
+    // and every fill has a valid orderGroup → position chain (fixes orphaned-exit
+    // warnings that appear when the chain is stale after a move).
+    if (movedOrderGroupIds.length > 0) {
+      await Promise.all(movedOrderGroupIds.map((id) => this.recomputeOrderGroup(id)));
     }
-    const originalPositions = positions.map(({ orderGroups: _og, ...p }) => p);
 
-    // Move all order groups to the target position
-    await prisma.orderGroup.updateMany({
-      where: { positionId: { in: otherIds } },
-      data: { positionId: target.id },
-    });
-
-    // Delete the other positions
-    await prisma.position.deleteMany({ where: { id: { in: otherIds } } });
-
-    // Recompute aggregates and mark as user-confirmed
+    // Recompute position aggregates fresh from fills — never copy from source
+    // position values. aggregatePnl = sum(fill.pnlRealized) for all fills in
+    // all orderGroups now pointing at this position.
     await this.recomputePosition(target.id);
+
     await prisma.position.update({
       where: { id: target.id },
       data: { groupingConfirmed: true },
