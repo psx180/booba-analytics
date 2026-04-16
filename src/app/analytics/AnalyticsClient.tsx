@@ -964,6 +964,36 @@ function twoSentences(text: string): string {
   return parts.slice(0, 2).join(' ').trim();
 }
 
+// ── NarrativeSection ─────────────────────────────────────────────────────────
+
+interface NarrativeSectionProps {
+  question: string;
+  verdict: string;
+  evidence: React.ReactNode;
+  implication: string;
+  details?: React.ReactNode;
+}
+
+function NarrativeSection({ question, verdict, evidence, implication, details }: NarrativeSectionProps) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="mb-6">
+      <h3 className="text-sm text-[#8b949e] uppercase mb-1">{question}</h3>
+      <p className="text-[#e6edf3] text-lg mb-3">{verdict}</p>
+      <div className="mb-3">{evidence}</div>
+      <p className="text-[#8b949e] text-sm italic mb-2">💡 {implication}</p>
+      {details && (
+        <button onClick={() => setExpanded(!expanded)} className="text-[#1f6feb] text-sm">
+          {expanded ? '▼ Hide details' : '▸ Show details'}
+        </button>
+      )}
+      {expanded && <div className="mt-3">{details}</div>}
+    </div>
+  );
+}
+
+const NO_DATA_VERDICT = 'Not enough data for this analysis yet. Keep trading!';
+
 // ── Tab: Overview ─────────────────────────────────────────────────────────────
 
 function OverviewTab({
@@ -1154,13 +1184,69 @@ function ExecutionTab({
   onRunDeepAnalysis: () => void;
   runningDeepAnalysis: boolean;
 }) {
-  const inlineInsights = getInlineInsights('execution', insights).filter((ins) => ins.impactScore >= 50);
-  const [timingExpanded, setTimingExpanded] = useState(false);
+  const exitInsight = insights.find((i) => i.module === 'exit-optimizer');
+  const timeInsight = insights.find((i) => i.module === 'time-of-day-edge');
+
+  // Exit quality metrics
+  const effPct = typeof exitInsight?.data?.avgEfficiency === 'number'
+    ? Math.round((exitInsight.data.avgEfficiency as number) * 100)
+    : null;
+  const moneyLeft = typeof exitInsight?.data?.totalLeftOnTable === 'number'
+    ? Math.round(exitInsight.data.totalLeftOnTable as number)
+    : null;
+  const exitCount = tradeCount || ((exitInsight?.data?.tradeCount as number | undefined) ?? 0);
+
+  // Timing metrics
+  const bestHour = typeof timeInsight?.data?.bestHour === 'number'
+    ? (timeInsight.data.bestHour as number)
+    : null;
+  const fatigue = timeInsight?.data?.fatigue as
+    | { estimatedSavings?: number; optimalCutoff?: number }
+    | null
+    | undefined;
+
+  // Exit quality verdict & implication
+  let exitVerdict: string;
+  if (effPct != null && moneyLeft != null) {
+    exitVerdict = `You capture ${effPct}% of available moves, leaving $${moneyLeft.toLocaleString()} on the table across ${exitCount} trades.`;
+  } else if (effPct != null) {
+    exitVerdict = `You capture ${effPct}% of available profit across ${exitCount} trades.`;
+  } else {
+    exitVerdict = NO_DATA_VERDICT;
+  }
+
+  let exitImplication: string;
+  if (effPct == null) {
+    exitImplication = 'Run deep analysis to compute exit efficiency.';
+  } else if (effPct < 40) {
+    exitImplication = 'You exit winners too early. Consider trailing stops or scaling out.';
+  } else if (effPct < 60) {
+    exitImplication = 'Decent capture rate. Look at your biggest MFE gaps for improvement opportunities.';
+  } else {
+    exitImplication = 'Strong exit discipline. Your entries and exits are well-timed.';
+  }
+
+  // Timing verdict & implication
+  let timingVerdict: string;
+  if (bestHour != null) {
+    timingVerdict = `Your best hour is ${String(bestHour).padStart(2, '0')}:00.`;
+  } else {
+    timingVerdict = NO_DATA_VERDICT;
+  }
+
+  let timingImplication: string;
+  if (fatigue?.estimatedSavings && fatigue.estimatedSavings > 0) {
+    timingImplication = `Session fatigue is costing you $${Math.round(fatigue.estimatedSavings).toLocaleString()}. Consider stopping earlier in your sessions.`;
+  } else if (bestHour != null) {
+    timingImplication = 'Your performance is consistent across trading hours — no timing edge detected.';
+  } else {
+    timingImplication = 'Not enough data yet to identify timing patterns.';
+  }
+
   return (
-    <div className="space-y-4">
-      <ExecutionVerdict insights={insights} tradeCount={tradeCount} />
+    <div className="space-y-2">
       {missingExitMetricsCount > 0 && (
-        <div className="flex items-center justify-between bg-[#1c2128] border border-[#30363d] rounded-lg px-4 py-2.5">
+        <div className="flex items-center justify-between bg-[#1c2128] border border-[#30363d] rounded-lg px-4 py-2.5 mb-4">
           <span className="text-sm text-[#8b949e]">
             {missingExitMetricsCount} position{missingExitMetricsCount === 1 ? '' : 's'} missing exit analysis.
           </span>
@@ -1173,32 +1259,19 @@ function ExecutionTab({
           </button>
         </div>
       )}
-      {inlineInsights.length > 0 && (
-        <div className="space-y-1.5">
-          {inlineInsights.map((ins, i) => (
-            <InlineInsightCard key={`${ins.module}-${i}`} insight={ins} onDigDeeper={onSwitchTab} />
-          ))}
-        </div>
-      )}
-      <p className="text-[10px] uppercase tracking-widest text-[#6e7681] font-semibold px-0.5">Exit Quality</p>
-      <ExitAnalysis {...chartProps} />
-      <p className="text-[10px] uppercase tracking-widest text-[#6e7681] font-semibold px-0.5">Timing Patterns</p>
-      <TimeAnalysis {...chartProps} />
-      <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
-        <button
-          type="button"
-          onClick={() => setTimingExpanded((e) => !e)}
-          className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-[#1c2128] transition-colors"
-        >
-          <span className="text-sm font-semibold text-white">More Timing Details</span>
-          <span className="text-xs text-[#6e7681]">{timingExpanded ? '▲' : '▼'}</span>
-        </button>
-        {timingExpanded && (
-          <div className="border-t border-[#21262d] px-4 py-5">
-            <CalendarHeatmap {...chartProps} />
-          </div>
-        )}
-      </div>
+      <NarrativeSection
+        question="Are you capturing enough profit?"
+        verdict={exitVerdict}
+        evidence={<ExitAnalysis {...chartProps} />}
+        implication={exitImplication}
+      />
+      <NarrativeSection
+        question="When do you trade best?"
+        verdict={timingVerdict}
+        evidence={<TimeAnalysis {...chartProps} />}
+        implication={timingImplication}
+        details={<CalendarHeatmap {...chartProps} />}
+      />
     </div>
   );
 }
@@ -1219,104 +1292,184 @@ function PsychologyTab({
   equitySeries: { date: string; cumulativePnl: number }[];
 }) {
   const psychologyInsights = getInlineInsights('psychology', insights, 10);
-  const [behaviorExpanded, setBehaviorExpanded] = useState(false);
 
-  // Extract Markov data from the ml-patterns-markov insight
+  // Extract Markov data
   const markovInsight = insights.find((i) => i.module === 'ml-patterns-markov');
   const markovData = markovInsight?.data?.markov as MarkovData | undefined;
 
   // Extract tilt episode data
   const tiltInsight = insights.find((i) => i.module === 'tilt-episodes');
-  const tiltEpisodes = (tiltInsight?.data?.episodes as TiltEpisode[] | undefined) ?? [];
+  const tiltEpisodeList = (tiltInsight?.data?.episodes as TiltEpisode[] | undefined) ?? [];
   const totalEpisodes = (tiltInsight?.data?.totalEpisodes as number | undefined) ?? 0;
   const counterfactualImprovement =
     (tiltInsight?.data?.counterfactualImprovement as number | undefined) ?? 0;
 
+  // Fatigue data (from time-of-day insight)
+  const timeInsight = insights.find((i) => i.module === 'time-of-day-edge');
+  const fatigue = timeInsight?.data?.fatigue as
+    | { estimatedSavings?: number; optimalCutoff?: number }
+    | null
+    | undefined;
+
+  // ── Section 1: DISCIPLINE ────────────────────────────────────────────────
+  let disciplineVerdict: string;
+  if (entropyResult != null) {
+    const score = Math.round(entropyResult.compositeScore);
+    const desc =
+      score >= 65
+        ? 'is highly consistent'
+        : score >= 40
+          ? 'shows moderate consistency'
+          : 'is scattered across patterns';
+    disciplineVerdict = `Discipline score: ${score}/100. Your trading ${desc}.`;
+  } else {
+    disciplineVerdict = NO_DATA_VERDICT;
+  }
+
+  let disciplineImplication: string;
+  if (markovData) {
+    const diff =
+      markovData.transitionProbabilities.winAfterWin -
+      markovData.transitionProbabilities.winAfterLoss;
+    const pct = Math.round(Math.abs(diff) * 100);
+    if (diff > 0.02) {
+      disciplineImplication = `Your performance drops ${pct}% after a loss. Consider pausing after losing trades.`;
+    } else if (diff < -0.02) {
+      disciplineImplication = `You recover well — win rate improves ${pct}% after losses.`;
+    } else {
+      disciplineImplication = 'Your outcomes are independent of prior results — no tilt pattern detected.';
+    }
+  } else if (entropyResult != null) {
+    const score = Math.round(entropyResult.compositeScore);
+    disciplineImplication =
+      score >= 65
+        ? 'Your trading discipline is strong. Keep following your rules.'
+        : score >= 40
+          ? 'Review your rule adherence — consistency still has room to improve.'
+          : 'Your trading lacks consistency. Focus on following a structured plan.';
+  } else {
+    disciplineImplication = 'Not enough data yet to assess discipline patterns.';
+  }
+
+  // ── Section 2: EMOTIONAL PATTERNS ───────────────────────────────────────
+  let tiltVerdict: string;
+  if (tiltInsight != null) {
+    tiltVerdict =
+      totalEpisodes > 0
+        ? `${totalEpisodes} tilt episode${totalEpisodes === 1 ? '' : 's'} detected, costing approximately $${Math.round(counterfactualImprovement).toLocaleString()}.`
+        : 'No significant tilt episodes detected — your emotional state appears stable.';
+  } else {
+    tiltVerdict = NO_DATA_VERDICT;
+  }
+
+  let tiltImplication: string;
+  if (totalEpisodes > 0 && counterfactualImprovement > 0) {
+    tiltImplication = `Pausing during these periods would have improved your P&L by $${Math.round(counterfactualImprovement).toLocaleString()}.`;
+  } else if (tiltInsight != null) {
+    tiltImplication = 'No significant tilt episodes detected — your emotional state appears stable.';
+  } else {
+    tiltImplication = 'Not enough data yet to identify emotional patterns.';
+  }
+
+  // ── Section 3: SESSION MANAGEMENT ───────────────────────────────────────
+  const cutoff = fatigue?.optimalCutoff ?? null;
+  const savings = fatigue?.estimatedSavings ?? null;
+
+  let sessionVerdict: string;
+  if (cutoff != null) {
+    sessionVerdict = `Performance peaks at trade #${cutoff}. After that, average P&L drops.`;
+  } else {
+    sessionVerdict = NO_DATA_VERDICT;
+  }
+
+  let sessionImplication: string;
+  if (cutoff != null && savings != null && savings > 0) {
+    sessionImplication = `Consider stopping after ${cutoff} trades per session — estimated savings of $${Math.round(savings).toLocaleString()} per session.`;
+  } else if (cutoff != null) {
+    sessionImplication = `Consider stopping after ${cutoff} trades per session.`;
+  } else {
+    sessionImplication =
+      'No session fatigue detected. Your performance is consistent throughout trading sessions.';
+  }
+
   return (
-    <div className="space-y-4">
-      <PsychologyVerdict insights={insights} />
-      {/* ── Row 1: DisciplineGauge · MarkovBars · SessionDecayChart ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
-          {entropyResult ? (
-            <DisciplineGauge
-              compositeScore={entropyResult.compositeScore}
-              rollingSeries={entropyResult.rollingSeries}
-            />
-          ) : (
-            <div className="flex items-center justify-center h-[180px] text-xs text-[#4a5568] italic">
-              Discipline score not yet computed
+    <div className="space-y-2">
+      <NarrativeSection
+        question="How consistent is your behavior?"
+        verdict={disciplineVerdict}
+        evidence={
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
+              {entropyResult ? (
+                <DisciplineGauge
+                  compositeScore={entropyResult.compositeScore}
+                  rollingSeries={entropyResult.rollingSeries}
+                />
+              ) : (
+                <div className="flex items-center justify-center h-[180px] text-xs text-[#4a5568] italic">
+                  Discipline score not yet computed
+                </div>
+              )}
             </div>
-          )}
-        </div>
-
-        <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
-          {markovData ? (
-            <MarkovBars
-              winAfterWin={markovData.transitionProbabilities.winAfterWin}
-              winAfterLoss={markovData.transitionProbabilities.winAfterLoss}
-              overallWinRate={markovData.overallWinRate}
-              pValue={markovData.independenceTest?.pValue ?? null}
-              isSignificant={markovData.independenceTest?.isSignificant ?? false}
-            />
-          ) : (
-            <div className="flex items-center justify-center h-[180px] text-xs text-[#4a5568] italic">
-              Markov analysis not yet computed
+            <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
+              {markovData ? (
+                <MarkovBars
+                  winAfterWin={markovData.transitionProbabilities.winAfterWin}
+                  winAfterLoss={markovData.transitionProbabilities.winAfterLoss}
+                  overallWinRate={markovData.overallWinRate}
+                  pValue={markovData.independenceTest?.pValue ?? null}
+                  isSignificant={markovData.independenceTest?.isSignificant ?? false}
+                />
+              ) : (
+                <div className="flex items-center justify-center h-[180px] text-xs text-[#4a5568] italic">
+                  Markov analysis not yet computed
+                </div>
+              )}
             </div>
-          )}
-        </div>
-
-        <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
-          <SessionDecayChart positions={behaviorPositions} />
-        </div>
-      </div>
-
-      {/* ── Row 2: Outcome Serial Dependence (Markov matrix) ─────── */}
-      <OutcomeSerialDependence />
-
-      {/* ── Row 3: TiltEquityCurve (full width) ───────────────────── */}
-      <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
-        <TiltEquityCurve
-          series={equitySeries}
-          episodes={tiltEpisodes}
-          totalEpisodes={totalEpisodes}
-          counterfactualImprovement={counterfactualImprovement}
-        />
-      </div>
-
-      {/* ── Row 4: SizeAfterOutcomeScatter ────────────────────────── */}
-      <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
-        <SizeAfterOutcomeScatter positions={behaviorPositions} />
-      </div>
-
-      {/* ── Behavioral insight cards (collapsible) ─────────────────── */}
-      <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
-        <button
-          type="button"
-          onClick={() => setBehaviorExpanded((e) => !e)}
-          className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-[#1c2128] transition-colors"
-        >
-          <span className="text-sm font-semibold text-white">
-            Behavioral Insights{psychologyInsights.length > 0 ? ` (${psychologyInsights.length} findings)` : ''}
-          </span>
-          <span className="text-xs text-[#6e7681]">{behaviorExpanded ? '▲' : '▼'}</span>
-        </button>
-        {behaviorExpanded && (
-          <div className="border-t border-[#21262d] px-4 py-5">
-            {psychologyInsights.length > 0 ? (
-              <div className="space-y-2">
-                {psychologyInsights.map((ins, i) => (
-                  <FullInsightCard key={`${ins.module}-${i}`} insight={ins} onDigDeeper={onSwitchTab} />
-                ))}
-              </div>
-            ) : (
-              <p className="text-sm text-[#6e7681]">
-                No behavioral patterns detected yet. Booba watches for tilt, revenge trading, size escalation, and discipline drift as your trade history grows.
-              </p>
-            )}
           </div>
-        )}
-      </div>
+        }
+        implication={disciplineImplication}
+        details={<OutcomeSerialDependence />}
+      />
+      <NarrativeSection
+        question="Are your emotions costing you money?"
+        verdict={tiltVerdict}
+        evidence={
+          <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
+            <TiltEquityCurve
+              series={equitySeries}
+              episodes={tiltEpisodeList}
+              totalEpisodes={totalEpisodes}
+              counterfactualImprovement={counterfactualImprovement}
+            />
+          </div>
+        }
+        implication={tiltImplication}
+        details={
+          <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
+            <SizeAfterOutcomeScatter positions={behaviorPositions} />
+          </div>
+        }
+      />
+      <NarrativeSection
+        question="Are you overtrading?"
+        verdict={sessionVerdict}
+        evidence={
+          <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
+            <SessionDecayChart positions={behaviorPositions} />
+          </div>
+        }
+        implication={sessionImplication}
+        details={
+          psychologyInsights.length > 0 ? (
+            <div className="space-y-2">
+              {psychologyInsights.map((ins, i) => (
+                <FullInsightCard key={`${ins.module}-${i}`} insight={ins} onDigDeeper={onSwitchTab} />
+              ))}
+            </div>
+          ) : undefined
+        }
+      />
     </div>
   );
 }
@@ -1338,38 +1491,192 @@ function StrategyTab({
   combinatorialResult: CombinatorialSearchResult | null;
   playbooks: { id: string; name: string }[];
 }) {
-  const inlineInsights = getInlineInsights('strategy', insights);
   const [advancedExpanded, setAdvancedExpanded] = useState(false);
   const [edgeFinderExpanded, setEdgeFinderExpanded] = useState(true);
 
-  return (
-    <div className="space-y-4">
-      <StrategyVerdict
-        regimeBreakdown={regimeBreakdown}
-        playbooks={playbooks}
-        journalId={chartProps.journalId}
-      />
-      {inlineInsights.length > 0 && (
-        <div className="space-y-1.5">
-          {inlineInsights.map((ins, i) => (
-            <InlineInsightCard key={`${ins.module}-${i}`} insight={ins} onDigDeeper={onSwitchTab} />
-          ))}
-        </div>
-      )}
-      {playbooks.length === 0 && (
-        <div className="bg-[#161b22] border border-[#21262d] rounded-lg px-4 py-3 text-sm text-[#8b949e]">
-          You haven&apos;t defined any strategies yet. Below is your performance by auto-detected trade
-          type. Create strategies on the Playbooks page to see how each approach performs.{' '}
-          <a href="/playbooks" className="text-blue-400 hover:text-blue-300 transition-colors">
-            → Go to Strategies &amp; Playbooks
-          </a>
-        </div>
-      )}
-      <StrategyBreakdown {...chartProps} />
-      <WalkForwardChart journalId={chartProps.journalId} />
-      <RegimePerformance {...chartProps} />
+  // Walk-forward data (same call as StrategyVerdict, lifted to tab level)
+  const authFetch = useAuthFetch();
+  const [wf, setWf] = useState<{
+    expectancyTrend?: 'improving' | 'declining' | 'stable';
+    winRateTrend?: 'improving' | 'declining' | 'stable';
+    edgePersistent?: boolean;
+    windows?: { expectancy: number; winRate: number }[];
+  } | null>(null);
+  const [wfLoading, setWfLoading] = useState(true);
 
-      {/* ── Advanced Analysis (collapsed by default) ─────────────────── */}
+  useEffect(() => {
+    if (!chartProps.journalId) return;
+    setWfLoading(true);
+    authFetch(`/api/analytics/walk-forward?journalId=${encodeURIComponent(chartProps.journalId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setWf(d && !d.error ? d : null))
+      .catch(() => setWf(null))
+      .finally(() => setWfLoading(false));
+  }, [chartProps.journalId, authFetch]);
+
+  // ── Section 1: YOUR STRATEGIES ────────────────────────────────────────────
+  const clusteringInsight = insights.find((i) => i.module === 'ml-patterns-clustering');
+  const clusters = (
+    clusteringInsight?.data?.clustering as
+      | { clusters?: { label: string; avgPnl: number }[] }
+      | undefined
+  )?.clusters;
+  const sortedClusters = clusters ? [...clusters].sort((a, b) => b.avgPnl - a.avgPnl) : null;
+  const bestCluster = sortedClusters?.[0];
+  const worstCluster = sortedClusters?.[sortedClusters.length - 1];
+
+  let strategyVerdict: string;
+  if (playbooks.length > 0) {
+    strategyVerdict = `You have ${playbooks.length} defined strateg${playbooks.length === 1 ? 'y' : 'ies'}. Compare performance in the chart below.`;
+  } else if (bestCluster && bestCluster.avgPnl > 0) {
+    strategyVerdict = `Your best pattern is "${bestCluster.label}" averaging $${Math.round(bestCluster.avgPnl)} per trade. Define strategies on the Playbooks page for deeper analysis.`;
+  } else {
+    strategyVerdict =
+      'Performance by trade type is shown below. Define strategies on the Playbooks page for deeper analysis.';
+  }
+
+  let strategyImplication: string;
+  if (bestCluster && worstCluster && bestCluster.label !== worstCluster.label) {
+    const diff = bestCluster.avgPnl - worstCluster.avgPnl;
+    if (diff > 50) {
+      strategyImplication = `Focus on "${bestCluster.label}". Consider pausing "${worstCluster.label}" — it underperforms by $${Math.round(diff)} per trade.`;
+    } else {
+      strategyImplication =
+        'Your strategies perform similarly. The difference may not be meaningful yet.';
+    }
+  } else if (playbooks.length === 0) {
+    strategyImplication =
+      'Define strategies on the Playbooks page for deeper per-strategy analysis.';
+  } else {
+    strategyImplication = 'Review your playbook performance and double down on what works.';
+  }
+
+  // ── Section 2: IS YOUR EDGE PERSISTENT? ──────────────────────────────────
+  let wfVerdict: string;
+  let wfImplication: string;
+
+  if (wfLoading) {
+    wfVerdict = 'Checking edge persistence…';
+    wfImplication = '';
+  } else if (wf == null) {
+    wfVerdict = NO_DATA_VERDICT;
+    wfImplication = 'Not enough trades yet for walk-forward analysis.';
+  } else {
+    const trend = wf.expectancyTrend ?? (wf.edgePersistent ? 'stable' : 'stable');
+    const trendWord =
+      trend === 'improving' ? 'improving' : trend === 'declining' ? 'declining' : 'stable';
+
+    // Expectancy delta across windows if available
+    let changePhrase = '';
+    const wins = wf.windows;
+    if (wins && wins.length >= 2) {
+      const first = wins[0].expectancy;
+      const last = wins[wins.length - 1].expectancy;
+      if (first !== 0) {
+        const pct = Math.round(Math.abs((last - first) / Math.abs(first)) * 100);
+        const dir = last > first ? 'higher' : 'lower';
+        changePhrase = ` Recent trades show ${pct}% ${dir} expectancy than early trades.`;
+      }
+    }
+
+    wfVerdict = `Your performance is ${trendWord}.${changePhrase}`;
+    wfImplication =
+      trend === 'improving'
+        ? 'Your skills are developing. Study what changed in your recent trades.'
+        : trend === 'declining'
+          ? 'Your edge may be decaying. Review whether market conditions have shifted.'
+          : 'Consistent performance — your approach is robust across time.';
+  }
+
+  // ── Section 3: MARKET CONDITIONS ─────────────────────────────────────────
+  const qualifying = Object.entries(regimeBreakdown).filter(
+    ([name, s]) => name !== 'unknown' && (s?.tradeCount ?? 0) >= 5,
+  );
+  const sortedRegimes = [...qualifying].sort(
+    ([, a], [, b]) => (b.winRate ?? 0) - (a.winRate ?? 0),
+  );
+  const bestRegime = sortedRegimes[0];
+  const worstRegime = sortedRegimes[sortedRegimes.length - 1];
+  const totalRegimeTrades = qualifying.reduce((sum, [, s]) => sum + (s?.tradeCount ?? 0), 0);
+
+  let regimeVerdict: string;
+  let regimeImplication: string;
+
+  if (bestRegime && worstRegime && bestRegime[0] !== worstRegime[0]) {
+    const bestWR = Math.round((bestRegime[1].winRate ?? 0) * 100);
+    const worstWR = Math.round((worstRegime[1].winRate ?? 0) * 100);
+    const worstPct =
+      totalRegimeTrades > 0
+        ? Math.round(((worstRegime[1].tradeCount ?? 0) / totalRegimeTrades) * 100)
+        : 0;
+    regimeVerdict = `You thrive in ${regimeLabel(bestRegime[0])} (${bestWR}% win rate) but struggle in ${regimeLabel(worstRegime[0])} (${worstWR}% win rate). ${worstPct}% of your trades are in your worst regime.`;
+
+    const worstPnl = worstRegime[1].totalPnl as number | undefined;
+    if (worstPct > 20 && worstPnl != null && worstPnl < 0) {
+      regimeImplication = `Reducing ${regimeLabel(worstRegime[0])} trades would have saved $${Math.round(Math.abs(worstPnl)).toLocaleString()}. Consider sitting out when BTC conditions shift to ${regimeLabel(worstRegime[0])}.`;
+    } else {
+      regimeImplication = 'You adapt well to different conditions.';
+    }
+  } else if (bestRegime) {
+    regimeVerdict = `Your best regime is ${regimeLabel(bestRegime[0])} (${Math.round((bestRegime[1].winRate ?? 0) * 100)}% win rate).`;
+    regimeImplication = 'Not enough data across different regimes to compare performance yet.';
+  } else {
+    regimeVerdict = NO_DATA_VERDICT;
+    regimeImplication = 'Trade more to see how market conditions affect your performance.';
+  }
+
+  return (
+    <div className="space-y-2">
+      <NarrativeSection
+        question="Which strategies work?"
+        verdict={strategyVerdict}
+        evidence={
+          <>
+            {playbooks.length === 0 && (
+              <div className="bg-[#161b22] border border-[#21262d] rounded-lg px-4 py-3 text-sm text-[#8b949e] mb-3">
+                You haven&apos;t defined any strategies yet. Below is your performance by
+                auto-detected trade type.{' '}
+                <a href="/playbooks" className="text-blue-400 hover:text-blue-300 transition-colors">
+                  → Create strategies on the Playbooks page
+                </a>
+              </div>
+            )}
+            <StrategyBreakdown {...chartProps} />
+          </>
+        }
+        implication={strategyImplication}
+        details={
+          playbooks.length > 0 ? (
+            <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
+              <div className="px-4 py-3 border-b border-[#21262d]">
+                <h2 className="text-sm font-semibold text-white">Playbook Adherence</h2>
+                <p className="text-xs text-[#6e7681] mt-0.5">
+                  Rule adherence analytics across your saved playbooks.
+                </p>
+              </div>
+              <div className="px-4 py-5 grid grid-cols-1 gap-3">
+                {playbooks.map((pb) => (
+                  <PlaybookAnalyticsCard key={pb.id} playbookId={pb.id} playbookName={pb.name} />
+                ))}
+              </div>
+            </div>
+          ) : undefined
+        }
+      />
+      <NarrativeSection
+        question="Is your edge real or lucky?"
+        verdict={wfVerdict}
+        evidence={<WalkForwardChart journalId={chartProps.journalId} />}
+        implication={wfImplication}
+      />
+      <NarrativeSection
+        question="How do market conditions affect you?"
+        verdict={regimeVerdict}
+        evidence={<RegimePerformance {...chartProps} />}
+        implication={regimeImplication}
+      />
+
+      {/* ── Advanced Analysis (collapsed) ───────────────────────────────── */}
       <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
         <button
           type="button"
@@ -1384,10 +1691,7 @@ function StrategyTab({
         </button>
         {advancedExpanded && (
           <div className="border-t border-[#21262d] px-4 py-5 space-y-6">
-            {/* Trade Clusters + Trades Flagged for Review */}
             <PatternsSection />
-
-            {/* Edge Finder */}
             <div>
               <button
                 type="button"
@@ -1415,19 +1719,6 @@ function StrategyTab({
           </div>
         )}
       </div>
-      {playbooks.length > 0 && (
-        <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
-          <div className="px-4 py-3 border-b border-[#21262d]">
-            <h2 className="text-sm font-semibold text-white">Playbook Adherence</h2>
-            <p className="text-xs text-[#6e7681] mt-0.5">Rule adherence analytics across your saved playbooks.</p>
-          </div>
-          <div className="px-4 py-5 grid grid-cols-1 gap-3">
-            {playbooks.map((pb) => (
-              <PlaybookAnalyticsCard key={pb.id} playbookId={pb.id} playbookName={pb.name} />
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -1458,172 +1749,272 @@ function RiskTab({
   liquidationCount: number;
   liquidationCost: number;
 }) {
+  const authFetch = useAuthFetch();
+  const [mc, setMc] = useState<{ probDrawdown25?: number } | null>(null);
+  const [mcLoading, setMcLoading] = useState(true);
+
+  useEffect(() => {
+    if (!chartProps.journalId) return;
+    setMcLoading(true);
+    authFetch(`/api/analytics/monte-carlo?journalId=${encodeURIComponent(chartProps.journalId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setMc(d && !d.error ? d : null))
+      .catch(() => setMc(null))
+      .finally(() => setMcLoading(false));
+  }, [chartProps.journalId, authFetch]);
+
   const hasRatios = sharpeRatio != null || sortinoRatio != null || payoffRatio != null;
   const hasDrawdown = drawdownAnalysis != null && drawdownAnalysis.maxDrawdown < 0;
 
+  // ── Section 1: RISK-ADJUSTED PERFORMANCE ────────────────────────────────
+  let riskAdjVerdict: string;
+  if (sharpeRatio != null) {
+    riskAdjVerdict =
+      sharpeRatio < 0
+        ? `Sharpe ratio: ${sharpeRatio.toFixed(2)}. You are not being compensated for the risk you take.`
+        : `Sharpe ratio: ${sharpeRatio.toFixed(2)}. For every unit of risk, you earn ${sharpeRatio.toFixed(2)} units of return.`;
+  } else {
+    riskAdjVerdict = NO_DATA_VERDICT;
+  }
+
+  let riskAdjImplication: string;
+  if (sharpeRatio == null) {
+    riskAdjImplication = 'Not enough data yet to compute risk-adjusted metrics.';
+  } else if (sharpeRatio < 0) {
+    riskAdjImplication =
+      'You are not being compensated for the risk you take. Reduce position sizes or improve your edge before sizing up.';
+  } else if (sharpeRatio < 1) {
+    riskAdjImplication = 'Modest risk-adjusted returns. Focus on consistency before sizing up.';
+  } else {
+    riskAdjImplication = 'Strong risk-adjusted returns.';
+  }
+
+  // ── Section 2: DRAWDOWN PROFILE ──────────────────────────────────────────
+  let drawdownVerdict: string;
+  if (hasDrawdown) {
+    const ddDays = Math.round(drawdownAnalysis!.currentDrawdownDuration);
+    const ddAmt = Math.round(Math.abs(drawdownAnalysis!.currentDrawdown));
+    drawdownVerdict =
+      ddDays > 0
+        ? `Current drawdown: $${ddAmt.toLocaleString()} over ${ddDays} day${ddDays !== 1 ? 's' : ''}. You have had ${drawdownAnalysis!.drawdownCount} drawdown${drawdownAnalysis!.drawdownCount !== 1 ? 's' : ''} exceeding 5% of peak equity.`
+        : `You are at your equity high. You have had ${drawdownAnalysis!.drawdownCount} drawdown${drawdownAnalysis!.drawdownCount !== 1 ? 's' : ''} exceeding 5% of peak equity.`;
+  } else {
+    drawdownVerdict = NO_DATA_VERDICT;
+  }
+
+  let drawdownImplication: string;
+  if (!hasDrawdown) {
+    drawdownImplication = 'Not enough data yet to assess drawdown profile.';
+  } else if (drawdownAnalysis!.currentDrawdownDuration > 5) {
+    drawdownImplication = `You are ${Math.round(drawdownAnalysis!.currentDrawdownDuration)} days into a drawdown. Consider reducing size until equity recovers.`;
+  } else {
+    const recoveryDays = Math.round(drawdownAnalysis!.avgDrawdownDuration);
+    drawdownImplication =
+      recoveryDays > 0
+        ? `You recovered from drawdowns in an average of ${recoveryDays} day${recoveryDays !== 1 ? 's' : ''}.`
+        : 'Your drawdown history is limited — keep monitoring as your trade history grows.';
+  }
+
+  // ── Section 3: FORWARD-LOOKING RISK ──────────────────────────────────────
+  let mcVerdict: string;
+  let mcImplication: string;
+  if (mcLoading) {
+    mcVerdict = 'Running Monte Carlo simulation…';
+    mcImplication = '';
+  } else if (mc?.probDrawdown25 != null) {
+    const pct = Math.round(mc.probDrawdown25 * 100);
+    mcVerdict = `${pct}% chance of a 25% drawdown over your next 100 trades.`;
+    mcImplication =
+      pct > 30
+        ? 'Your current strategy has meaningful ruin risk. Consider smaller position sizes.'
+        : 'Your risk of catastrophic drawdown is low at current sizing.';
+  } else {
+    mcVerdict = NO_DATA_VERDICT;
+    mcImplication = 'Run more trades to generate Monte Carlo projections.';
+  }
+
   return (
-    <div className="space-y-4">
-      <RiskVerdict
-        sharpeRatio={sharpeRatio}
-        drawdownAnalysis={drawdownAnalysis}
-        journalId={chartProps.journalId}
+    <div className="space-y-2">
+      <NarrativeSection
+        question="Are your returns worth the risk?"
+        verdict={riskAdjVerdict}
+        evidence={
+          hasRatios ? (
+            <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <div className="text-xs text-[#6e7681] mb-1">Sharpe Ratio</div>
+                  <div className={`text-lg font-bold tabular-nums ${
+                    sharpeRatio == null ? 'text-[#4a5568]'
+                    : sharpeRatio >= 1 ? 'text-green-400'
+                    : sharpeRatio >= 0.5 ? 'text-amber-400'
+                    : 'text-red-400'
+                  }`}>
+                    {sharpeRatio != null ? sharpeRatio.toFixed(2) : '—'}
+                  </div>
+                  <div className="text-[10px] text-[#4a5568] mt-0.5">Returns per unit of volatility</div>
+                </div>
+                <div>
+                  <div className="text-xs text-[#6e7681] mb-1">Sortino Ratio</div>
+                  <div className={`text-lg font-bold tabular-nums ${
+                    sortinoRatio == null ? 'text-[#4a5568]'
+                    : sortinoRatio >= 1 ? 'text-green-400'
+                    : sortinoRatio >= 0.5 ? 'text-amber-400'
+                    : 'text-red-400'
+                  }`}>
+                    {sortinoRatio != null ? sortinoRatio.toFixed(2) : '—'}
+                  </div>
+                  <div className="text-[10px] text-[#4a5568] mt-0.5">Returns per unit of downside risk</div>
+                </div>
+                <div>
+                  <div className="text-xs text-[#6e7681] mb-1">Payoff Ratio</div>
+                  <div className={`text-lg font-bold tabular-nums ${
+                    payoffRatio == null ? 'text-[#4a5568]'
+                    : payoffRatio >= 1.5 ? 'text-green-400'
+                    : payoffRatio >= 1 ? 'text-amber-400'
+                    : 'text-red-400'
+                  }`}>
+                    {payoffRatio != null ? payoffRatio.toFixed(2) : '—'}
+                  </div>
+                  <div className="text-[10px] text-[#4a5568] mt-0.5">Avg winner / avg loser</div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4 text-xs text-[#4a5568] italic">
+              Risk metrics not yet computed.
+            </div>
+          )
+        }
+        implication={riskAdjImplication}
       />
-      {/* ── Risk-Adjusted Performance ────────────────────────────── */}
-      {hasRatios && (
-        <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
-          <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-3">Risk-Adjusted Performance</div>
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <div className="text-xs text-[#6e7681] mb-1">Sharpe Ratio</div>
-              <div className={`text-lg font-bold tabular-nums ${
-                sharpeRatio == null ? 'text-[#4a5568]'
-                : sharpeRatio >= 1 ? 'text-green-400'
-                : sharpeRatio >= 0.5 ? 'text-amber-400'
-                : 'text-red-400'
-              }`}>
-                {sharpeRatio != null ? sharpeRatio.toFixed(2) : '—'}
-              </div>
-              <div className="text-[10px] text-[#4a5568] mt-0.5">Returns per unit of volatility</div>
-            </div>
-            <div>
-              <div className="text-xs text-[#6e7681] mb-1">Sortino Ratio</div>
-              <div className={`text-lg font-bold tabular-nums ${
-                sortinoRatio == null ? 'text-[#4a5568]'
-                : sortinoRatio >= 1 ? 'text-green-400'
-                : sortinoRatio >= 0.5 ? 'text-amber-400'
-                : 'text-red-400'
-              }`}>
-                {sortinoRatio != null ? sortinoRatio.toFixed(2) : '—'}
-              </div>
-              <div className="text-[10px] text-[#4a5568] mt-0.5">Returns per unit of downside risk</div>
-            </div>
-            <div>
-              <div className="text-xs text-[#6e7681] mb-1">Payoff Ratio</div>
-              <div className={`text-lg font-bold tabular-nums ${
-                payoffRatio == null ? 'text-[#4a5568]'
-                : payoffRatio >= 1.5 ? 'text-green-400'
-                : payoffRatio >= 1 ? 'text-amber-400'
-                : 'text-red-400'
-              }`}>
-                {payoffRatio != null ? payoffRatio.toFixed(2) : '—'}
-              </div>
-              <div className="text-[10px] text-[#4a5568] mt-0.5">Avg winner / avg loser</div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Drawdown Analysis ────────────────────────────────────── */}
-      {hasDrawdown && (
-        <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
-          <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-3">Drawdown Analysis</div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <div>
-              <div className="text-xs text-[#6e7681] mb-1">Max Drawdown</div>
-              <div className="text-sm font-medium text-red-400 tabular-nums">
-                {fmtDollars(drawdownAnalysis!.maxDrawdown)}
-              </div>
-              <div className="text-[10px] text-[#4a5568]">
-                {drawdownAnalysis!.maxDrawdownPercent.toFixed(1)}% of peak
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-[#6e7681] mb-1">Current</div>
-              <div className={`text-sm font-medium tabular-nums ${
-                drawdownAnalysis!.currentDrawdown < 0 ? 'text-red-400' : 'text-green-400'
-              }`}>
-                {drawdownAnalysis!.currentDrawdown !== 0
-                  ? fmtDollars(drawdownAnalysis!.currentDrawdown)
-                  : 'At HWM'}
-              </div>
-              {drawdownAnalysis!.currentDrawdownDuration > 0 && (
-                <div className="text-[10px] text-[#4a5568]">
-                  {Math.round(drawdownAnalysis!.currentDrawdownDuration)}d in drawdown
+      <NarrativeSection
+        question="How bad can it get?"
+        verdict={drawdownVerdict}
+        evidence={
+          hasDrawdown ? (
+            <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <div>
+                  <div className="text-xs text-[#6e7681] mb-1">Max Drawdown</div>
+                  <div className="text-sm font-medium text-red-400 tabular-nums">
+                    {fmtDollars(drawdownAnalysis!.maxDrawdown)}
+                  </div>
+                  <div className="text-[10px] text-[#4a5568]">
+                    {drawdownAnalysis!.maxDrawdownPercent.toFixed(1)}% of peak
+                  </div>
                 </div>
-              )}
-            </div>
-            <div>
-              <div className="text-xs text-[#6e7681] mb-1">Avg Recovery</div>
-              <div className="text-sm font-medium text-white tabular-nums">
-                {drawdownAnalysis!.avgDrawdownDuration.toFixed(0)}d
-              </div>
-              <div className="text-[10px] text-[#4a5568]">
-                Longest: {Math.round(drawdownAnalysis!.longestDrawdown)}d
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-[#6e7681] mb-1">Episodes &gt; 5%</div>
-              <div className="text-sm font-medium text-white tabular-nums">
-                {drawdownAnalysis!.drawdownCount}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Monte Carlo ──────────────────────────────────────────── */}
-      <MonteCarloChart journalId={chartProps.journalId} />
-
-      {/* ── What-If equity curves ────────────────────────────────── */}
-      <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
-        <div className="px-4 py-3 border-b border-[#21262d]">
-          <h2 className="text-sm font-semibold text-white">What If?</h2>
-          <p className="text-xs text-[#6e7681] mt-0.5">Explore how your stats change under hypothetical filters.</p>
-        </div>
-        <div className="px-4 py-5">
-          <WhatIfExplorer {...chartProps} />
-        </div>
-      </div>
-      <WhatIfChart journalId={chartProps.journalId} />
-
-      {/* ── Fee & Funding Impact ─────────────────────────────────── */}
-      {feeAttribution && (
-        <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
-          <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-3">Fee & Funding Impact</div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <div>
-              <div className="text-xs text-[#6e7681] mb-1">Total Fees</div>
-              <div className="text-sm font-medium text-red-400 tabular-nums">
-                {fmtDollars(feeAttribution.totalFees)}
-              </div>
-              <div className="text-[10px] text-[#4a5568]">
-                {feeAttribution.feeImpact.toFixed(1)}% of gross P&L
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-[#6e7681] mb-1">Net Funding</div>
-              <div className={`text-sm font-medium tabular-nums ${
-                feeAttribution.totalFunding >= 0 ? 'text-green-400' : 'text-red-400'
-              }`}>
-                {fmtDollars(feeAttribution.totalFunding)}
-              </div>
-              <div className="text-[10px] text-[#4a5568]">
-                {feeAttribution.fundingImpact.toFixed(1)}% of net P&L
-              </div>
-            </div>
-            <div>
-              <div className="text-xs text-[#6e7681] mb-1">Directional P&L</div>
-              <div className={`text-sm font-medium tabular-nums ${
-                feeAttribution.directionalPnl >= 0 ? 'text-green-400' : 'text-red-400'
-              }`}>
-                {fmtDollars(feeAttribution.directionalPnl)}
-              </div>
-              <div className="text-[10px] text-[#4a5568]">Price movement only</div>
-            </div>
-            {liquidationCount > 0 && (
-              <div>
-                <div className="text-xs text-[#6e7681] mb-1">Liquidations</div>
-                <div className="text-sm font-medium text-red-400 tabular-nums">
-                  {liquidationCount} event{liquidationCount !== 1 ? 's' : ''}
+                <div>
+                  <div className="text-xs text-[#6e7681] mb-1">Current</div>
+                  <div className={`text-sm font-medium tabular-nums ${
+                    drawdownAnalysis!.currentDrawdown < 0 ? 'text-red-400' : 'text-green-400'
+                  }`}>
+                    {drawdownAnalysis!.currentDrawdown !== 0
+                      ? fmtDollars(drawdownAnalysis!.currentDrawdown)
+                      : 'At HWM'}
+                  </div>
+                  {drawdownAnalysis!.currentDrawdownDuration > 0 && (
+                    <div className="text-[10px] text-[#4a5568]">
+                      {Math.round(drawdownAnalysis!.currentDrawdownDuration)}d in drawdown
+                    </div>
+                  )}
                 </div>
-                <div className="text-[10px] text-[#4a5568]">
-                  {fmtDollars(liquidationCost)} total cost
+                <div>
+                  <div className="text-xs text-[#6e7681] mb-1">Avg Recovery</div>
+                  <div className="text-sm font-medium text-white tabular-nums">
+                    {drawdownAnalysis!.avgDrawdownDuration.toFixed(0)}d
+                  </div>
+                  <div className="text-[10px] text-[#4a5568]">
+                    Longest: {Math.round(drawdownAnalysis!.longestDrawdown)}d
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-[#6e7681] mb-1">Episodes &gt; 5%</div>
+                  <div className="text-sm font-medium text-white tabular-nums">
+                    {drawdownAnalysis!.drawdownCount}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4 text-xs text-[#4a5568] italic">
+              No drawdown data yet.
+            </div>
+          )
+        }
+        implication={drawdownImplication}
+      />
+      <NarrativeSection
+        question="What could happen next?"
+        verdict={mcVerdict}
+        evidence={<MonteCarloChart journalId={chartProps.journalId} />}
+        implication={mcImplication}
+        details={
+          <>
+            <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
+              <div className="px-4 py-3 border-b border-[#21262d]">
+                <h2 className="text-sm font-semibold text-white">What If?</h2>
+                <p className="text-xs text-[#6e7681] mt-0.5">
+                  Explore how your stats change under hypothetical filters.
+                </p>
+              </div>
+              <div className="px-4 py-5">
+                <WhatIfExplorer {...chartProps} />
+              </div>
+            </div>
+            <WhatIfChart journalId={chartProps.journalId} />
+            {feeAttribution && (
+              <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4 mt-4">
+                <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-3">
+                  Fee &amp; Funding Impact
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <div>
+                    <div className="text-xs text-[#6e7681] mb-1">Total Fees</div>
+                    <div className="text-sm font-medium text-red-400 tabular-nums">
+                      {fmtDollars(feeAttribution.totalFees)}
+                    </div>
+                    <div className="text-[10px] text-[#4a5568]">
+                      {feeAttribution.feeImpact.toFixed(1)}% of gross P&L
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-[#6e7681] mb-1">Net Funding</div>
+                    <div className={`text-sm font-medium tabular-nums ${
+                      feeAttribution.totalFunding >= 0 ? 'text-green-400' : 'text-red-400'
+                    }`}>
+                      {fmtDollars(feeAttribution.totalFunding)}
+                    </div>
+                    <div className="text-[10px] text-[#4a5568]">
+                      {feeAttribution.fundingImpact.toFixed(1)}% of net P&L
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-[#6e7681] mb-1">Directional P&amp;L</div>
+                    <div className={`text-sm font-medium tabular-nums ${
+                      feeAttribution.directionalPnl >= 0 ? 'text-green-400' : 'text-red-400'
+                    }`}>
+                      {fmtDollars(feeAttribution.directionalPnl)}
+                    </div>
+                    <div className="text-[10px] text-[#4a5568]">Price movement only</div>
+                  </div>
+                  {liquidationCount > 0 && (
+                    <div>
+                      <div className="text-xs text-[#6e7681] mb-1">Liquidations</div>
+                      <div className="text-sm font-medium text-red-400 tabular-nums">
+                        {liquidationCount} event{liquidationCount !== 1 ? 's' : ''}
+                      </div>
+                      <div className="text-[10px] text-[#4a5568]">
+                        {fmtDollars(liquidationCost)} total cost
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
-          </div>
-        </div>
-      )}
+          </>
+        }
+      />
     </div>
   );
 }
