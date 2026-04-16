@@ -21,7 +21,7 @@
 
 import type { InsightDetector, Insight, Position } from './base';
 import { sampleSizeConfidence } from './base';
-import { welchTTest, bonferroniCorrect, computeImpactScore } from '../statistics';
+import { welchTTest, computeImpactScore } from '../statistics';
 import type { StatisticalTest } from '../types';
 
 const MIN_POSITIONS = 50;
@@ -89,10 +89,7 @@ export const timeOfDayEdgeDetector: InsightDetector = {
       }];
     }
 
-    // Bonferroni correction
-    const rawTests      = hourResults.map((h) => h.test);
-    const corrected     = bonferroniCorrect(rawTests);
-    const withCorrected = hourResults.map((h, i) => ({ ...h, test: corrected[i] }));
+    const withCorrected = hourResults; // raw p-values; global BH handles multiplicity
 
     const significant = withCorrected.filter((h) => h.test.isSignificant);
     const bestHour    = withCorrected.reduce((b, h) => (h.avgPnl > b.avgPnl ? h : b));
@@ -110,7 +107,7 @@ export const timeOfDayEdgeDetector: InsightDetector = {
 
     if (significant.length === 0) {
       description =
-        `After testing all ${withCorrected.length} active hours with Bonferroni correction for multiple comparisons: ` +
+        `After testing all ${withCorrected.length} active hours: ` +
         `no hour-of-day edge detected — your performance is consistent across trading hours. ` +
         `Best hour: ${bestHour.hour}:00 (avg $${bestHour.avgPnl.toFixed(2)}), ` +
         `worst: ${worstHour.hour}:00 (avg $${worstHour.avgPnl.toFixed(2)}).`;
@@ -118,7 +115,7 @@ export const timeOfDayEdgeDetector: InsightDetector = {
       const bestStr  = sigBest  ? `Your best hour is ${sigBest.hour}:00 (avg $${sigBest.avgPnl.toFixed(2)}, ${sigBest.test.description})`   : '';
       const worstStr = sigWorst ? `Your worst is ${sigWorst.hour}:00 (avg $${sigWorst.avgPnl.toFixed(2)}, ${sigWorst.test.description})` : '';
       description =
-        `After testing all ${withCorrected.length} active hours with Bonferroni correction: ` +
+        `After testing all ${withCorrected.length} active hours: ` +
         `${significant.length} hour${significant.length > 1 ? 's' : ''} show significant differences. ` +
         `${bestStr}. ${worstStr}.`;
       if (sigBest && sigWorst) {
@@ -131,7 +128,8 @@ export const timeOfDayEdgeDetector: InsightDetector = {
     const worstHourTotalPnl = worstHourPnls.reduce((a, b) => a + b, 0);
     const dollarImpact      = Math.abs(Math.min(0, worstHourTotalPnl));
 
-    const bestTestForImpact = corrected.reduce((b, t) => (t.pValue < b.pValue ? t : b), corrected[0]);
+    const rawTests = withCorrected.map((h) => h.test);
+    const bestTestForImpact = rawTests.reduce((b, t) => (t.pValue < b.pValue ? t : b), rawTests[0]);
     const impactScore       = computeImpactScore(dollarImpact, bestTestForImpact, 0.7);
     const isSignificant     = significant.length > 0;
 
@@ -149,7 +147,7 @@ export const timeOfDayEdgeDetector: InsightDetector = {
         `Estimated savings from stopping earlier: $${Math.round(fatigue.estimatedSavings).toLocaleString()}.`;
     }
 
-    const finalStatistics = fatigue ? [...corrected, fatigue.test] : corrected;
+    const finalStatistics = fatigue ? [...rawTests, fatigue.test] : rawTests;
 
     return [{
       module: 'time-of-day-edge',

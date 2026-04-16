@@ -35,16 +35,28 @@ import {
 } from '../statistics';
 
 const MIN_POSITIONS  = 50;
-const MIN_GROUP_SIZE = 25;
-const MIN_FOR_3D     = 500;
+const MIN_CELL_SIZE  = 50;   // minimum trades per cell for pre-registered combinations
 const FDR_RATE       = 0.10;
 const DEDUP_EPSILON  = 0.20;  // child within 20% of parent → drop child
+
+// Exhaustive search thresholds — kept for future use when sample sizes grow (>1000 trades).
+// const MIN_GROUP_SIZE = 50;
+// const MIN_FOR_3D     = 500;
 
 // ─── Dimensions ────────────────────────────────────────────────────────────
 
 interface DimensionDef {
   name: string;
   accessor: (p: Position) => string | null;
+}
+
+/** Maps UTC hour (0-23) to a coarse time-of-day bucket. */
+function timeOfDayBucket(hour: number | null | undefined): string | null {
+  if (hour == null) return null;
+  if (hour >= 6  && hour < 12) return 'morning';
+  if (hour >= 12 && hour < 18) return 'afternoon';
+  if (hour >= 18 && hour < 24) return 'evening';
+  return 'night';
 }
 
 const DIMENSIONS: DimensionDef[] = [
@@ -54,6 +66,27 @@ const DIMENSIONS: DimensionDef[] = [
   { name: 'entrySession',     accessor: (p) => p.entrySession },
   { name: 'holdTimeCategory', accessor: (p) => p.holdTimeCategory },
   { name: 'direction',        accessor: (p) => p.direction },
+  { name: 'timeOfDayBucket',  accessor: (p) => timeOfDayBucket(p.entryHour) },
+];
+
+// ─── Named dimension refs for pre-registered hypotheses ───────────────────
+const DIM_DIRECTION    = DIMENSIONS.find((d) => d.name === 'direction')!;
+const DIM_REGIME       = DIMENSIONS.find((d) => d.name === 'regime')!;
+const DIM_ASSET        = DIMENSIONS.find((d) => d.name === 'asset')!;
+const DIM_TRADE_TYPE   = DIMENSIONS.find((d) => d.name === 'tradeType')!;
+const DIM_TIME_OF_DAY  = DIMENSIONS.find((d) => d.name === 'timeOfDayBucket')!;
+
+/**
+ * Pre-registered dimension pairs. Exhaustive 1D/2D/3D search is disabled —
+ * requires >1000 trades for meaningful power. These 5 pairs are domain-
+ * plausible hypotheses with sufficient sample sizes at typical trading volumes.
+ */
+const REGISTERED_PAIRS: [DimensionDef, DimensionDef][] = [
+  [DIM_DIRECTION,  DIM_REGIME],        // do longs/shorts differ across market conditions?
+  [DIM_ASSET,      DIM_DIRECTION],     // do you trade certain assets better in one direction?
+  [DIM_REGIME,     DIM_TRADE_TYPE],    // does scalping vs directional differ across regimes?
+  [DIM_ASSET,      DIM_TIME_OF_DAY],   // morning/afternoon/evening performance by asset
+  [DIM_DIRECTION,  DIM_TIME_OF_DAY],   // morning/afternoon/evening edge by direction
 ];
 
 // ─── Public types ──────────────────────────────────────────────────────────
@@ -101,29 +134,14 @@ export const combinatorialSearchDetector: InsightDetector = {
     const overallWinRate = overallWinners / qualified.length;
 
     // ─── Generate candidate findings ────────────────────────────────────
+    // Exhaustive search disabled — requires >1000 trades for meaningful power.
+    // Using pre-registered hypotheses instead (see REGISTERED_PAIRS above).
     const candidates: CombinatorialFinding[] = [];
 
-    // 1-dim
-    for (const dim of DIMENSIONS) {
-      candidates.push(
-        ...searchCombination([dim], qualified, overallAvgPnl, overallWinRate),
-      );
-    }
-
-    // 2-dim
-    for (const pair of combinations(DIMENSIONS, 2)) {
+    for (const pair of REGISTERED_PAIRS) {
       candidates.push(
         ...searchCombination(pair, qualified, overallAvgPnl, overallWinRate),
       );
-    }
-
-    // 3-dim — only with enough data
-    if (qualified.length >= MIN_FOR_3D) {
-      for (const triple of combinations(DIMENSIONS, 3)) {
-        candidates.push(
-          ...searchCombination(triple, qualified, overallAvgPnl, overallWinRate),
-        );
-      }
     }
 
     const totalTestsRun = candidates.length * 2; // pnl test + win-rate test per candidate
@@ -208,10 +226,10 @@ export const combinatorialSearchDetector: InsightDetector = {
     if (N === 0) {
       title = 'Edge Finder: No Significant Patterns Found';
       description =
-        `Tested ${M} dimension combinations — no statistically significant patterns ` +
-        `found after multiple-comparison correction. Your performance is consistent ` +
-        `across all dimensions tested. This itself is useful information: your edge ` +
-        `(or lack thereof) is not concentrated in any particular condition.`;
+        `Tested ${REGISTERED_PAIRS.length} pre-registered dimension pairs (${M} total tests) — ` +
+        `no statistically significant patterns found after multiple-comparison correction. ` +
+        `Your performance is consistent across all tested conditions. ` +
+        `This itself is useful information: your edge (or lack thereof) is not concentrated in any particular condition.`;
       severity = 'info';
     } else {
       title = `Edge Finder: ${N} Significant Pattern${N === 1 ? '' : 's'} in ${M} Tests`;
@@ -321,12 +339,12 @@ function searchCombination(
   const findings: CombinatorialFinding[] = [];
 
   for (const [, group] of groups) {
-    if (group.positions.length < MIN_GROUP_SIZE) continue;
+    if (group.positions.length < MIN_CELL_SIZE) continue;
 
     // Complement = same dimension-qualified population minus this group
     const sliceSet = new Set(group.positions);
     const complement = localPositions.filter((p) => !sliceSet.has(p));
-    if (complement.length < MIN_GROUP_SIZE) continue;
+    if (complement.length < MIN_CELL_SIZE) continue;
 
     const finding = testSlice(
       group.positions,
@@ -454,8 +472,9 @@ function buildDescription(
   estimatedSavings: number,
 ): string {
   const parts: string[] = [
-    `Systematically tested ${testCount} dimension combinations with Benjamini-Hochberg FDR ` +
-    `correction at 10%. Found ${findingCount} statistically significant pattern${findingCount === 1 ? '' : 's'}.`,
+    `Tested ${REGISTERED_PAIRS.length} pre-registered dimension pairs (${testCount} total tests) ` +
+    `with Benjamini-Hochberg FDR correction at 10%. ` +
+    `Found ${findingCount} statistically significant pattern${findingCount === 1 ? '' : 's'}.`,
   ];
 
   if (topEdge) {
@@ -536,6 +555,7 @@ function formatDimensionValue(name: string, value: string): string {
     case 'holdTimeCategory':
       return value.split('_').map(capitalize).join(' ');
     case 'direction':
+    case 'timeOfDayBucket':
       return capitalize(value);
     case 'asset':
       return value;

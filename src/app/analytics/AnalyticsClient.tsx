@@ -476,6 +476,37 @@ function InlineInsightCard({
   );
 }
 
+// ── Insight tier helpers ──────────────────────────────────────────────────────
+
+function tierLabel(insight: Insight): string {
+  switch (insight.tier) {
+    case 'significant':  return 'Significant finding';
+    case 'preliminary':  return 'Observed pattern (insufficient evidence for certainty)';
+    case 'descriptive':  return 'Descriptive (factual observation)';
+    case 'not_detected': return 'No pattern detected';
+    default:
+      return insight.isSignificant
+        ? 'Significant finding'
+        : 'Observed pattern (insufficient evidence for certainty)';
+  }
+}
+
+function deriveDollarEffect(insight: Insight): string | null {
+  const d = insight.data as Record<string, any> | undefined;
+  if (!d) return null;
+  if (typeof d.meanDifference === 'number') {
+    return `$${Math.abs(d.meanDifference).toFixed(2)} per trade`;
+  }
+  // Combinatorial search: top edge or weakness per-trade delta vs baseline
+  const top = d.combinatorial?.topEdges?.[0] ?? d.combinatorial?.topWeaknesses?.[0];
+  if (top && typeof top.avgPnl === 'number' && typeof top.overallAvgPnl === 'number') {
+    const diff = top.avgPnl - top.overallAvgPnl;
+    const sign = diff >= 0 ? '+' : '−';
+    return `${sign}$${Math.abs(diff).toFixed(2)} avg per trade vs baseline`;
+  }
+  return null;
+}
+
 // ── Full insight card (Insights tab) ─────────────────────────────────────────
 
 function FullInsightCard({
@@ -497,6 +528,7 @@ function FullInsightCard({
   const [showStats, setShowStats] = useState(false);
   const headline = deriveImpactHeadline(insight);
   const body = firstTwoSentences(insight.description);
+  const dollarEffect = deriveDollarEffect(insight);
 
   return (
     <div className={`bg-[#161b22] border ${style.border} rounded-lg p-4 flex flex-col gap-2 ${isSignif ? '' : 'opacity-75'}`}>
@@ -541,7 +573,7 @@ function FullInsightCard({
           <div className="flex flex-wrap gap-3">
             <span className="text-[#6e7681]">Significance:</span>
             <span className={isSignif ? 'text-emerald-400' : 'text-[#6e7681]'}>
-              {isSignif ? 'Significant' : 'Preliminary'}
+              {tierLabel(insight)}
               {pStr ? ` · ${pStr}` : ''}
             </span>
           </div>
@@ -561,6 +593,12 @@ function FullInsightCard({
             <div className="flex flex-wrap gap-3">
               <span className="text-[#6e7681]">Effect size:</span>
               <span className="text-[#c9d1d9]">{primary.effectSize.toFixed(3)}</span>
+            </div>
+          )}
+          {dollarEffect && (
+            <div className="flex flex-wrap gap-3">
+              <span className="text-[#6e7681]">Effect:</span>
+              <span className="text-[#c9d1d9]">{dollarEffect}</span>
             </div>
           )}
           <p className="text-[#8b949e] leading-relaxed pt-1">{insight.description}</p>
@@ -839,7 +877,7 @@ function InsightsVerdict({
     (i) => i.tier === 'significant' || i.tier === 'descriptive',
   ).length;
   const preliminary = insights.filter((i) => i.tier === 'preliminary').length;
-  const text = `${actionable} actionable finding${actionable === 1 ? '' : 's'}, ${preliminary} preliminary pattern${preliminary === 1 ? '' : 's'} across ${tradeCount} trades`;
+  const text = `${actionable} confirmed finding${actionable === 1 ? '' : 's'}, ${preliminary} observed pattern${preliminary === 1 ? '' : 's'}${preliminary > 0 ? ' (need more data for certainty)' : ''} across ${tradeCount} trades`;
   return <Verdict tone="neutral" text={text} />;
 }
 
@@ -2143,7 +2181,7 @@ function InsightsTab({
             onSwitchTab={onSwitchTab}
           />
           <InsightGroup
-            title="Preliminary Patterns"
+            title="Observed Patterns (need more data for certainty)"
             insights={preliminary}
             onSwitchTab={onSwitchTab}
           />

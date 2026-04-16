@@ -11,7 +11,6 @@ import type { InsightDetector, Insight, Position } from './base';
 import { sampleSizeConfidence, bucketByRegime, formatRegimeLabel } from './base';
 import {
   welchTTest,
-  bonferroniCorrect,
   computeImpactScore,
 } from '../statistics';
 import type { StatisticalTest } from '../types';
@@ -78,11 +77,9 @@ export const exitOptimizerDetector: InsightDetector = {
       allRegimeTests.push(test);
     }
 
-    // Bonferroni-correct for multiple regime comparisons
-    const correctedTests = bonferroniCorrect(allRegimeTests);
     let testIdx = 0;
     for (const regime of Object.keys(regimeResults)) {
-      regimeResults[regime].test = correctedTests[testIdx++];
+      regimeResults[regime].test = allRegimeTests[testIdx++];
     }
 
     // Find the worst regime that is statistically significant
@@ -122,8 +119,8 @@ export const exitOptimizerDetector: InsightDetector = {
     }
 
     // Best test for impactScore (lowest p-value across regime tests, or placeholder if none)
-    const representativeTest = correctedTests.length > 0
-      ? correctedTests.reduce((best, t) => (t.pValue < best.pValue ? t : best))
+    const representativeTest = allRegimeTests.length > 0
+      ? allRegimeTests.reduce((best, t) => (t.pValue < best.pValue ? t : best))
       : { pValue: 0.5, isSignificant: false, effectSize: 0, sampleSizeA: qualified.length, sampleSizeB: 0, testName: 'welch_t_test', description: '', correctionApplied: undefined };
 
     const impactScore = computeImpactScore(overall.totalLeftOnTable, representativeTest, 1.0);
@@ -139,7 +136,7 @@ export const exitOptimizerDetector: InsightDetector = {
       };
     }
 
-    const allTests = correctedTests.length > 0 ? correctedTests : [representativeTest as StatisticalTest];
+    const allTests = allRegimeTests.length > 0 ? allRegimeTests : [representativeTest as StatisticalTest];
 
     return [{
       module: 'exit-optimizer',

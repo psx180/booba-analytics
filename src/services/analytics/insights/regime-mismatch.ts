@@ -8,7 +8,7 @@
 
 import type { InsightDetector, Insight, Position } from './base';
 import { sampleSizeConfidence, formatRegimeLabel } from './base';
-import { welchTTest, chiSquaredProportionTest, bonferroniCorrect, computeImpactScore } from '../statistics';
+import { welchTTest, chiSquaredProportionTest, computeImpactScore } from '../statistics';
 import type { StatisticalTest } from '../types';
 
 const MIN_POSITIONS    = 40;
@@ -109,9 +109,8 @@ export const regimeMismatchDetector: InsightDetector = {
         }
       }
 
-      const corrected = bonferroniCorrect(allTests);
-      const sigComps  = comparisons.filter(
-        (c) => corrected[c.pnlTestIdx].isSignificant || corrected[c.winRateTestIdx].isSignificant,
+      const sigComps = comparisons.filter(
+        (c) => allTests[c.pnlTestIdx].isSignificant || allTests[c.winRateTestIdx].isSignificant,
       );
       if (sigComps.length === 0) continue;
 
@@ -130,7 +129,7 @@ export const regimeMismatchDetector: InsightDetector = {
       const badPositions = byRegime.get(badRegime) ?? [];
       const badTotalPnl  = badPositions.reduce((s, p) => s + (p.aggregatePnl ?? 0), 0);
 
-      findings.push({ tradeType, goodRegime, badRegime, goodWinRate, badWinRate, goodAvgPnl, badAvgPnl, badTotalPnl, tests: corrected });
+      findings.push({ tradeType, goodRegime, badRegime, goodWinRate, badWinRate, goodAvgPnl, badAvgPnl, badTotalPnl, tests: allTests });
     }
 
     if (findings.length === 0) {

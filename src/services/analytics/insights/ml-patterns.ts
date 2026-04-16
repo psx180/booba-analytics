@@ -140,29 +140,18 @@ function buildClusteringInsight(result: ClusteringResult, sampleSize: number): I
     statistics: [test],
     impactScore,
     category: 'strategy',
-    isSignificant: test.isSignificant,
+    isSignificant: false,
     sampleSize,
   };
 }
 
 /**
- * Synthetic statistical test for clustering quality. The silhouette score
- * (0 to 1) is mapped to a p-value:
- *   ≥ 0.5  → p = 0.001  (strong cluster structure)
- *   ≥ 0.3  → p = 0.02   (moderate)
- *   ≥ 0.2  → p = 0.10   (weak / borderline)
- *   < 0.2  → p = 0.50   (effectively none)
- * The silhouette itself is used as the effect size so it surfaces in the
- * insight card alongside other detector tests.
+ * Descriptive test for clustering quality. The silhouette score (0 to 1) is
+ * used as an effect size only — no p-value is synthesised from a null
+ * distribution. pValue=1 ensures this never competes in the BH pipeline;
+ * tier is forced to 'descriptive' by DESCRIPTIVE_MODULES in analytics-service.
  */
 function silhouetteTest(silhouette: number, n: number): StatisticalTest {
-  let pValue: number;
-  if (silhouette >= 0.5)      pValue = 0.001;
-  else if (silhouette >= 0.3) pValue = 0.02;
-  else if (silhouette >= 0.2) pValue = 0.10;
-  else                         pValue = 0.50;
-
-  const isSignificant = pValue < 0.05;
   const quality =
     silhouette >= 0.5 ? 'strong cluster structure' :
     silhouette >= 0.3 ? 'moderate cluster structure' :
@@ -171,12 +160,12 @@ function silhouetteTest(silhouette: number, n: number): StatisticalTest {
 
   return {
     testName: 'silhouette_quality',
-    pValue,
+    pValue: 1,
     effectSize: silhouette,
     sampleSizeA: n,
     sampleSizeB: 0,
-    isSignificant,
-    description: `Silhouette ${silhouette.toFixed(2)} — ${quality} (N=${n})`,
+    isSignificant: false,
+    description: `Descriptive — silhouette ${silhouette.toFixed(2)} — ${quality} (N=${n})`,
   };
 }
 
@@ -252,39 +241,38 @@ function buildAnomalyInsight(result: AnomalyResult, positions: Position[]): Insi
     statistics: [test],
     impactScore,
     category: 'strategy',
-    isSignificant: test.isSignificant,
+    isSignificant: false,
     sampleSize: positions.length,
   };
 }
 
 /**
- * Synthetic test for anomaly detection. p-value is driven by whether the
- * score distribution is flat (no real outliers) and the magnitude of
- * variation in scores.
+ * Descriptive test for anomaly detection. Anomaly scores are not from a
+ * hypothesis test — no p-value is synthesised. pValue=1 ensures this never
+ * competes in the BH pipeline; tier is forced to 'descriptive' by
+ * DESCRIPTIVE_MODULES in analytics-service.
  */
 function anomalyTest(result: AnomalyResult, n: number): StatisticalTest {
   if (result.flat || result.anomalies.length === 0) {
     return {
       testName: 'anomaly_score_distribution',
-      pValue: 0.5,
+      pValue: 1,
       effectSize: 0,
       sampleSizeA: n,
       sampleSizeB: 0,
       isSignificant: false,
-      description: `Anomaly score distribution is flat (N=${n}) — no clear outliers`,
+      description: `Descriptive — anomaly score distribution is flat (N=${n}) — no clear outliers`,
     };
   }
-  // Real outliers exist — significance depends on how separated they are
   const effect = Math.min(1, result.threshold);
-  const pValue = effect > 0.5 ? 0.005 : 0.03;
   return {
     testName: 'anomaly_score_distribution',
-    pValue,
+    pValue: 1,
     effectSize: effect,
     sampleSizeA: result.anomalies.length,
     sampleSizeB: n - result.anomalies.length,
-    isSignificant: true,
-    description: `${result.anomalies.length} of ${n} trades flagged at threshold ${result.threshold.toFixed(2)}`,
+    isSignificant: false,
+    description: `Descriptive — ${result.anomalies.length} of ${n} trades flagged at threshold ${result.threshold.toFixed(2)}`,
   };
 }
 

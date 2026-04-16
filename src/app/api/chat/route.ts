@@ -449,13 +449,13 @@ async function executeTool(
 
     // ── New write/action tools ──────────────────────────────────────────────
     case 'create_signal':
-      return tools.createSignalFromChat(wallet, args);
+      return tools.createSignalFromChat(wallet, args as { asset: string; direction: string; entryPrice: number; targetPrices?: number[]; stopPrice?: number; callerName: string; source?: string });
     case 'create_playbook':
-      return tools.createPlaybookFromChat(wallet, args);
+      return tools.createPlaybookFromChat(wallet, args as any);
     case 'navigate_to':
-      return tools.navigateTo(args);
+      return tools.navigateTo(args as any);
     case 'set_trades_filter':
-      return tools.setTradesFilter(wallet, args);
+      return tools.setTradesFilter(wallet, args as any);
 
     default:
       return { error: `Unknown tool: ${name}` };

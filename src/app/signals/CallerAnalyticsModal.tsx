@@ -137,7 +137,7 @@ function WartBars({ analytics }: { analytics: CallerAnalytics }) {
           <Tooltip
             cursor={{ fill: 'rgba(255,255,255,0.04)' }}
             contentStyle={{ background: '#1c2128', border: '1px solid #30363d', borderRadius: '6px', fontSize: '12px' }}
-            formatter={(value: number) => [`${value.toFixed(0)}/100`, 'Score']}
+            formatter={((value: number) => [`${Math.round(value)}/100`, 'Score']) as any}
           />
           <Bar dataKey="score" radius={[0, 4, 4, 0]} isAnimationActive={false}>
             {data.map((d) => (
