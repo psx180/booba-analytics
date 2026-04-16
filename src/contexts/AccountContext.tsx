@@ -83,8 +83,9 @@ export function AccountProvider({
   }, []);
 
   // Fetch sub-accounts when wallet or network changes.
-  // The /api/v1/account/subaccounts endpoint only exists on testnet; skip on
-  // mainnet to avoid a 404 that can't be suppressed from the browser console.
+  // The subaccounts endpoint only exists on testnet; skip on mainnet to avoid
+  // a 404 that can't be suppressed from the browser console.
+  // Pacifica exposes this as GET /api/v1/subaccounts?account=...
   useEffect(() => {
     if (!walletAddress) return;
     if (network === 'mainnet') {
@@ -94,7 +95,7 @@ export function AccountProvider({
     let cancelled = false;
 
     fetch(
-      `${pacificaApiUrl}/api/v1/account/subaccounts?account=${walletAddress}`,
+      `${pacificaApiUrl}/api/v1/subaccounts?account=${walletAddress}`,
     )
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {

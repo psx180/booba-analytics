@@ -110,15 +110,21 @@ export default function PlaybooksClient() {
     try {
       const [pbRes, posRes, statsRes] = await Promise.all([
         authFetch('/api/playbooks').then((r) => r.json()),
-        authFetch('/api/positions?pageSize=1').then((r) => r.json()).catch(() => ({})),
+        authFetch('/api/trade-units?pageSize=100').then((r) => r.json()).catch(() => ({})),
         authFetch('/api/strategies/stats').then((r) => r.json()).catch(() => ({ stats: [] })),
       ]);
       setPlaybooks(pbRes.playbooks ?? []);
       setStrategyStats(statsRes.stats ?? []);
-      const assets =
-        Array.isArray(posRes.knownAssets) && posRes.knownAssets.length > 0
-          ? posRes.knownAssets
-          : ['BTC', 'ETH', 'SOL', 'AVAX', 'LINK', 'ARB', 'OP'];
+      const rawAssets = Array.isArray(posRes.tradeUnits)
+        ? [...new Set<string>(
+            (posRes.tradeUnits as { asset: string }[])
+              .map((u) => u.asset.split(' / ')[0])
+              .filter(Boolean),
+          )]
+        : [];
+      const assets = rawAssets.length > 0
+        ? rawAssets
+        : ['BTC', 'ETH', 'SOL', 'AVAX', 'LINK', 'ARB', 'OP'];
       setAssetList(assets);
     } finally {
       setLoading(false);

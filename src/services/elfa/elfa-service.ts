@@ -28,6 +28,10 @@ const REQUEST_TIMEOUT_MS = 5_000;
 
 const _cache = new Map<string, CacheEntry>();
 
+// Once the top-mentions endpoint returns 404, skip all further calls this session
+// to avoid log spam. A 404 means the endpoint is unavailable (e.g. on testnet).
+let _topMentionsUnavailable = false;
+
 function getCached<T>(key: string): T | null {
   const entry = _cache.get(key);
   if (!entry) return null;
@@ -93,6 +97,8 @@ export async function getTokenSocialContext(
   asset: string,
   timeWindow = '1h',
 ): Promise<ElfaSocialContext | null> {
+  if (_topMentionsUnavailable) return null;
+
   const cacheKey = `context:${asset}:${timeWindow}`;
   const cached = getCached<ElfaSocialContext>(cacheKey);
   if (cached) return cached;
@@ -105,7 +111,14 @@ export async function getTokenSocialContext(
       fetchTrendingRaw(timeWindow).catch(() => [] as TrendingEntry[]),
     ]);
 
-    if (!mentionsRes.ok) throw new Error(`top-mentions HTTP ${mentionsRes.status}`);
+    if (!mentionsRes.ok) {
+      if (mentionsRes.status === 404) {
+        _topMentionsUnavailable = true;
+        console.warn('[elfa] top-mentions endpoint not available (404) — skipping ELFA enrichment for this session');
+        return null;
+      }
+      throw new Error(`top-mentions HTTP ${mentionsRes.status}`);
+    }
 
     const mentionsJson = await mentionsRes.json() as unknown;
     const items: RawRecord[] = Array.isArray(mentionsJson)

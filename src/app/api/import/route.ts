@@ -32,6 +32,7 @@ import {
 } from '@/services/ingestion';
 import { ensureDefaultJournal } from '@/lib/journals';
 import { GroupingService } from '@/services/grouping';
+import { setProgress } from './progress-store';
 
 export async function POST(req: NextRequest) {
   return withAuth(req, async (walletAddress) => {
@@ -53,9 +54,25 @@ export async function POST(req: NextRequest) {
 
     // 2. Fetch trade history from Pacifica
     const apiConfigKey = process.env.PF_API_KEY;
-    const client = new PacificaClient({ walletAddress, apiConfigKey });
+    const network = req.headers.get('X-Pacifica-Network') === 'testnet' ? 'testnet' : 'mainnet';
+    const client = new PacificaClient({ walletAddress, apiConfigKey, network });
 
-    const fills = await client.account.getAllTradeHistory({ account: walletAddress });
+    setProgress(walletAddress, { stage: 'fetching', message: 'Fetching trades from Pacifica…', fillsFetched: 0 });
+
+    const fills: Awaited<ReturnType<typeof client.account.getTradeHistory>>['data'] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await client.account.getTradeHistory({ account: walletAddress, cursor });
+      fills.push(...page.data);
+      cursor = page.next_cursor ?? undefined;
+      setProgress(walletAddress, {
+        stage: 'fetching',
+        message: `${fills.length} fills fetched…`,
+        fillsFetched: fills.length,
+      });
+      if (!page.has_more) break;
+    } while (cursor);
+
     steps.fetchedFills = fills.length;
 
     // 3. Deduplicate (incremental — skip fills already in DB)
@@ -99,6 +116,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 6. Run grouping pipeline
+    setProgress(walletAddress, { stage: 'grouping', message: 'Grouping fills into positions…', fillsFetched: fills.length });
     const groupingService = new GroupingService();
     const groupingSummary = await groupingService.groupAllFills(walletAddress);
     steps.grouping = groupingSummary;
@@ -119,6 +137,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 7. Full analytics compute (fast + slow) — awaited since user is already waiting
+    setProgress(walletAddress, { stage: 'computing', message: 'Computing analytics…', fillsFetched: fills.length });
     try {
       const { runCompute } = await import('@/services/compute-policy');
       const computeResult = await runCompute(walletAddress, 'import', journal.id);
@@ -195,6 +214,8 @@ export async function POST(req: NextRequest) {
           ? 'No new trades to import.'
           : 'Trades imported. Run grouping from the Trades page to create positions.',
     };
+
+    setProgress(walletAddress, { stage: 'done', message: summary.message, fillsFetched: fills.length });
 
     return NextResponse.json({ summary, steps });
   });

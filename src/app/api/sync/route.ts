@@ -51,7 +51,9 @@ export async function POST(req: NextRequest) {
     //    by fillId handles any overlap cleanly.
     const startTime = Math.max(0, lastFillMs - 60_000);
     const apiConfigKey = process.env.PF_API_KEY;
-    const client = new PacificaClient({ walletAddress, apiConfigKey });
+    const networkHeader = req.headers.get('X-Pacifica-Network');
+    const network = networkHeader === 'testnet' ? 'testnet' : 'mainnet';
+    const client = new PacificaClient({ walletAddress, apiConfigKey, network });
 
     let fills;
     try {
@@ -90,9 +92,8 @@ export async function POST(req: NextRequest) {
 
     // 5. Detect network from header and resolve target journal for new positions.
     //    Testnet fills must land in the Testnet journal, not the default journal.
-    const networkHeader = req.headers.get('X-Pacifica-Network');
     let syncJournalId: string | undefined;
-    if (networkHeader === 'testnet') {
+    if (network === 'testnet') {
       let testnetJournal = await prisma.journal.findFirst({
         where: { walletAddress, name: 'Testnet' },
       });

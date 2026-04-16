@@ -830,6 +830,20 @@ export default function DashboardClient() {
     setImportProgress('Fetching trades from Pacifica…');
     setImportDone(false);
     setImportSummary(null);
+
+    // Poll /api/import/status every 2 seconds to surface live progress
+    const pollInterval = setInterval(async () => {
+      try {
+        const statusRes = await authFetch('/api/import/status');
+        if (statusRes.ok) {
+          const status = await statusRes.json();
+          if (status.message && status.stage !== 'idle' && status.stage !== 'done') {
+            setImportProgress(status.message);
+          }
+        }
+      } catch { /* ignore — the import itself will surface errors */ }
+    }, 2000);
+
     try {
       const importBody: Record<string, unknown> = { regimes: true };
       if (journalId) importBody.journalId = journalId;
@@ -864,6 +878,7 @@ export default function DashboardClient() {
       setImportDone(true);
       setImportProgress(null);
     } finally {
+      clearInterval(pollInterval);
       setImporting(false);
     }
   };
