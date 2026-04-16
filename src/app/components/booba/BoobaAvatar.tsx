@@ -12,6 +12,7 @@ export interface BoobaAvatarProps {
   healthScore: number;             // 0-100
   size?: 'small' | 'medium';       // small=60px (default), medium=120px
   insight?: string | null;
+  insightMood?: string | null;
   insightCategory?: string;
   eloTrend?: 'improving' | 'declining' | 'stable';
   wartTrend?: number;
@@ -75,6 +76,7 @@ export default function BoobaAvatar({
   healthScore,
   size = 'small',
   insight,
+  insightMood,
   onHide,
   onShow,
   onChatToggle,
@@ -124,15 +126,19 @@ export default function BoobaAvatar({
     }
   }, [chatOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Show insight bubble when insight prop changes
+  // Show insight bubble when insight prop changes; set mood from message if provided
   const prevInsightRef = useRef<string | null | undefined>(undefined);
   useEffect(() => {
     if (insight && insight !== prevInsightRef.current && !hidden) {
       setBubbleText(insight);
       setBubbleKey((k) => k + 1);
+      if (insightMood && displayMood !== 'pout' && displayMood !== 'excited') {
+        const mood = insightMood as DisplayMood;
+        if (ALL_MOODS.includes(mood)) setDisplayMood(mood);
+      }
     }
     prevInsightRef.current = insight;
-  }, [insight, hidden]);
+  }, [insight, hidden, insightMood]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const clearSpecialTimer = () => {
     if (specialStateTimer.current) {
@@ -239,7 +245,10 @@ export default function BoobaAvatar({
         <SpeechBubble
           key={bubbleKey}
           text={bubbleText}
-          onDismiss={() => setBubbleText(null)}
+          onDismiss={() => {
+            setBubbleText(null);
+            if (displayMood !== 'pout' && displayMood !== 'excited') setDisplayMood(baseMood);
+          }}
           onClick={onInsightClick}
         />
       )}

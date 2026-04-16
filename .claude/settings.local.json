@@ -20,7 +20,8 @@
       "Bash(find /c /d /e -name \"sqlite3.exe\" -maxdepth 5)",
       "Bash(cmd /c \"where sqlite3 2>nul\")",
       "Bash(cmd /c \"dir /s /b C:\\\\sqlite3.exe 2>nul\")",
-      "Bash(cmd *)"
+      "Bash(cmd *)",
+      "Bash(xargs grep *)"
     ]
   }
 }

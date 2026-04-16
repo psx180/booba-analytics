@@ -165,7 +165,7 @@ function AuthedShell({
 function BoobaShellLayer() {
   const pathname = usePathname();
   const router = useRouter();
-  const { healthScore, insight, insightLink, chatOpen, prefillMessage, openChat, closeChat } = useBooba();
+  const { healthScore, insight, insightMood, insightLink, chatOpen, prefillMessage, openChat, closeChat } = useBooba();
 
   // Per-page static fallback messages (shown when no dynamic insight is set)
   const staticInsight = useMemo((): string | null => {
@@ -187,6 +187,8 @@ function BoobaShellLayer() {
       : (insight ?? staticInsight);
 
   const effectiveInsightLink = isDashboard ? insightLink : null;
+  // Only propagate the context mood when we're actually using the context insight (not staticInsight)
+  const effectiveInsightMood = chatOpen ? null : (isDashboard || insight) ? insightMood : null;
 
   return (
     <>
@@ -198,6 +200,7 @@ function BoobaShellLayer() {
       <BoobaAvatar
         healthScore={healthScore}
         insight={effectiveInsight}
+        insightMood={effectiveInsightMood}
         onInsightClick={effectiveInsightLink ? () => router.push(effectiveInsightLink) : undefined}
         onChatToggle={() => (chatOpen ? closeChat() : openChat())}
         chatOpen={chatOpen}

@@ -7,6 +7,7 @@ import { createContext, useContext, useState, useCallback, ReactNode } from 'rea
 interface BoobaState {
   healthScore: number;
   insight: string | null;
+  insightMood: string | null;
   insightLink: string | null;
 }
 
@@ -24,6 +25,7 @@ interface BoobaContextValue extends BoobaState {
 const BoobaContext = createContext<BoobaContextValue>({
   healthScore: 50,
   insight: null,
+  insightMood: null,
   insightLink: null,
   chatOpen: false,
   prefillMessage: undefined,
@@ -38,6 +40,7 @@ export function BoobaProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<BoobaState>({
     healthScore: 50,
     insight: null,
+    insightMood: null,
     insightLink: null,
   });
   const [chatOpen, setChatOpen] = useState(false);

@@ -733,23 +733,26 @@ export default function DashboardClient() {
 
   // ── Booba convergence suggestions ──────────────────────────────────────────
   const boobaSuggestions = useMemo(() => {
-    const suggestions: { text: string; link: string }[] = [];
+    const suggestions: { text: string; link: string; mood: string }[] = [];
     if (convergence?.biggestLeak) {
       suggestions.push({
         text: `Check your ${convergence.biggestLeak.tabLink} tab — ${convergence.biggestLeak.headline.toLowerCase()}`,
         link: `/analytics?tab=${convergence.biggestLeak.tabLink}`,
+        mood: 'alert',
       });
     }
     if (convergence?.weeklyFocus) {
       suggestions.push({
         text: `Focus this week: ${convergence.weeklyFocus.prescription}`,
         link: `/analytics?tab=${convergence.weeklyFocus.tabLink}`,
+        mood: 'calm',
       });
     }
     if (convergence?.biggestStrength) {
       suggestions.push({
         text: `Good news: ${convergence.biggestStrength.headline.toLowerCase()}`,
         link: `/analytics?tab=${convergence.biggestStrength.tabLink}`,
+        mood: 'excited',
       });
     }
     return suggestions;
@@ -785,10 +788,10 @@ export default function DashboardClient() {
     })) + Math.round(liveHealthBoost));
   }, [wartResult, performance, eloResult, drawdownStats, openPositions, liveHealthBoost]);
 
-  const computedInsight = useMemo(() =>
-    currentSuggestion?.text
-    ?? (convergence?.insufficientData ? 'Keep trading! I need more data to learn your patterns.' : null)
-    ?? getContextualMessage('dashboard', {
+  const computedInsight = useMemo(() => {
+    if (currentSuggestion) return { text: currentSuggestion.text, mood: currentSuggestion.mood };
+    if (convergence?.insufficientData) return { text: 'Keep trading! I need more data to learn your patterns.', mood: 'calm' };
+    return getContextualMessage('dashboard', {
       untaggedPositionCount,
       lastComputedAt,
       totalTrades: performance?.tradeCount ?? 0,
@@ -806,14 +809,15 @@ export default function DashboardClient() {
         data: i.data,
       })),
       drawdownAnalysis: drawdownAnalysis ?? undefined,
-    }),
-  [currentSuggestion, convergence, untaggedPositionCount, lastComputedAt, performance,
+    });
+  }, [currentSuggestion, convergence, untaggedPositionCount, lastComputedAt, performance,
     wartResult, eloResult, entropyResult, xpnlSummary, insights, drawdownAnalysis]);
 
   useEffect(() => {
     setBoobaState({
       healthScore: computedHealthScore,
-      insight: computedInsight,
+      insight: computedInsight?.text ?? null,
+      insightMood: computedInsight?.mood ?? null,
       insightLink: currentSuggestion?.link ?? null,
     });
   }, [computedHealthScore, computedInsight, currentSuggestion?.link, setBoobaState]);

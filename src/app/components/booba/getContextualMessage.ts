@@ -58,10 +58,21 @@ export interface BoobaAnalyticsData {
   };
 }
 
+export type BoobaMessageMood = 'calm' | 'alert' | 'nervous' | 'excited';
+
+export interface BoobaMessage {
+  text: string;
+  mood: BoobaMessageMood;
+}
+
+function m(text: string, mood: BoobaMessageMood): BoobaMessage {
+  return { text, mood };
+}
+
 export function getContextualMessage(
   page: 'dashboard' | 'trades' | 'analytics',
   data: BoobaAnalyticsData,
-): string | null {
+): BoobaMessage | null {
   if (page === 'dashboard') {
     const totalTrades = data.totalTrades ?? 0;
     const untagged = data.untaggedPositionCount ?? 0;
@@ -70,16 +81,16 @@ export function getContextualMessage(
     // The untagged nudge is exempt — always useful regardless of trade count.
     if (totalTrades < 15) {
       if (untagged > 0) {
-        return `${untagged} new trade${untagged === 1 ? '' : 's'} have no thesis. Want to add context?`;
+        return m(`${untagged} new trade${untagged === 1 ? '' : 's'} have no thesis. Want to add context?`, 'calm');
       }
       const remaining = 15 - totalTrades;
       return totalTrades === 0
-        ? 'Welcome! Start trading — analytics unlock after 15 trades.'
-        : `Keep trading! Analytics unlock after ${remaining} more trade${remaining === 1 ? '' : 's'}.`;
+        ? m('Welcome! Start trading — analytics unlock after 15 trades.', 'calm')
+        : m(`Keep trading! Analytics unlock after ${remaining} more trade${remaining === 1 ? '' : 's'}.`, 'calm');
     }
 
     // Build two pools: analytics messages and the untagged nudge.
-    const analyticsMsgs: string[] = [];
+    const analyticsMsgs: BoobaMessage[] = [];
 
     // Stale analytics nudge
     if (data.lastComputedAt) {
@@ -90,20 +101,20 @@ export function getContextualMessage(
           ageHours < 2    ? 'an hour ago'
           : ageHours < 24 ? `${Math.floor(ageHours)} hours ago`
           : `${Math.floor(ageHours / 24)} day${Math.floor(ageHours / 24) === 1 ? '' : 's'} ago`;
-        analyticsMsgs.push(`Your analytics are from ${label}. Want me to refresh?`);
+        analyticsMsgs.push(m(`Your analytics are from ${label}. Want me to refresh?`, 'calm'));
       }
     }
 
     // WART declining
     if (data.wartResult && data.wartResult.composite < 0) {
-      analyticsMsgs.push('Your WART score dropped this week. Risk management is your weakest axis.');
+      analyticsMsgs.push(m('Your WART score dropped this week. Risk management is your weakest axis.', 'alert'));
     }
 
     // Tilt episodes
     const tiltEpisodes = data.tiltEpisodeCount ?? 0;
     if (tiltEpisodes > 0) {
       analyticsMsgs.push(
-        `I detected ${tiltEpisodes} tilt episode${tiltEpisodes === 1 ? '' : 's'}. Your behavior changes after losses.`,
+        m(`I detected ${tiltEpisodes} tilt episode${tiltEpisodes === 1 ? '' : 's'}. Your behavior changes after losses.`, 'alert'),
       );
     }
 
@@ -113,12 +124,12 @@ export function getContextualMessage(
       data.eloResult.currentElo >= data.eloResult.peakElo &&
       data.eloResult.recentTrend === 'improving'
     ) {
-      analyticsMsgs.push(`New Elo peak! You're trading at ${data.eloResult.tier} level.`);
+      analyticsMsgs.push(m(`New Elo peak! You're trading at ${data.eloResult.tier} level.`, 'excited'));
     }
 
     // Discipline low
     if (data.entropyResult && data.entropyResult.compositeScore < 30) {
-      analyticsMsgs.push("Your trading entropy is high — you might be scattered across too many setups.");
+      analyticsMsgs.push(m("Your trading entropy is high — you might be scattered across too many setups.", 'nervous'));
     }
 
     // Significant Markov finding
@@ -126,12 +137,12 @@ export function getContextualMessage(
       (i) => i.module.toLowerCase().includes('markov') && i.isSignificant,
     );
     if (markovInsight) {
-      analyticsMsgs.push("After a loss, you lose again 65% of the time. That's above baseline.");
+      analyticsMsgs.push(m("After a loss, you lose again 65% of the time. That's above baseline.", 'alert'));
     }
 
     // Luck score negative
     if (data.xpnlLuckScore !== undefined && data.xpnlLuckScore < -0.3) {
-      analyticsMsgs.push("Your actual P&L is below expected — you might be running unlucky.");
+      analyticsMsgs.push(m("Your actual P&L is below expected — you might be running unlucky.", 'nervous'));
     }
 
     // Drawdown awareness
@@ -141,18 +152,18 @@ export function getContextualMessage(
         const current = Math.round(dd.currentDrawdownDuration);
         const avg = Math.round(dd.avgDrawdownDuration);
         analyticsMsgs.push(
-          `You have been in a drawdown for ${current} day${current === 1 ? '' : 's'} — longer than your average recovery time of ${avg} day${avg === 1 ? '' : 's'}.`,
+          m(`You have been in a drawdown for ${current} day${current === 1 ? '' : 's'} — longer than your average recovery time of ${avg} day${avg === 1 ? '' : 's'}.`, 'alert'),
         );
       } else if (dd.maxDrawdown < 0 && dd.currentDrawdown < dd.maxDrawdown * 0.5) {
         analyticsMsgs.push(
-          'Your current drawdown is approaching your historical maximum. Consider reducing position sizes.',
+          m('Your current drawdown is approaching your historical maximum. Consider reducing position sizes.', 'alert'),
         );
       }
     }
 
     // WART positive — positive reinforcement
     if (data.wartResult && data.wartResult.composite > 1) {
-      analyticsMsgs.push("Looking at your patterns...");
+      analyticsMsgs.push(m("Looking at your patterns...", 'calm'));
     }
 
     // Carry trade awareness
@@ -163,7 +174,7 @@ export function getContextualMessage(
       if (payingFundingSymbols && payingFundingSymbols.length > 0) {
         const sym = payingFundingSymbols[0];
         analyticsMsgs.push(
-          `${sym} funding rate is charging you > 0.03%/hr. Consider closing or hedging your long.`,
+          m(`${sym} funding rate is charging you > 0.03%/hr. Consider closing or hedging your long.`, 'alert'),
         );
       }
 
@@ -175,14 +186,14 @@ export function getContextualMessage(
       ) {
         const apr = (topOpportunity.netApr ?? topOpportunity.fundingAprGross).toFixed(0);
         analyticsMsgs.push(
-          `${topOpportunity.symbol} carry at ${apr}% APR with ${topOpportunity.stabilityScore}-star stability. Deposit spot + short perps.`,
+          m(`${topOpportunity.symbol} carry at ${apr}% APR with ${topOpportunity.stabilityScore}-star stability. Deposit spot + short perps.`, 'excited'),
         );
       }
 
       // Utilization spike warning
       if (utilizationPct != null && utilizationPct > 70) {
         analyticsMsgs.push(
-          `Borrow utilization at ${utilizationPct.toFixed(0)}% — rates may spike. Watch carry positions.`,
+          m(`Borrow utilization at ${utilizationPct.toFixed(0)}% — rates may spike. Watch carry positions.`, 'nervous'),
         );
       }
 
@@ -190,7 +201,7 @@ export function getContextualMessage(
       if (topOpportunity?.userHasMatchingShort) {
         const apr = (topOpportunity.netApr ?? topOpportunity.fundingAprGross).toFixed(0);
         analyticsMsgs.push(
-          `Your ${topOpportunity.symbol} carry trade is running. Earning ~${apr}% APR delta-neutral.`,
+          m(`Your ${topOpportunity.symbol} carry trade is running. Earning ~${apr}% APR delta-neutral.`, 'excited'),
         );
       }
     }
@@ -202,11 +213,11 @@ export function getContextualMessage(
           alert.sentimentScore > 0.3 ? 'bullish' : alert.sentimentScore < -0.3 ? 'bearish' : 'neutral';
         if (alert.trendDirection === 'rising') {
           analyticsMsgs.push(
-            `${alert.asset} social attention up — ${alert.mentionCount} mentions/hr, sentiment ${sentimentLabel}`,
+            m(`${alert.asset} social attention up — ${alert.mentionCount} mentions/hr, sentiment ${sentimentLabel}`, 'alert'),
           );
         } else if (alert.trendDirection === 'falling') {
           analyticsMsgs.push(
-            `${alert.asset} social attention declining — watch for momentum shift`,
+            m(`${alert.asset} social attention declining — watch for momentum shift`, 'nervous'),
           );
         }
       }
@@ -217,12 +228,12 @@ export function getContextualMessage(
       ?.filter((i) => i.isSignificant && i.impactScore != null)
       .sort((a, b) => (b.impactScore ?? 0) - (a.impactScore ?? 0))[0];
     if (topInsight) {
-      analyticsMsgs.push(topInsight.description);
+      analyticsMsgs.push(m(topInsight.description, 'calm'));
     }
 
-    const untaggedMsg =
+    const untaggedMsg: BoobaMessage | null =
       untagged > 0
-        ? `${untagged} new trade${untagged === 1 ? '' : 's'} have no thesis. Want to add context?`
+        ? m(`${untagged} new trade${untagged === 1 ? '' : 's'} have no thesis. Want to add context?`, 'calm')
         : null;
 
     // Selection logic — rotate rather than always showing the same message
@@ -250,7 +261,7 @@ export function getContextualMessage(
       ?.filter((i) => i.isSignificant && i.impactScore != null)
       .sort((a, b) => (b.impactScore ?? 0) - (a.impactScore ?? 0))[0];
 
-    if (topInsight) return topInsight.description;
+    if (topInsight) return m(topInsight.description, 'calm');
     return null;
   }
 

@@ -479,15 +479,16 @@ function InlineInsightCard({
 // ── Insight tier helpers ──────────────────────────────────────────────────────
 
 function tierLabel(insight: Insight): string {
+  const n = insight.sampleSize != null ? ` based on ${insight.sampleSize} trades` : '';
   switch (insight.tier) {
-    case 'significant':  return 'Significant finding';
-    case 'preliminary':  return 'Observed pattern (insufficient evidence for certainty)';
-    case 'descriptive':  return 'Descriptive (factual observation)';
+    case 'significant':  return `Strong evidence${n}`;
+    case 'preliminary':  return 'Observed pattern — needs more data for certainty';
+    case 'descriptive':  return 'Factual observation';
     case 'not_detected': return 'No pattern detected';
     default:
       return insight.isSignificant
-        ? 'Significant finding'
-        : 'Observed pattern (insufficient evidence for certainty)';
+        ? `Strong evidence${n}`
+        : 'Observed pattern — needs more data for certainty';
   }
 }
 
@@ -574,7 +575,6 @@ function FullInsightCard({
             <span className="text-[#6e7681]">Significance:</span>
             <span className={isSignif ? 'text-emerald-400' : 'text-[#6e7681]'}>
               {tierLabel(insight)}
-              {pStr ? ` · ${pStr}` : ''}
             </span>
           </div>
           {insight.sampleSize != null && (
@@ -851,11 +851,12 @@ function PsychologyVerdict({ insights }: { insights: Insight[] }) {
   let postLossPhrase: string | null = null;
   if (markov) {
     const diff = markov.transitionProbabilities.winAfterWin - markov.transitionProbabilities.winAfterLoss;
-    const pct = Math.round(Math.abs(diff) * 100);
+    const winAfterWin = Math.round(markov.transitionProbabilities.winAfterWin * 100);
+    const winAfterLoss = Math.round(markov.transitionProbabilities.winAfterLoss * 100);
     postLossPhrase = diff > 0.02
-      ? `You perform ${pct}% worse after losses.`
+      ? `After a loss, your win rate drops to ${winAfterLoss}% (vs ${winAfterWin}% after a win) — losses hurt your next trade.`
       : diff < -0.02
-        ? `You perform ${pct}% better after losses.`
+        ? `After a loss, your win rate rises to ${winAfterLoss}% (vs ${winAfterWin}% after a win) — you recover well.`
         : 'Your outcomes are independent of prior results.';
   }
 
@@ -1369,11 +1370,17 @@ function PsychologyTab({
     const diff =
       markovData.transitionProbabilities.winAfterWin -
       markovData.transitionProbabilities.winAfterLoss;
-    const pct = Math.round(Math.abs(diff) * 100);
+    const winAfterWinPct = Math.round(markovData.transitionProbabilities.winAfterWin * 100);
+    const winAfterLossPct = Math.round(markovData.transitionProbabilities.winAfterLoss * 100);
+    const markovConfidence = markovInsight?.tier === 'significant'
+      ? ` Strong evidence${markovInsight.sampleSize != null ? ` based on ${markovInsight.sampleSize} trades` : ''}.`
+      : markovInsight?.tier === 'preliminary'
+        ? ' Observed pattern — needs more data for certainty.'
+        : '';
     if (diff > 0.02) {
-      disciplineImplication = `Your performance drops ${pct}% after a loss. Consider pausing after losing trades.`;
+      disciplineImplication = `Your win rate drops from ${winAfterWinPct}% to ${winAfterLossPct}% after a loss — consider pausing after losing trades.${markovConfidence}`;
     } else if (diff < -0.02) {
-      disciplineImplication = `You recover well — win rate improves ${pct}% after losses.`;
+      disciplineImplication = `Your win rate rises to ${winAfterLossPct}% after a loss vs ${winAfterWinPct}% after a win — you recover well.${markovConfidence}`;
     } else {
       disciplineImplication = 'Your outcomes are independent of prior results — no tilt pattern detected.';
     }
@@ -1611,19 +1618,24 @@ function StrategyTab({
       const first = wins[0].expectancy;
       const last = wins[wins.length - 1].expectancy;
       if (first !== 0) {
-        const pct = Math.round(Math.abs((last - first) / Math.abs(first)) * 100);
-        const dir = last > first ? 'higher' : 'lower';
-        changePhrase = ` Recent trades show ${pct}% ${dir} expectancy than early trades.`;
+        const fmt = (v: number) => v >= 0 ? `+$${v.toFixed(2)}` : `-$${Math.abs(v).toFixed(2)}`;
+        const dir = last > first ? 'improved' : 'dropped';
+        changePhrase = ` Early trades averaged ${fmt(first)} per trade; recent trades average ${fmt(last)} — expectancy ${dir}.`;
       }
     }
 
     wfVerdict = `Your performance is ${trendWord}.${changePhrase}`;
+    const wfConfidence = wins && wins.length >= 5
+      ? ' Strong evidence across multiple time windows.'
+      : wins && wins.length >= 3
+        ? ' Observed pattern — needs more windows for certainty.'
+        : '';
     wfImplication =
       trend === 'improving'
-        ? 'Your skills are developing. Study what changed in your recent trades.'
+        ? `Your skills are developing. Study what changed in your recent trades.${wfConfidence}`
         : trend === 'declining'
-          ? 'Your edge may be decaying. Review whether market conditions have shifted.'
-          : 'Consistent performance — your approach is robust across time.';
+          ? `Your edge may be decaying. Review whether market conditions have shifted.${wfConfidence}`
+          : `Consistent performance — your approach is robust across time.${wfConfidence}`;
   }
 
   // ── Section 3: MARKET CONDITIONS ─────────────────────────────────────────
