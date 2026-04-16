@@ -14,14 +14,10 @@ export async function POST(req: NextRequest) {
     // returns immediately. The client polls GET /api/grouping/status for updates.
     (async () => {
       try {
-        setGroupingProgress(walletAddress, {
-          stage: 'running',
-          message: 'Rebuilding positions from fills…',
-          percent: 15,
-        });
-
         const service = new GroupingService();
-        const summary = await service.groupAllFills(walletAddress);
+        const summary = await service.groupAllFills(walletAddress, (percent, message) => {
+          setGroupingProgress(walletAddress, { stage: 'running', message, percent });
+        });
 
         setGroupingProgress(walletAddress, {
           stage: 'running',

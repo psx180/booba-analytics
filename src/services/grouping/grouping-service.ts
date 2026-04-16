@@ -49,11 +49,15 @@ export class GroupingService {
 
   // ─── Run full pipeline ──────────────────────────────────────────────────
 
-  async groupAllFills(walletAddress: string): Promise<GroupingSummary> {
+  async groupAllFills(
+    walletAddress: string,
+    onProgress?: (percent: number, message: string) => void,
+  ): Promise<GroupingSummary> {
     const dbTrades = await prisma.trade.findMany({
       where: { walletAddress },
       orderBy: { entryTime: 'asc' },
     });
+    onProgress?.(15, 'Fills loaded, grouping positions…');
 
     const fills: Fill[] = dbTrades.map((t) => ({
       id: t.id,

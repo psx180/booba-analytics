@@ -13,7 +13,14 @@
       "Bash(grep -v '//\\\\|<\\\\|^\\\\s*//')",
       "Bash(npx tsx *)",
       "Bash(node *)",
-      "Bash(sqlite3 *)"
+      "Bash(sqlite3 *)",
+      "Bash(where sqlite3 *)",
+      "Read(//c/Windows/System32/**)",
+      "Read(//usr/local/bin/**)",
+      "Bash(find /c /d /e -name \"sqlite3.exe\" -maxdepth 5)",
+      "Bash(cmd /c \"where sqlite3 2>nul\")",
+      "Bash(cmd /c \"dir /s /b C:\\\\sqlite3.exe 2>nul\")",
+      "Bash(cmd *)"
     ]
   }
 }
