@@ -44,6 +44,8 @@ import { startGuidedTour } from './components/onboarding/GuidedTour';
 import { BoobaProvider, useBooba } from './components/booba/BoobaContext';
 import BoobaAvatar from './components/booba/BoobaAvatar';
 import BoobaChat from './components/booba/BoobaChat';
+import { GroupingProgressProvider } from './GroupingProgressContext';
+import ProgressToast from './components/ProgressToast';
 
 const CONNECT_PATH = '/connect';
 
@@ -126,24 +128,27 @@ function AuthedShell({
         <LiveProvider>
           <SyncProvider>
             <BoobaProvider>
-              <NavBar />
-              <main className="max-w-[1400px] mx-auto px-4 py-6">{children}</main>
-              <footer className="text-center text-[10px] text-[#484f58] py-4 font-mono">
-                Booba · Built for Pacifica Hackathon · Builder code: BOOBAI
-              </footer>
-              {showIntro && (
-                <IntroOverlay
-                  onStartTour={() => {
-                    setShowIntro(false);
-                    startGuidedTour();
-                  }}
-                  onSkip={() => {
-                    setShowIntro(false);
-                    localStorage.setItem('hasSeenAppIntro', 'true');
-                  }}
-                />
-              )}
-              <BoobaShellLayer />
+              <GroupingProgressProvider>
+                <NavBar />
+                <main className="max-w-[1400px] mx-auto px-4 py-6">{children}</main>
+                <footer className="text-center text-[10px] text-[#484f58] py-4 font-mono">
+                  Booba · Built for Pacifica Hackathon · Builder code: BOOBAI
+                </footer>
+                {showIntro && (
+                  <IntroOverlay
+                    onStartTour={() => {
+                      setShowIntro(false);
+                      startGuidedTour();
+                    }}
+                    onSkip={() => {
+                      setShowIntro(false);
+                      localStorage.setItem('hasSeenAppIntro', 'true');
+                    }}
+                  />
+                )}
+                <BoobaShellLayer />
+                <ProgressToast />
+              </GroupingProgressProvider>
             </BoobaProvider>
           </SyncProvider>
         </LiveProvider>

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from 'rea
 import TradeDetailModal from './TradeDetailModal';
 import TradeAnnotationPopup, { type PopupPosition } from '@/app/components/trade-popup/TradeAnnotationPopup';
 import { useBooba } from '@/app/components/booba/BoobaContext';
+import { useGroupingProgress } from '../GroupingProgressContext';
 import { useJournal } from '../JournalContext';
 import { useLive } from '../LiveContext';
 import { useSync } from '@/contexts/SyncContext';
@@ -1110,16 +1111,11 @@ const GROUPING_THRESHOLD_OPTIONS: { label: string; value: number }[] = [
   { label: '24h', value: 24 },
 ];
 
-function GroupingSettingsPopover({
-  onGroupingReset,
-  resetProgress,
-}: {
-  onGroupingReset: () => void;
-  resetProgress: { msg: string; percent: number; done: boolean } | null;
-}) {
+function GroupingSettingsPopover({ onGroupingReset }: { onGroupingReset: () => void }) {
   const [open, setOpen] = useState(false);
   const [threshold, setThreshold] = useState(4);
   const ref = useRef<HTMLDivElement>(null);
+  const { progress } = useGroupingProgress();
 
   useEffect(() => {
     const stored = localStorage.getItem(GROUPING_THRESHOLD_KEY);
@@ -1142,7 +1138,12 @@ function GroupingSettingsPopover({
     localStorage.setItem(GROUPING_THRESHOLD_KEY, String(v));
   };
 
-  const isResetting = resetProgress !== null && !resetProgress.done;
+  const handleResetClick = () => {
+    setOpen(false); // close popover immediately; toast takes over
+    onGroupingReset();
+  };
+
+  const isResetting = progress !== null && !progress.done;
 
   return (
     <div className="relative shrink-0" ref={ref}>
@@ -1181,30 +1182,13 @@ function GroupingSettingsPopover({
 
           <div className="border-t border-[#30363d] pt-2">
             <button
-              onClick={onGroupingReset}
+              onClick={handleResetClick}
               disabled={isResetting}
               className="w-full text-left px-2 py-1.5 text-xs text-[#e6edf3] hover:bg-[#21262d] rounded transition-colors disabled:opacity-50 flex items-center gap-2"
             >
-              {isResetting ? (
-                <>
-                  <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  <span>Rebuilding… {resetProgress!.percent}%</span>
-                </>
-              ) : (
-                <>
-                  <span>⟳</span>
-                  <span>Reset Grouping</span>
-                </>
-              )}
+              <span>⟳</span>
+              <span>Reset Grouping</span>
             </button>
-            {resetProgress?.done && (
-              <p className={`text-[10px] mt-1 pl-2 ${resetProgress.msg.toLowerCase().includes('fail') || resetProgress.msg.toLowerCase().includes('error') ? 'text-red-400' : 'text-emerald-400'}`}>
-                {resetProgress.msg}
-              </p>
-            )}
           </div>
         </div>
       )}
@@ -1791,6 +1775,7 @@ export default function TradesClient() {
   const authFetch = useAuthFetch();
   const { filter, setFilter } = useTradesFilter();
   const { setBoobaState } = useBooba();
+  const { startJob, setProgress, dismissed } = useGroupingProgress();
   // All trade units fetched from server — filtering/sorting done client-side.
   const [allTradeUnits, setAllTradeUnits] = useState<TradeUnit[]>([]);
   const [sortBy, setSortBy] = useState('firstEntryTime');
@@ -1805,8 +1790,11 @@ export default function TradesClient() {
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [mergeConfirm, setMergeConfirm] = useState(false);
   const [isMerging, setIsMerging] = useState(false);
-  const [resetProgress, setResetProgress] = useState<{ msg: string; percent: number; done: boolean } | null>(null);
   const resetPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Mirror `dismissed` in a ref so the setInterval closure always reads the
+  // latest value without stale-closure issues.
+  const dismissedRef = useRef(dismissed);
+  useEffect(() => { dismissedRef.current = dismissed; }, [dismissed]);
   const [splitPositionId, setSplitPositionId] = useState<string | null>(null);
   const [reclassifyUnit, setReclassifyUnit] = useState<TradeUnit | null>(null);
   const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
@@ -2238,10 +2226,17 @@ export default function TradesClient() {
     authFetch('/api/grouping/run', { method: 'POST' })
       .then((res) => {
         if (!res.ok) throw new Error('Reset failed to start');
-        setResetProgress({ msg: 'Starting…', percent: 5, done: false });
+        startJob({ msg: 'Starting…', percent: 5, done: false });
 
-        // Poll every 2s until the job completes or errors
+        // Poll every 2s until the job completes or errors.
+        // Each tick checks `dismissed` (from context via the ref below) so we
+        // stop updating the toast if the user has closed it.
         const poll = setInterval(async () => {
+          if (dismissedRef.current) {
+            clearInterval(poll);
+            resetPollRef.current = null;
+            return;
+          }
           try {
             const statusRes = await authFetch('/api/grouping/status');
             const status = await statusRes.json();
@@ -2249,16 +2244,16 @@ export default function TradesClient() {
             if (status.stage === 'done') {
               clearInterval(poll);
               resetPollRef.current = null;
-              setResetProgress({ msg: status.message, percent: 100, done: true });
+              setProgress({ msg: status.message, percent: 100, done: true });
               fetchData();
-              setTimeout(() => setResetProgress(null), 4000);
+              setTimeout(() => setProgress(null), 3000);
             } else if (status.stage === 'error') {
               clearInterval(poll);
               resetPollRef.current = null;
-              setResetProgress({ msg: status.message, percent: 0, done: true });
-              setTimeout(() => setResetProgress(null), 6000);
+              setProgress({ msg: status.message, percent: 0, done: true });
+              setTimeout(() => setProgress(null), 6000);
             } else {
-              setResetProgress({
+              setProgress({
                 msg: status.message || 'Rebuilding…',
                 percent: status.percent ?? 15,
                 done: false,
@@ -2271,10 +2266,10 @@ export default function TradesClient() {
         resetPollRef.current = poll;
       })
       .catch(() => {
-        setResetProgress({ msg: 'Reset failed to start.', percent: 0, done: true });
-        setTimeout(() => setResetProgress(null), 6000);
+        startJob({ msg: 'Reset failed to start.', percent: 0, done: true });
+        setTimeout(() => setProgress(null), 6000);
       });
-  }, [authFetch, fetchData]);
+  }, [authFetch, fetchData, startJob, setProgress]);
 
   // Lite projection of journals for the menu components — they only need
   // id/name/isDefault, not the full summary type.
@@ -2464,7 +2459,7 @@ export default function TradesClient() {
             walletAddress={walletAddress}
           />
         </div>
-        <GroupingSettingsPopover onGroupingReset={handleResetGrouping} resetProgress={resetProgress} />
+        <GroupingSettingsPopover onGroupingReset={handleResetGrouping} />
       </div>
 
       {/* ── Floating Toolbar ───────────────────────────────────────── */}
