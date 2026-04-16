@@ -11,47 +11,35 @@
 
     <!-- Header -->
     <header class="popup__header">
-      <div class="popup__avatar">
-        <img id="header-avatar" src="../assets/booba-calm.svg" alt="Booba" />
-      </div>
-      <div class="popup__header-text">
-        <div class="popup__title">Booba</div>
-        <div class="popup__subtitle">Trading Copilot</div>
-      </div>
-    </header>
-
-    <!-- Status -->
-    <section class="popup__section">
-      <div id="status-badge" class="popup__status popup__status--inactive">
+      <div class="popup__title">🐴 BOOBA</div>
+      <div id="status-badge" class="popup__conn popup__conn--disconnected">
         <span class="popup__status-dot"></span>
         <span id="status-text">Checking...</span>
       </div>
-    </section>
+    </header>
 
-    <!-- Quick links -->
+    <!-- Open Dashboard -->
     <section class="popup__section">
-      <div class="popup__section-label">Quick Links</div>
-      <div class="popup__links">
-        <button class="popup__link-btn" data-path="/">
-          <span class="popup__link-icon">📒</span> Journal
-        </button>
-        <button class="popup__link-btn" data-path="/analytics">
-          <span class="popup__link-icon">📊</span> Analytics
-        </button>
-        <button class="popup__link-btn" data-path="/trades">
-          <span class="popup__link-icon">📈</span> Trades
-        </button>
-      </div>
+      <button id="open-dashboard" class="popup__primary-btn">Open Dashboard</button>
     </section>
 
-    <!-- Toggle -->
+    <!-- Toggles -->
     <section class="popup__section">
       <div class="popup__toggle-row">
         <label class="popup__toggle-label" for="show-booba-toggle">
-          Show Booba on Pacifica
+          Show floating Booba on Pacifica
         </label>
         <label class="popup__switch">
           <input type="checkbox" id="show-booba-toggle" checked />
+          <span class="popup__switch-slider"></span>
+        </label>
+      </div>
+      <div class="popup__toggle-row">
+        <label class="popup__toggle-label" for="mute-alerts-toggle">
+          Mute alerts
+        </label>
+        <label class="popup__switch">
+          <input type="checkbox" id="mute-alerts-toggle" />
           <span class="popup__switch-slider"></span>
         </label>
       </div>
@@ -59,7 +47,7 @@
 
     <!-- Footer -->
     <footer class="popup__footer">
-      <button id="open-options" class="popup__footer-link">Settings</button>
+      <button id="open-options" class="popup__footer-link">Advanced Settings</button>
     </footer>
 
   </div>

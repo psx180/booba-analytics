@@ -4,15 +4,18 @@
 
   const DEFAULTS = {
     showBooba: true,
+    muteAlerts: false,
     webAppUrl: 'http://localhost:3000',
   };
 
-  const statusBadge = document.getElementById('status-badge');
-  const statusText  = document.getElementById('status-text');
-  const toggle      = document.getElementById('show-booba-toggle');
-  const openOptions = document.getElementById('open-options');
+  const statusBadge      = document.getElementById('status-badge');
+  const statusText       = document.getElementById('status-text');
+  const showBoobaToggle  = document.getElementById('show-booba-toggle');
+  const muteAlertsToggle = document.getElementById('mute-alerts-toggle');
+  const openDashboard    = document.getElementById('open-dashboard');
+  const openOptions      = document.getElementById('open-options');
 
-  // ── Detect if we're on a Pacifica tab ──────────────────────────────────────
+  // ── Connection status ──────────────────────────────────────────────────────
 
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const tab = tabs[0];
@@ -20,27 +23,27 @@
     const onPacifica = url.includes('pacifica.fi');
 
     if (onPacifica) {
-      statusBadge.classList.remove('popup__status--inactive');
-      statusBadge.classList.add('popup__status--active');
-      statusText.textContent = 'Connected to Pacifica';
+      statusBadge.classList.remove('popup__conn--disconnected');
+      statusBadge.classList.add('popup__conn--connected');
+      statusText.textContent = 'Connected';
     } else {
-      statusText.textContent = 'Not on Pacifica — open app.pacifica.fi';
+      statusText.textContent = 'Not connected';
     }
   });
 
   // ── Load settings ──────────────────────────────────────────────────────────
 
   chrome.storage.local.get(DEFAULTS, (settings) => {
-    toggle.checked = settings.showBooba;
+    showBoobaToggle.checked  = settings.showBooba;
+    muteAlertsToggle.checked = settings.muteAlerts;
   });
 
-  // ── Toggle ─────────────────────────────────────────────────────────────────
+  // ── Show Booba toggle ──────────────────────────────────────────────────────
 
-  toggle.addEventListener('change', () => {
-    const show = toggle.checked;
+  showBoobaToggle.addEventListener('change', () => {
+    const show = showBoobaToggle.checked;
     chrome.storage.local.set({ showBooba: show });
 
-    // Notify content script on active tab
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const tab = tabs[0];
       if (tab && tab.id) {
@@ -49,19 +52,30 @@
     });
   });
 
-  // ── Quick links ────────────────────────────────────────────────────────────
+  // ── Mute alerts toggle ─────────────────────────────────────────────────────
 
-  document.querySelectorAll('.popup__link-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      chrome.storage.local.get({ webAppUrl: 'http://localhost:3000' }, (s) => {
-        const base = (s.webAppUrl || 'http://localhost:3000').replace(/\/$/, '');
-        const path = btn.dataset.path || '/';
-        chrome.tabs.create({ url: base + path });
-      });
+  muteAlertsToggle.addEventListener('change', () => {
+    const mute = muteAlertsToggle.checked;
+    chrome.storage.local.set({ muteAlerts: mute });
+
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const tab = tabs[0];
+      if (tab && tab.id) {
+        chrome.tabs.sendMessage(tab.id, { type: 'BOOBA_MUTE', mute }).catch(() => {});
+      }
     });
   });
 
-  // ── Settings ───────────────────────────────────────────────────────────────
+  // ── Open Dashboard ─────────────────────────────────────────────────────────
+
+  openDashboard.addEventListener('click', () => {
+    chrome.storage.local.get({ webAppUrl: DEFAULTS.webAppUrl }, (s) => {
+      const url = (s.webAppUrl || DEFAULTS.webAppUrl).replace(/\/$/, '');
+      chrome.tabs.create({ url });
+    });
+  });
+
+  // ── Advanced Settings ──────────────────────────────────────────────────────
 
   openOptions.addEventListener('click', () => {
     chrome.runtime.openOptionsPage();
