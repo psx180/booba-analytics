@@ -323,17 +323,17 @@ function pickHeadlineTheme(c: ConvergenceResult | null): ConvergentTheme | null 
 
 function BigStatCard({ label, value, sub }: { label: string; value: React.ReactNode; sub?: React.ReactNode }) {
   return (
-    <div className="bg-[#161b22] border border-[#21262d] rounded-lg px-5 py-4">
-      <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-2">{label}</div>
+    <div className="bg-[#161b22] border border-[#21262d] rounded-lg px-5 py-3">
+      <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-1.5">{label}</div>
       <div className="text-3xl font-semibold leading-none">{value}</div>
-      {sub != null && <div className="mt-2">{sub}</div>}
+      {sub != null && <div className="mt-1.5">{sub}</div>}
     </div>
   );
 }
 
 function StatCard({ label, value, sub, tooltip }: { label: string; value: React.ReactNode; sub?: string; tooltip?: string }) {
   return (
-    <div className="bg-[#161b22] border border-[#21262d] rounded-lg px-4 py-3" title={tooltip}>
+    <div className="bg-[#161b22] border border-[#21262d] rounded-lg px-4 py-2" title={tooltip}>
       <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">{label}</div>
       <div className="text-xl font-semibold">{value}</div>
       {sub && <div className="text-xs text-[#6e7681] mt-0.5">{sub}</div>}
@@ -970,7 +970,7 @@ export default function DashboardClient() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* ── Stats Bar ─────────────────────────────────────────────────────── */}
       <div className="space-y-3">
         {/* Row 1 — two large hero cards */}
@@ -1073,7 +1073,7 @@ export default function DashboardClient() {
             type="button"
             data-tour="dashboard-headline"
             onClick={() => router.push(`/analytics?tab=${theme.tabLink}`)}
-            className={`w-full text-left bg-[#161b22] border ${style.border} rounded-lg px-5 py-4 hover:bg-[#1a2028] transition-colors`}
+            className={`w-full text-left bg-[#161b22] border ${style.border} rounded-lg px-5 py-3 hover:bg-[#1a2028] transition-colors`}
           >
             <div className={`text-lg font-semibold ${style.text} flex items-start gap-2`}>
               <span aria-hidden>{style.icon}</span>

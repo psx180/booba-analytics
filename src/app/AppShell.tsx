@@ -130,7 +130,7 @@ function AuthedShell({
             <BoobaProvider>
               <GroupingProgressProvider>
                 <NavBar />
-                <main className="max-w-[1400px] mx-auto px-4 py-6">{children}</main>
+                <main className="max-w-[1400px] mx-auto px-4 py-4">{children}</main>
                 <footer className="text-center text-[10px] text-[#484f58] py-4 font-mono">
                   Booba · Built for Pacifica Hackathon · Builder code: BOOBAI
                 </footer>
@@ -213,7 +213,7 @@ function ShellSpinner({ label }: { label: string }) {
   return (
     <>
       <div className="border-b border-[#21262d] bg-[#161b22] h-12" />
-      <main className="max-w-[1400px] mx-auto px-4 py-6">
+      <main className="max-w-[1400px] mx-auto px-4 py-4">
         <div className="flex items-center justify-center text-[#6e7681] text-sm h-64">
           {label}
         </div>

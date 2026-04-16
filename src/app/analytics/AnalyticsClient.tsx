@@ -931,13 +931,13 @@ function NarrativeCard({
     <button
       type="button"
       onClick={() => onSwitchTab(theme.tabLink as TabId)}
-      className={`${s.bg} ${s.border} border rounded-lg px-4 py-3 text-left hover:brightness-125 transition-colors w-full h-full`}
+      className={`${s.bg} ${s.border} border rounded-lg px-4 py-2 text-left hover:brightness-125 transition-colors w-full h-full`}
     >
       <div className={`flex items-center gap-2 text-[11px] uppercase tracking-widest ${s.titleText} mb-2`}>
         <span aria-hidden>{s.icon}</span>
         <span>{s.title}</span>
       </div>
-      <div className="text-base font-semibold text-white mb-1.5">{theme.headline}</div>
+      <div className="text-sm font-semibold text-white mb-1">{theme.headline}</div>
       <div className="text-sm text-[#c9d1d9] leading-relaxed">{body}</div>
       <div className="mt-2 text-xs text-[#8b949e]">→ {tabLabelFor(theme.tabLink as TabId)}</div>
     </button>
@@ -1016,7 +1016,7 @@ interface NarrativeSectionProps {
 function NarrativeSection({ question, verdict, evidence, implication, details }: NarrativeSectionProps) {
   const [expanded, setExpanded] = useState(false);
   return (
-    <div className="mb-6">
+    <div className="mb-4">
       <h3 className="text-sm text-[#8b949e] uppercase mb-1">{question}</h3>
       <p className="text-[#e6edf3] text-lg mb-3">{verdict}</p>
       <div className="mb-3">{evidence}</div>
@@ -1105,7 +1105,7 @@ function OverviewTab({
         <div className="flex flex-col items-center">
           {wartResult ? (
             <>
-              <div style={{ width: 200, height: 180 }}>
+              <div style={{ width: 170, height: 153 }}>
                 <WartRadar wart={wartResult} compact />
               </div>
               <div className={`text-xl font-bold mt-1 ${wartColor(wartResult.composite)}`}>
@@ -1114,7 +1114,7 @@ function OverviewTab({
               <div className="text-[10px] uppercase tracking-widest text-[#6e7681]">{wartResult.tier}</div>
             </>
           ) : (
-            <div className="w-[200px] h-[180px] flex items-center justify-center">
+            <div className="w-[170px] h-[153px] flex items-center justify-center">
               <p className="text-xs text-[#4a5568] italic text-center px-2">
                 Need 50+ trades for WART
               </p>
@@ -1133,7 +1133,7 @@ function OverviewTab({
                   {Math.round(eloResult.currentElo)}
                   <span className="text-sm ml-1.5 text-[#6e7681]">{trendArrow(eloResult.recentTrend)}</span>
                 </div>
-                <div className="text-xs text-[#6e7681] mt-0.5">{eloResult.tier}</div>
+                <div className="text-xs text-[#6e7681]">{eloResult.tier}</div>
               </div>
               <div className="border-l border-[#21262d] pl-6">
                 <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">Peak</div>
@@ -1740,7 +1740,7 @@ function StrategyTab({
           <span className="text-xs text-[#6e7681]">{advancedExpanded ? '▲' : '▼'}</span>
         </button>
         {advancedExpanded && (
-          <div className="border-t border-[#21262d] px-4 py-5 space-y-6">
+          <div className="border-t border-[#21262d] px-4 py-5 space-y-4">
             <PatternsSection />
             <div>
               <button
@@ -2186,7 +2186,7 @@ function InsightsTab({
           <p className="text-sm text-[#6e7681]">No insights match the current filters.</p>
         </div>
       ) : (
-        <div className="space-y-6">
+        <div className="space-y-4">
           <InsightGroup
             title="Actionable Findings"
             insights={actionable}

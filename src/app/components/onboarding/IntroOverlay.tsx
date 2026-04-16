@@ -37,7 +37,7 @@ export default function IntroOverlay({ onStartTour, onSkip }: IntroOverlayProps)
         {/* Avatar */}
         <div style={{ width: '150px', height: '150px' }}>
           <img
-            src="/booba/calm.png"
+            src="/booba/IntroBooba.png"
             alt="Booba"
             width={150}
             height={150}

@@ -77,7 +77,7 @@ export default function NavBar() {
           test mode. Keeps the same max-width as the nav content. */}
       {isTestnet && (
         <div className="bg-orange-900/30 border-b border-orange-700/50 text-orange-300 text-[10px] uppercase tracking-widest text-center py-0.5">
-          Testnet — data is not real
+          Testnet data
         </div>
       )}
     </>
