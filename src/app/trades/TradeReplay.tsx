@@ -14,9 +14,10 @@
  * move during playback (autoscaling changes pixel position, not price).
  * Exit is the only dynamic line: it appears labeled once the playhead
  * reaches the exit candle, and disappears if the user rewinds past it.
- * Entry and exit also get series markers (BUY/SELL arrows) on their
- * respective candles, added up front and surfaced automatically by the
- * markers plugin when the bar they're anchored to becomes visible.
+ * BUY/SELL markers are added progressively — after each tick the visible
+ * set is recomputed and only fills whose candle bar has been revealed are
+ * shown. For scaled positions with multiple entries/exits, one arrow per
+ * fill appears at its actual fill timestamp as playback passes it.
  *
  * Running P&L below the chart recomputes each candle advance, using the
  * current candle's close as the mark price and the position's entry price
@@ -46,6 +47,11 @@ type LightweightChartsModule = typeof import('lightweight-charts');
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
+interface FillMarker {
+  time: string;   // ISO timestamp of the fill
+  price: number;  // fill price (used for future reference; markers anchor to candle bar)
+}
+
 interface ReplayPosition {
   id: string;
   asset: string;
@@ -60,6 +66,9 @@ interface ReplayPosition {
   maePrice?: number | null;
   exitEfficiency: number | null;
   holdTimeSeconds: number | null;
+  // Per-fill timestamps for scaled positions (optional; falls back to firstEntryTime/lastExitTime)
+  entryFills?: FillMarker[];
+  exitFills?: FillMarker[];
 }
 
 interface RawCandle {
@@ -365,49 +374,10 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
 
     // ── Entry / exit markers ──────────────────────────────────────────────
     //
-    // Find the boundary-aligned entry / exit candles and attach arrows. The
-    // plugin silently skips markers whose `time` isn't yet in the series
-    // data, so both are set up front and appear as playback reveals them.
+    // Create the plugin with an empty set — markers are added progressively
+    // in the data-update effect below as playback reveals each fill's candle.
 
-    const findCandleAt = (targetMs: number): RawCandle | null => {
-      let candidate: RawCandle | null = null;
-      for (const c of rawCandles) {
-        if (new Date(c.timestamp).getTime() <= targetMs) candidate = c;
-        else break;
-      }
-      return candidate;
-    };
-
-    const markers: SeriesMarker<Time>[] = [];
-    if (entryTime != null) {
-      const entryCandle = findCandleAt(entryTime);
-      if (entryCandle) {
-        const isLong = position.direction === 'long';
-        markers.push({
-          time: Math.floor(new Date(entryCandle.timestamp).getTime() / 1000) as UTCTimestamp,
-          position: isLong ? 'belowBar' : 'aboveBar',
-          shape:    isLong ? 'arrowUp'  : 'arrowDown',
-          color:    isLong ? UP_COLOR   : DOWN_COLOR,
-          text:     isLong ? 'BUY'      : 'SELL',
-        });
-      }
-    }
-    if (exitTime != null) {
-      const exitCandle = findCandleAt(exitTime);
-      if (exitCandle) {
-        const isLong = position.direction === 'long';
-        markers.push({
-          time: Math.floor(new Date(exitCandle.timestamp).getTime() / 1000) as UTCTimestamp,
-          position: isLong ? 'aboveBar' : 'belowBar',
-          shape:    isLong ? 'arrowDown' : 'arrowUp',
-          color:    isLong ? DOWN_COLOR  : UP_COLOR,
-          text:     isLong ? 'SELL'      : 'BUY',
-        });
-      }
-    }
-    if (markers.length > 0) {
-      markersPluginRef.current = createSeriesMarkers(series, markers);
-    }
+    markersPluginRef.current = createSeriesMarkers(series, []);
 
     return () => {
       markersPluginRef.current?.detach();
@@ -417,7 +387,7 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
       chartRef.current = null;
       chart.remove();
     };
-  }, [lcReady, hasCandles, timeframe, entryTime, exitTime, position.averageEntryPrice, position.mfePrice, position.maePrice, position.direction, rawCandles]);
+  }, [lcReady, hasCandles, timeframe, entryTime, position.averageEntryPrice, position.mfePrice, position.maePrice, position.direction]);
 
   // ── Candlestick data + per-bar dimming for context ───────────────────────
 
@@ -444,17 +414,94 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
     });
   }, [rawCandles, contextCount, currentIndex]);
 
-  // Push data to the series whenever the slice changes, and refit the time
-  // scale so the visible area hugs the revealed candles. Without fitContent
-  // the chart either leaves blank space on the right (early playback) or
-  // cuts new bars off the edge (late playback).
+  // Push data to the series whenever the slice changes.
+  //
+  // Bug 1 fix: use setVisibleLogicalRange instead of fitContent so the chart
+  // holds a fixed ~35-candle viewport that scrolls as playback advances — the
+  // oldest candle falls off the left, the newest enters from the right.
+  //
+  // Bug 2 & 3 fix: recompute markers after each tick, only including those
+  // whose candle bar has already been revealed (fillTs ≤ latest displayed ts).
+  // This ensures BUY/SELL arrows appear at their actual fill timestamps and
+  // are added progressively rather than all at once (which caused the SELL
+  // marker to be shown on the wrong candle before the exit was reached).
   useEffect(() => {
     const series = seriesRef.current;
     const chart = chartRef.current;
-    if (!series || !chart) return;
+    if (!series || !chart || displayedCandles.length === 0) return;
+
     series.setData(displayedCandles);
-    chart.timeScale().fitContent();
-  }, [displayedCandles]);
+
+    // Fixed scrolling viewport (Bug 1)
+    const VIEWPORT = 35;
+    const HEADROOM = 5;
+    const to   = displayedCandles.length - 1 + HEADROOM;
+    const from = Math.max(0, to - VIEWPORT);
+    chart.timeScale().setVisibleLogicalRange({ from, to });
+
+    // Progressive markers (Bugs 2 & 3)
+    const plugin = markersPluginRef.current;
+    if (!plugin) return;
+
+    const latestTs = displayedCandles[displayedCandles.length - 1].time as number; // UTCTimestamp (seconds)
+    const isLong = position.direction === 'long';
+
+    // Map a fill's epoch-ms to the UTCTimestamp of its containing candle bar.
+    const findCandleTs = (targetMs: number): UTCTimestamp | null => {
+      let result: UTCTimestamp | null = null;
+      for (const c of rawCandles) {
+        if (new Date(c.timestamp).getTime() <= targetMs) {
+          result = Math.floor(new Date(c.timestamp).getTime() / 1000) as UTCTimestamp;
+        } else break;
+      }
+      return result;
+    };
+
+    // Use per-fill arrays if provided; fall back to single averaged entry/exit.
+    const eFills: FillMarker[] =
+      position.entryFills && position.entryFills.length > 0
+        ? position.entryFills
+        : entryTime != null && position.averageEntryPrice != null && position.firstEntryTime
+          ? [{ time: position.firstEntryTime, price: position.averageEntryPrice }]
+          : [];
+
+    const xFills: FillMarker[] =
+      position.exitFills && position.exitFills.length > 0
+        ? position.exitFills
+        : exitTime != null && position.averageExitPrice != null && position.lastExitTime
+          ? [{ time: position.lastExitTime, price: position.averageExitPrice }]
+          : [];
+
+    const markers: SeriesMarker<Time>[] = [];
+
+    for (const fill of eFills) {
+      const ts = findCandleTs(new Date(fill.time).getTime());
+      if (ts == null || ts > latestTs) continue;
+      markers.push({
+        time: ts,
+        position: isLong ? 'belowBar' : 'aboveBar',
+        shape:    isLong ? 'arrowUp'  : 'arrowDown',
+        color:    isLong ? UP_COLOR   : DOWN_COLOR,
+        text:     isLong ? 'BUY'      : 'SELL',
+      });
+    }
+
+    for (const fill of xFills) {
+      const ts = findCandleTs(new Date(fill.time).getTime());
+      if (ts == null || ts > latestTs) continue;
+      markers.push({
+        time: ts,
+        position: isLong ? 'aboveBar' : 'belowBar',
+        shape:    isLong ? 'arrowDown' : 'arrowUp',
+        color:    isLong ? DOWN_COLOR  : UP_COLOR,
+        text:     isLong ? 'SELL'      : 'BUY',
+      });
+    }
+
+    // lightweight-charts requires markers sorted by time
+    markers.sort((a, b) => (a.time as number) - (b.time as number));
+    plugin.setMarkers(markers);
+  }, [displayedCandles, rawCandles, position, entryTime, exitTime]);
 
   // ── Dynamic exit price line ──────────────────────────────────────────────
   //

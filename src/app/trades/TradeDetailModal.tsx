@@ -678,6 +678,14 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
                     maePrice: position.maePrice,
                     exitEfficiency: position.exitEfficiency,
                     holdTimeSeconds: position.holdTimeSeconds,
+                    // Per-order fill markers for scaled positions
+                    entryFills: orders
+                      .filter((o) => o.isEntry && o.firstEntryTime != null && o.averageEntryPrice != null)
+                      .map((o) => ({ time: o.firstEntryTime!, price: o.averageEntryPrice! })),
+                    exitFills: orders
+                      .filter((o) => !o.isEntry && o.lastExitTime != null)
+                      .map((o) => ({ time: o.lastExitTime!, price: (o.averageExitPrice ?? o.averageEntryPrice)! }))
+                      .filter((f) => f.price != null),
                   }}
                 />
               </div>
