@@ -128,6 +128,9 @@ function AuthedShell({
             <BoobaProvider>
               <NavBar />
               <main className="max-w-[1400px] mx-auto px-4 py-6">{children}</main>
+              <footer className="text-center text-[10px] text-[#484f58] py-4 font-mono">
+                Booba · Built for Pacifica Hackathon · Builder code: BOOBAI
+              </footer>
               {showIntro && (
                 <IntroOverlay
                   onStartTour={() => {

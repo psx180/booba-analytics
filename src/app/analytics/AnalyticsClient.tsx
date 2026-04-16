@@ -467,9 +467,9 @@ function InlineInsightCard({
       {tab && onDigDeeper && (
         <button
           onClick={() => onDigDeeper(tab)}
-          className="shrink-0 text-xs text-blue-400 hover:text-blue-300 transition-colors whitespace-nowrap"
+          className="shrink-0 text-xs text-[#6e7681] hover:text-[#8b949e] transition-colors whitespace-nowrap"
         >
-          → {tabLabelFor(tab)}
+          See all {CATEGORY_LABEL[insight.category] ?? insight.category} analysis →
         </button>
       )}
     </div>
@@ -557,9 +557,9 @@ function FullInsightCard({
         {tab && (
           <button
             onClick={() => onDigDeeper(tab)}
-            className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+            className="text-xs text-[#6e7681] hover:text-[#8b949e] transition-colors"
           >
-            → {tabLabelFor(tab)} tab
+            See all {CATEGORY_LABEL[insight.category] ?? insight.category} analysis →
           </button>
         )}
       </div>

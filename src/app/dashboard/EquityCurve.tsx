@@ -106,7 +106,14 @@ export default function EquityCurve({
   // matching is safe — same trade lives at the same position in both arrays.
   const merged = useMemo(() => {
     if (!showXpnl || !xpnlSeries || xpnlSeries.length === 0) {
-      return equityCurve.map((p) => ({ ...p, xpnlCumPnl: null as number | null, gapPositive: null as number | null, gapNegative: null as number | null }));
+      return equityCurve.map((p, i) => ({
+        ...p,
+        xpnlCumPnl: null as number | null,
+        gapPositive: null as number | null,
+        gapNegative: null as number | null,
+        tradeCount: i + 1,
+        regimeAtEntry: tradeMetas[i]?.regimeAtEntry ?? null,
+      }));
     }
     return equityCurve.map((p, i) => {
       const x = xpnlSeries[i];
@@ -121,9 +128,11 @@ export default function EquityCurve({
         gapPositive: xCum != null && gap >= 0 ? gap : 0,
         gapNegative: xCum != null && gap <  0 ? gap : 0,
         bandBase: xCum,
+        tradeCount: i + 1,
+        regimeAtEntry: tradeMetas[i]?.regimeAtEntry ?? null,
       };
     });
-  }, [equityCurve, xpnlSeries, showXpnl]);
+  }, [equityCurve, xpnlSeries, showXpnl, tradeMetas]);
 
   const isPositive =
     equityCurve.length > 0 && equityCurve[equityCurve.length - 1].cumulativePnl >= 0;
@@ -141,14 +150,22 @@ export default function EquityCurve({
 
   const CustomTooltip = ({ active, payload }: any) => {
     if (!active || !payload?.length) return null;
-    const point = payload[0].payload as EquityPoint & { xpnlCumPnl?: number | null };
+    const point = payload[0].payload as EquityPoint & {
+      xpnlCumPnl?: number | null;
+      tradeCount?: number;
+      regimeAtEntry?: string | null;
+    };
     const pnl = point.cumulativePnl;
     const xpnl = point.xpnlCumPnl;
+    const regime = point.regimeAtEntry;
     return (
-      <div className="bg-[#1c2128] border border-[#30363d] rounded px-3 py-2 text-xs">
-        <div className="text-[#8b949e] mb-1">{formatDate(point.date)}</div>
+      <div className="bg-[#1c2128] border border-[#30363d] rounded px-3 py-2 text-xs space-y-0.5">
+        <div className="text-[#8b949e]">{formatDate(point.date)}</div>
+        {point.tradeCount != null && (
+          <div className="text-[#6e7681]">Trade #{point.tradeCount}</div>
+        )}
         <div className={pnl >= 0 ? 'text-green-400' : 'text-red-400'}>
-          Actual {formatPnl(pnl)}
+          Cum P&amp;L {formatPnl(pnl)}
         </div>
         {xpnl != null && (
           <div className="text-slate-400">
@@ -157,6 +174,9 @@ export default function EquityCurve({
               ({pnl - xpnl >= 0 ? '+' : ''}{(pnl - xpnl).toFixed(2)})
             </span>
           </div>
+        )}
+        {regime && regime !== 'unknown' && (
+          <div className="text-[#6e7681]">{REGIME_LABELS[regime] ?? regime}</div>
         )}
       </div>
     );
