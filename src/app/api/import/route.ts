@@ -53,8 +53,10 @@ export async function POST(req: NextRequest) {
     const importStartedAt = new Date();
 
     // 2. Fetch trade history from Pacifica
-    const apiConfigKey = process.env.PF_API_KEY;
     const network = req.headers.get('X-Pacifica-Network') === 'testnet' ? 'testnet' : 'mainnet';
+    const apiConfigKey = network === 'testnet'
+      ? (process.env.PACIFICA_TESTNET_API_KEY ?? process.env.PF_API_KEY)
+      : process.env.PF_API_KEY;
     const client = new PacificaClient({ walletAddress, apiConfigKey, network });
 
     setProgress(walletAddress, { stage: 'fetching', message: 'Fetching trades from Pacifica…', fillsFetched: 0 });

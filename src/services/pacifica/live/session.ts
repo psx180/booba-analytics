@@ -120,9 +120,13 @@ class LiveSession extends EventEmitter {
 
   private async fetchInitialPositions(): Promise<void> {
     try {
+      const isTestnet = (process.env.NEXT_PUBLIC_PACIFICA_WS_URL ?? '').includes('testnet');
+      const apiConfigKey = isTestnet
+        ? (process.env.PACIFICA_TESTNET_API_KEY ?? process.env.PF_API_KEY)
+        : process.env.PF_API_KEY;
       const client = new PacificaClient({
         walletAddress: this.walletAddress,
-        apiConfigKey: process.env.PF_API_KEY,
+        apiConfigKey,
       });
       const positions = await client.account.getPositions(this.walletAddress);
       for (const p of positions) {

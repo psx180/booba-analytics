@@ -98,3 +98,5 @@ body {
 .booba-tour-popover .driver-popover-progress-text {
   color: #6e7681 !important;
 }
+
+html { zoom: 0.9; }

@@ -82,6 +82,8 @@ export interface PacificaLiveState {
    * a silent data refresh when the polling fallback finds missed fills.
    */
   lastSyncImport: number;
+  /** Non-null when the last background sync poll returned an error. */
+  syncPollError: string | null;
 }
 
 export function usePacificaLive(): PacificaLiveState {
@@ -92,6 +94,8 @@ export function usePacificaLive(): PacificaLiveState {
   const [connected, setConnected] = useState(false);
   const [streamOpen, setStreamOpen] = useState(false);
   const [lastSyncImport, setLastSyncImport] = useState(0);
+  const [syncPollError, setSyncPollError] = useState<string | null>(null);
+  const lastPollErrorLogRef = useRef<number>(0);
 
   const devBypass = isDevBypass();
   const getTokenRef = useRef<(() => Promise<string | null>) | null>(null);
@@ -213,11 +217,27 @@ export function usePacificaLive(): PacificaLiveState {
           const token = await getTokenRef.current();
           if (token) headers.Authorization = `Bearer ${token}`;
         }
+        const network =
+          typeof window !== 'undefined'
+            ? (localStorage.getItem('pacifica-network') ?? 'mainnet')
+            : 'mainnet';
+        headers['X-Pacifica-Network'] = network;
         const res = await fetch('/api/sync', { method: 'POST', headers });
         if (!res.ok) return;
-        const data = (await res.json()) as { imported?: number };
-        if ((data.imported ?? 0) > 0) {
-          setLastSyncImport((n) => n + 1);
+        const data = (await res.json()) as { imported?: number; error?: string; message?: string };
+        if (data.error) {
+          const msg = data.message ?? data.error ?? 'Sync poll error';
+          setSyncPollError(msg);
+          const now = Date.now();
+          if (now - lastPollErrorLogRef.current > 60_000) {
+            console.warn('[sync-poll]', msg);
+            lastPollErrorLogRef.current = now;
+          }
+        } else {
+          setSyncPollError(null);
+          if ((data.imported ?? 0) > 0) {
+            setLastSyncImport((n) => n + 1);
+          }
         }
       } catch {
         // silent — retry next interval
@@ -236,5 +256,6 @@ export function usePacificaLive(): PacificaLiveState {
     connected,
     streamOpen,
     lastSyncImport,
+    syncPollError,
   };
 }

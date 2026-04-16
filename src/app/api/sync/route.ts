@@ -20,6 +20,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withAuth } from '@/lib/api-auth';
 import { PacificaClient } from '@/services/pacifica';
+import { PacificaAuthError } from '@/services/pacifica/errors';
 import { ingestTrades } from '@/services/ingestion';
 import { fillId } from '@/services/ingestion/mapper';
 import { GroupingService } from '@/services/grouping';
@@ -50,9 +51,11 @@ export async function POST(req: NextRequest) {
     //    order or at the same millisecond as the last known fill. Dedup
     //    by fillId handles any overlap cleanly.
     const startTime = Math.max(0, lastFillMs - 60_000);
-    const apiConfigKey = process.env.PF_API_KEY;
     const networkHeader = req.headers.get('X-Pacifica-Network');
     const network = networkHeader === 'testnet' ? 'testnet' : 'mainnet';
+    const apiConfigKey = network === 'testnet'
+      ? (process.env.PACIFICA_TESTNET_API_KEY ?? process.env.PF_API_KEY)
+      : process.env.PF_API_KEY;
     const client = new PacificaClient({ walletAddress, apiConfigKey, network });
 
     let fills;
@@ -62,6 +65,9 @@ export async function POST(req: NextRequest) {
         startTime,
       });
     } catch (err) {
+      if (err instanceof PacificaAuthError) {
+        return NextResponse.json({ error: 'auth', message: 'API key not accepted for this network' });
+      }
       console.error('[sync] Pacifica fetch failed', err);
       return NextResponse.json({ found: 0, imported: 0, alreadyExists: 0 });
     }
