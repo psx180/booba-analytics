@@ -40,7 +40,10 @@ import { isDevBypass, DEV_WALLET } from './privy-env';
 import { AccountProvider } from '@/contexts/AccountContext';
 import { SyncProvider } from '@/contexts/SyncContext';
 import IntroOverlay from './components/onboarding/IntroOverlay';
+import IntroOverlayClassic from './components/onboarding/IntroOverlayClassic';
 import { startGuidedTour } from './components/onboarding/GuidedTour';
+
+const USE_CINEMATIC_INTRO = true; // flip to false to revert to classic modal
 import { BoobaProvider, useBooba } from './components/booba/BoobaContext';
 import BoobaAvatar from './components/booba/BoobaAvatar';
 import BoobaChat from './components/booba/BoobaChat';
@@ -134,7 +137,7 @@ function AuthedShell({
                 <footer className="text-center text-[10px] text-[#484f58] py-4 font-mono">
                   Booba · Built for Pacifica Hackathon · Builder code: BOOBAI
                 </footer>
-                {showIntro && (
+                {showIntro && (USE_CINEMATIC_INTRO ? (
                   <IntroOverlay
                     onStartTour={() => {
                       setShowIntro(false);
@@ -145,7 +148,18 @@ function AuthedShell({
                       localStorage.setItem('hasSeenAppIntro', 'true');
                     }}
                   />
-                )}
+                ) : (
+                  <IntroOverlayClassic
+                    onStartTour={() => {
+                      setShowIntro(false);
+                      startGuidedTour();
+                    }}
+                    onSkip={() => {
+                      setShowIntro(false);
+                      localStorage.setItem('hasSeenAppIntro', 'true');
+                    }}
+                  />
+                ))}
                 <BoobaShellLayer />
                 <ProgressToast />
               </GroupingProgressProvider>
