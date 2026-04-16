@@ -62,7 +62,7 @@ function timeOfDayBucket(hour: number | null | undefined): string | null {
 const DIMENSIONS: DimensionDef[] = [
   { name: 'regime',           accessor: (p) => p.regimeAtEntry },
   { name: 'asset',            accessor: (p) => p.asset },
-  { name: 'tradeType',        accessor: (p) => p.tradeType },
+  { name: 'tradeType',        accessor: (p) => p.manualTradeType ?? p.tradeType },
   { name: 'entrySession',     accessor: (p) => p.entrySession },
   { name: 'holdTimeCategory', accessor: (p) => p.holdTimeCategory },
   { name: 'direction',        accessor: (p) => p.direction },

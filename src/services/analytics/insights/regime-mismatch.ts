@@ -21,9 +21,9 @@ export const regimeMismatchDetector: InsightDetector = {
   dimensions: ['aggregatePnl', 'tradeType', 'regimeAtEntry'],
 
   detect(positions: Position[]): Insight[] {
-    const qualified = positions.filter(
-      (p) => p.tradeType != null && p.regimeAtEntry != null && p.aggregatePnl != null,
-    );
+    const qualified = positions
+      .map((p) => ({ ...p, tradeType: p.manualTradeType ?? p.tradeType }))
+      .filter((p) => p.tradeType != null && p.regimeAtEntry != null && p.aggregatePnl != null);
 
     if (qualified.length < MIN_POSITIONS) {
       const needed = MIN_POSITIONS - qualified.length;

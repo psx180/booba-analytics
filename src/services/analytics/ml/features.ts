@@ -149,7 +149,7 @@ export function extractFeatures(positions: Position[]): TradeFeatureVector[] {
       entryHour,
       entryDayOfWeek: entryDow,
       regimeEncoded: encodeRegime(p.regimeAtEntry),
-      tradeTypeEncoded: encodeTradeType(p.tradeType),
+      tradeTypeEncoded: encodeTradeType(p.manualTradeType ?? p.tradeType),
       tiltScore: p.tiltScore ?? 0,
       isWinner: pnl > 0,
       tradesSinceLastLoss,

@@ -494,7 +494,13 @@ export class AnalyticsService {
     if (filters?.regime) where.regimeAtEntry = filters.regime;
     if (filters?.asset) where.asset = filters.asset;
     if (filters?.strategy) where.strategyId = filters.strategy;
-    if (filters?.tradeType) where.tradeType = filters.tradeType;
+    if (filters?.tradeType) {
+      // Match positions where the effective type (manualTradeType ?? tradeType) equals the filter
+      where.OR = [
+        { manualTradeType: filters.tradeType },
+        { manualTradeType: null, tradeType: filters.tradeType },
+      ];
+    }
 
     if (filters?.dateFrom || filters?.dateTo) {
       where.firstEntryTime = {

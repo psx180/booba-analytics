@@ -39,7 +39,7 @@ export const holdTimeOptimizerDetector: InsightDetector = {
     // Group by tradeType (or a single 'all' group)
     const byType = new Map<string, Position[]>();
     for (const p of qualified) {
-      const tt = p.tradeType ?? 'all';
+      const tt = (p.manualTradeType ?? p.tradeType) ?? 'all';
       if (!byType.has(tt)) byType.set(tt, []);
       byType.get(tt)!.push(p);
     }

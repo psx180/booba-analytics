@@ -107,6 +107,7 @@ model Position {
   confidence          Float?
   groupingConfirmed   Boolean         @default(false) // true when user has manually merged, split, or reclassified
   tradeType           String?         // scalp | directional | scaled_directional | carry_trade | market_making
+  manualTradeType     String?         // user override; COALESCE with tradeType for effective type
   regimeAtEntry       String?
   sentimentAtEntry    String?
   sentimentScore      Float?

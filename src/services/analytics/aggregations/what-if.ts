@@ -51,7 +51,7 @@ function applyFilter(positions: Position[], filter: Filters): Position[] {
     if (filter.regime && (p.regimeAtEntry ?? 'unknown') !== filter.regime) return false;
     if (filter.asset && p.asset !== filter.asset) return false;
     if (filter.strategy && p.strategyId !== filter.strategy) return false;
-    if (filter.tradeType && p.tradeType !== filter.tradeType) return false;
+    if (filter.tradeType && (p.manualTradeType ?? p.tradeType) !== filter.tradeType) return false;
     if (filter.dateFrom && p.firstEntryTime && p.firstEntryTime < filter.dateFrom) return false;
     if (filter.dateTo && p.firstEntryTime && p.firstEntryTime > filter.dateTo) return false;
     return true;

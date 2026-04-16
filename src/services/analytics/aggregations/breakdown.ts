@@ -63,7 +63,7 @@ function getDimensionValue(p: Position, dim: BreakdownDimension): string {
     case 'asset':           return p.asset;
     case 'strategy':        return p.strategyId ?? 'none';
     case 'source':          return readSource(p);
-    case 'tradeType':       return p.tradeType ?? 'unknown';
+    case 'tradeType':       return (p.manualTradeType ?? p.tradeType) ?? 'unknown';
     case 'entryHour':       return p.entryHour != null ? String(p.entryHour) : 'unknown';
     case 'entryDayOfWeek':  return p.entryDayOfWeek != null ? String(p.entryDayOfWeek) : 'unknown';
     case 'entrySession':    return p.entrySession ?? 'unknown';

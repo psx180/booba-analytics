@@ -93,6 +93,7 @@ export async function GET(req: NextRequest) {
     asset: string;
     direction: string;
     tradeType: string | null;
+    manualTradeType?: string | null;
     status: string;
     pnl: number | null;
     fees: number | null;
@@ -134,7 +135,8 @@ export async function GET(req: NextRequest) {
       kind: 'position',
       asset: p.asset,
       direction: p.direction,
-      tradeType: p.tradeType,
+      tradeType: p.manualTradeType ?? p.tradeType,
+      manualTradeType: p.manualTradeType,
       status: p.status,
       pnl: p.aggregatePnl,
       fees: p.aggregateFees,

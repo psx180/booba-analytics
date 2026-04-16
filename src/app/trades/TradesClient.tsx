@@ -26,6 +26,7 @@ interface TradeUnit {
   asset: string;
   direction: string;
   tradeType: string | null;
+  manualTradeType?: string | null;
   status: string;
   pnl: number | null;
   fees: number | null;
@@ -123,6 +124,18 @@ const ALL_TRADE_TYPES = [
   'scalp', 'directional', 'scaled_directional', 'carry_trade', 'market_making', 'delta_neutral',
 ];
 
+// Options shown in the click-to-edit trade type popover
+const MANUAL_TYPE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'scalp',              label: 'scalp' },
+  { value: 'directional',        label: 'directional' },
+  { value: 'scaled_directional', label: 'scaled directional' },
+  { value: 'carry_trade',        label: 'carry' },
+  { value: 'position',           label: 'position' },
+  { value: 'reversal',           label: 'reversal' },
+  { value: 'breakout',           label: 'breakout' },
+  { value: 'other',              label: 'other' },
+];
+
 const REGIME_BADGE: Record<string, { label: string; bg: string; text: string }> = {
   trending_low_vol:  { label: 'Trending',    bg: 'bg-green-900/40',  text: 'text-green-400' },
   trending_high_vol: { label: 'Trending HV', bg: 'bg-green-900/30',  text: 'text-green-300' },
@@ -203,13 +216,99 @@ function typeBadgeClass(type: string | null) {
     pairs_trade:        'text-pink-400 bg-pink-900/30',
     basis_trade:        'text-emerald-400 bg-emerald-900/30',
     liquidated:         'text-red-400 bg-red-900/40 font-semibold',
+    position:           'text-yellow-400 bg-yellow-900/30',
+    reversal:           'text-rose-400 bg-rose-900/30',
+    breakout:           'text-violet-400 bg-violet-900/30',
+    other:              'text-[#8b949e] bg-[#21262d]',
   };
   return colors[type] ?? 'text-[#6e7681] bg-[#21262d]';
 }
 
 function typeBadgeLabel(type: string): string {
   if (type === 'liquidated') return 'LIQUIDATED';
+  if (type === 'carry_trade') return 'carry';
   return type.replace(/_/g, ' ');
+}
+
+// ── Trade Type Chip (click-to-edit) ───────────────────────────────────────────
+
+function TradeTypeChip({
+  unit,
+  onSelect,
+}: {
+  unit: TradeUnit;
+  onSelect: (positionId: string, value: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const isManual = unit.kind === 'position' && unit.manualTradeType != null;
+  const isLinked = unit.kind === 'linked_strategy';
+
+  return (
+    <div ref={ref} className="relative inline-block">
+      <button
+        disabled={isLinked}
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+        title={isManual ? 'Manual override — click to change' : 'Auto-detected — click to override'}
+        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs transition-colors ${
+          unit.tradeType ? typeBadgeClass(unit.tradeType) : 'text-[#6e7681] bg-[#21262d]'
+        } ${isLinked ? '' : 'hover:ring-1 hover:ring-white/20 cursor-pointer'}`}
+      >
+        {unit.tradeType ? typeBadgeLabel(unit.tradeType) : '—'}
+        <span className="opacity-60 text-[10px]">{isManual ? '📝' : unit.tradeType ? '📊' : ''}</span>
+      </button>
+
+      {open && (
+        <div
+          className="absolute left-0 top-full mt-1 z-50 bg-[#161b22] border border-[#30363d] rounded-lg shadow-2xl py-1 w-44"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {MANUAL_TYPE_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => {
+                onSelect(unit.id, opt.value);
+                setOpen(false);
+              }}
+              className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-[#21262d] transition-colors ${
+                unit.tradeType === opt.value ? 'text-white' : 'text-[#8b949e]'
+              }`}
+            >
+              <span className={`inline-block px-1.5 py-0.5 rounded text-xs ${typeBadgeClass(opt.value)}`}>
+                {opt.label}
+              </span>
+              {unit.tradeType === opt.value && (
+                <span className="ml-auto text-[10px] text-[#6e7681]">
+                  {isManual ? 'override' : 'auto'}
+                </span>
+              )}
+            </button>
+          ))}
+          {isManual && (
+            <>
+              <div className="border-t border-[#30363d] my-1" />
+              <button
+                onClick={() => { onSelect(unit.id, null); setOpen(false); }}
+                className="w-full text-left px-3 py-1.5 text-xs text-[#6e7681] hover:bg-[#21262d] hover:text-[#8b949e] transition-colors"
+              >
+                Clear override (back to auto)
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 const EXEC_TYPE_BADGE: Record<string, { bg: string; text: string; label: string }> = {
@@ -2130,6 +2229,27 @@ export default function TradesClient() {
     }
   }, [clearSelection, fetchData, flashRows, authFetch]);
 
+  const handleManualTradeType = useCallback(async (positionId: string, value: string | null) => {
+    // Optimistic update for set; refetch handles clear (we don't have the auto type stored locally)
+    if (value !== null) {
+      setAllTradeUnits((prev) =>
+        prev.map((u) => u.id === positionId ? { ...u, tradeType: value, manualTradeType: value } : u),
+      );
+    }
+    try {
+      await authFetch(`/api/positions/${positionId}/trade-type`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ manualTradeType: value }),
+      });
+      flashRows([positionId]);
+      if (value === null) await fetchData(); // need server to resolve auto type
+    } catch (err) {
+      console.error('Manual trade type failed', err);
+      await fetchData(); // rollback optimistic update
+    }
+  }, [fetchData, flashRows, authFetch, setAllTradeUnits]);
+
   const handleDelete = useCallback(async (positionId: string) => {
     if (!confirm('Delete this position? Its orders will become ungrouped.')) return;
     try {
@@ -2652,14 +2772,8 @@ export default function TradesClient() {
                         <td className="py-2.5 pr-4 text-[#6e7681] text-xs">
                           {fmtHoldTime(unit.holdTimeSeconds)}
                         </td>
-                        <td className="py-2.5 pr-4">
-                          {unit.tradeType ? (
-                            <span className={`inline-block px-1.5 py-0.5 rounded text-xs ${typeBadgeClass(unit.tradeType)}`}>
-                              {typeBadgeLabel(unit.tradeType)}
-                            </span>
-                          ) : (
-                            <span className="text-[#6e7681]">—</span>
-                          )}
+                        <td className="py-2.5 pr-4" onClick={(e) => e.stopPropagation()}>
+                          <TradeTypeChip unit={unit} onSelect={handleManualTradeType} />
                         </td>
                         <td className="py-2.5 pr-4">
                           {groupingInd ? (
