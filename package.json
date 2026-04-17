@@ -22,7 +22,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
 	"postinstall": "prisma generate",
-"start": "prisma db push && next start"
+"start": "DATABASE_URL=file:./prisma/dev.db prisma db push --skip-generate && next start"
   },
   "keywords": [],
   "author": "",
