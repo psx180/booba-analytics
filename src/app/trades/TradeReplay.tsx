@@ -197,6 +197,17 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
   const entryTime = position.firstEntryTime ? new Date(position.firstEntryTime).getTime() : null;
   const exitTime  = position.lastExitTime   ? new Date(position.lastExitTime).getTime()   : null;
 
+  useEffect(() => {
+    console.log('REPLAY INIT', {
+      entryFills: (position.entryFills ?? []).map(f => ({ time: f.time, price: f.price })),
+      exitFills:  (position.exitFills  ?? []).map(f => ({ time: f.time, price: f.price })),
+      timeframe:  timeframe,
+      autoTimeframe: autoTimeframe,
+      totalCandlesFetched: rawCandles.length,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── Fetch candles ────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -553,8 +564,22 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
 
     // lightweight-charts requires markers sorted by time
     markers.sort((a, b) => (a.time as number) - (b.time as number));
+
+    console.log('REPLAY TICK', {
+      tick: currentIndex,
+      totalCandles: displayedCandles.length,
+      realCandles: displayedCandles.filter(c => 'open' in c).length,
+      padCount,
+      viewportFrom: length - VIEWPORT,
+      viewportTo: length,
+      markersCurrentlyShown: markers.length,
+      markerDetails: markers.map(m => ({ time: m.time, side: m.shape })),
+      entryLinePrice: position.averageEntryPrice,
+    });
+
     plugin.setMarkers(markers);
-  }, [displayedCandles, rawCandles, position, entryTime, exitTime]);
+    console.log('MARKERS SET', markers);
+  }, [displayedCandles, rawCandles, position, entryTime, exitTime, currentIndex, padCount]);
 
   // ── Dynamic exit price line ──────────────────────────────────────────────
   //
