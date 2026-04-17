@@ -22,7 +22,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
 	"postinstall": "prisma generate",
-"start": "bash start.sh"  },
+"start": "node start.js"  },
   "keywords": [],
   "author": "",
   "license": "ISC",
