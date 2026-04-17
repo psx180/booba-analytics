@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
         setGroupingProgress(walletAddress, {
           stage: 'running',
           message: 'Recomputing analytics…',
-          percent: 80,
+          percent: 85,
         });
 
         await runCompute(walletAddress, 'mutation');

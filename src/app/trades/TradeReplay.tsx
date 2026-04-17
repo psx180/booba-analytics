@@ -414,34 +414,38 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
     });
   }, [rawCandles, contextCount, currentIndex]);
 
-  // Push data to the series whenever the slice changes.
+  // Push data + viewport + markers on every reveal.
   //
-  // Bug 1 fix: use setVisibleLogicalRange instead of fitContent so the chart
-  // holds a fixed ~35-candle viewport that scrolls as playback advances — the
-  // oldest candle falls off the left, the newest enters from the right.
+  // Viewport model (Bugs 1 + 3):
+  //   Two regimes. When we're displaying FEWER than VIEWPORT candles (early
+  //   playback or a very short trade), we hold a FIXED logical window
+  //   [0, VIEWPORT] so each candle renders at its intended density, flush
+  //   left, with empty space on the right. Once we hit VIEWPORT candles we
+  //   switch to a scrolling window of width VIEWPORT + HEADROOM that keeps
+  //   HEADROOM empty slots past the latest revealed bar (or past the final
+  //   exit candle, whichever is further right).
   //
-  // Bug 2 & 3 fix: recompute markers after each tick, only including those
-  // whose candle bar has already been revealed (fillTs ≤ latest displayed ts).
-  // This ensures BUY/SELL arrows appear at their actual fill timestamps and
-  // are added progressively rather than all at once (which caused the SELL
-  // marker to be shown on the wrong candle before the exit was reached).
+  //   The previous code computed `to = length - 1 + HEADROOM` unconditionally
+  //   and clamped `from` to 0. That grew the visible range from ~25 units
+  //   (tick 1) to ~35 (tick 15), so early bars got stretched across a
+  //   narrower-than-intended window — the "compresses then unsticks ~tick 15"
+  //   symptom of Bug 1. Separately, nothing anchored the right edge to the
+  //   exit candle, so on the final tick the exit landed against the edge
+  //   instead of sitting HEADROOM slots in from it (Bug 3).
+  //
+  // Marker dedupe (Bug 2):
+  //   `entryFills` / `exitFills` carry one entry per ORDER, not per candle.
+  //   For scaled positions, two orders placed inside the same candle bar
+  //   (e.g. two 15m-timeframe orders 3 min apart) both map to the same
+  //   UTCTimestamp via `findCandleTs`, which stacked two identical BUY
+  //   arrows on that bar. We now collapse same-candle same-side fills to
+  //   a single marker.
   useEffect(() => {
     const series = seriesRef.current;
     const chart = chartRef.current;
     if (!series || !chart || displayedCandles.length === 0) return;
 
     series.setData(displayedCandles);
-
-    // Fixed scrolling viewport (Bug 1)
-    const VIEWPORT = 35;
-    const HEADROOM = 5;
-    const to   = displayedCandles.length - 1 + HEADROOM;
-    const from = Math.max(0, to - VIEWPORT);
-    chart.timeScale().setVisibleLogicalRange({ from, to });
-
-    // Progressive markers (Bugs 2 & 3)
-    const plugin = markersPluginRef.current;
-    if (!plugin) return;
 
     const latestTs = displayedCandles[displayedCandles.length - 1].time as number; // UTCTimestamp (seconds)
     const isLong = position.direction === 'long';
@@ -472,11 +476,57 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
           ? [{ time: position.lastExitTime, price: position.averageExitPrice }]
           : [];
 
+    // Index of the final exit's candle inside rawCandles (= inside
+    // displayedCandles once revealed, since slice starts at 0). `null` when
+    // no exit is known. Used by the viewport to reserve right-side padding
+    // past the exit bar (Bug 3).
+    let lastExitCandleIndex: number | null = null;
+    if (xFills.length > 0) {
+      const finalExitMs = Math.max(...xFills.map((f) => new Date(f.time).getTime()));
+      for (let i = 0; i < rawCandles.length; i++) {
+        if (new Date(rawCandles[i].timestamp).getTime() <= finalExitMs) {
+          lastExitCandleIndex = i;
+        } else break;
+      }
+    }
+
+    // ── Viewport (Bugs 1 + 3) ───────────────────────────────────────────
+    const VIEWPORT = 35;
+    const HEADROOM = 5;
+    const length  = displayedCandles.length;
+    const lastIdx = length - 1;
+    // Only consider the exit index once it has actually been revealed —
+    // otherwise early ticks would extend the axis to reserve space for a
+    // not-yet-shown exit bar, creating a large empty gap on the right.
+    const revealedExitIdx =
+      lastExitCandleIndex != null && lastExitCandleIndex <= lastIdx
+        ? lastExitCandleIndex
+        : -Infinity;
+
+    let from: number;
+    let to:   number;
+    if (length < VIEWPORT) {
+      from = 0;
+      to   = VIEWPORT;
+    } else {
+      from = length - VIEWPORT;
+      to   = Math.max(lastIdx + HEADROOM, revealedExitIdx + HEADROOM);
+    }
+    chart.timeScale().setVisibleLogicalRange({ from, to });
+
+    // ── Markers (Bug 2) ─────────────────────────────────────────────────
+    const plugin = markersPluginRef.current;
+    if (!plugin) return;
+
     const markers: SeriesMarker<Time>[] = [];
+    const seenEntryTs = new Set<number>();
+    const seenExitTs  = new Set<number>();
 
     for (const fill of eFills) {
       const ts = findCandleTs(new Date(fill.time).getTime());
       if (ts == null || ts > latestTs) continue;
+      if (seenEntryTs.has(ts)) continue; // same-candle dedupe
+      seenEntryTs.add(ts);
       markers.push({
         time: ts,
         position: isLong ? 'belowBar' : 'aboveBar',
@@ -489,6 +539,8 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
     for (const fill of xFills) {
       const ts = findCandleTs(new Date(fill.time).getTime());
       if (ts == null || ts > latestTs) continue;
+      if (seenExitTs.has(ts)) continue; // same-candle dedupe
+      seenExitTs.add(ts);
       markers.push({
         time: ts,
         position: isLong ? 'aboveBar' : 'belowBar',
@@ -502,6 +554,59 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
     markers.sort((a, b) => (a.time as number) - (b.time as number));
     plugin.setMarkers(markers);
   }, [displayedCandles, rawCandles, position, entryTime, exitTime]);
+
+  // ── Mental simulation: 5-order scaled long (3 entries, 2 exits) ───────
+  //
+  // Setup: 15m timeframe, 20 context candles, 48 active candles, so
+  //   rawCandles.length = 68, totalActive = 48.
+  //   Entry fills map to active indices 0, 5, 10 → raw indices 20, 25, 30.
+  //   Exit fills  map to active indices 38, 47 → raw indices 58, 67.
+  //   lastExitCandleIndex = 67. VIEWPORT=35, HEADROOM=5.
+  //
+  // Phase "0 candles" — does not occur; currentIndex starts at 1 so the
+  //   first render is length=21 (Phase "at first entry" below).
+  //
+  // Tick 5  (currentIndex=5, length=25):
+  //   length<VIEWPORT → window [0, 35]. Candles fill indices 0–24, indices
+  //   25–34 are empty on the right. Revealed fills: Entry 1 @ idx 20 only
+  //   (Entry 2 @ idx 25 is at the cutoff, excluded). 1 BUY arrow visible.
+  //
+  // Tick 15 (currentIndex=15, length=35):
+  //   length<VIEWPORT is false → scrolling. from = 35-35 = 0, to = 34+5 = 39.
+  //   Window [0, 39], width 40. All 3 entries revealed (idx 20, 25, 30),
+  //   no exits. 3 BUY arrows visible.
+  //
+  // Tick 30 (currentIndex=30, length=50):
+  //   Scrolling. from = 50-35 = 15, to = 49+5 = 54. Window [15, 54]. Visible
+  //   markers: Entries at 20, 25, 30 all in range. 3 BUY arrows, no exit yet.
+  //
+  // At first entry (currentIndex=1, length=21):
+  //   Fixed window [0, 35]. Candles 0–20 shown (Entry 1's candle is the
+  //   rightmost at idx 20). 1 BUY arrow. Context candles 0–19 dimmed.
+  //
+  // At second entry (currentIndex=6, length=26):
+  //   Fixed window [0, 35]. Candles 0–25 shown. 2 BUY arrows at idx 20, 25.
+  //   Entry 2's candle is the rightmost bar.
+  //
+  // At first exit (currentIndex=39, length=59):
+  //   Scrolling. revealedExitIdx = 58 (first exit candle revealed; final
+  //   exit at 67 not yet). from = 59-35 = 24, to = max(58+5, 58+5) = 63.
+  //   Window [24, 63]. Visible: Entry 2 @ 25, Entry 3 @ 30, Exit 1 @ 58.
+  //   Entry 1 @ 20 has scrolled off the left edge. 2 BUYs + 1 SELL.
+  //
+  // At final exit (currentIndex=48, length=68):
+  //   Scrolling. revealedExitIdx = 67. from = 68-35 = 33, to = max(67+5, 67+5)
+  //   = 72. Window [33, 72]. The exit at idx 67 sits 5 slots inside the
+  //   right edge — Bug 3 padding. Visible: Exit 1 @ 58, Exit 2 @ 67. All
+  //   three entries have scrolled off. 2 SELL arrows.
+  //
+  // 3 candles after final exit:
+  //   Playback ends at currentIndex=totalActive. The fetch only pulls one
+  //   extra candle-width past exit (see fetch-effect), so no further active
+  //   reveal happens — the 3–5 post-exit "breathing room" is provided by
+  //   the HEADROOM empty slots in the logical range (indices 68–72 in the
+  //   example above). The exit candle is clearly inside the chart, not
+  //   clamped to the right edge.
 
   // ── Dynamic exit price line ──────────────────────────────────────────────
   //

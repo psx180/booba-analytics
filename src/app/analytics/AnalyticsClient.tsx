@@ -8,7 +8,7 @@ import { useJournal } from '../JournalContext';
 import { useAuthFetch } from '@/lib/api-client';
 import CalendarHeatmap from './CalendarHeatmap';
 import TimeAnalysis from './TimeAnalysis';
-import ExitAnalysis from './ExitAnalysis';
+import ExitAnalysis, { type ExitSummary } from './ExitAnalysis';
 import StrategyBreakdown from './StrategyBreakdown';
 import WhatIfExplorer from './WhatIfExplorer';
 import RegimePerformance from './RegimePerformance';
@@ -1223,17 +1223,13 @@ function ExecutionTab({
   onRunDeepAnalysis: () => void;
   runningDeepAnalysis: boolean;
 }) {
-  const exitInsight = insights.find((i) => i.module === 'exit-optimizer');
   const timeInsight = insights.find((i) => i.module === 'time-of-day-edge');
+  const [exitSummary, setExitSummary] = useState<ExitSummary | null>(null);
 
-  // Exit quality metrics
-  const effPct = typeof exitInsight?.data?.avgEfficiency === 'number'
-    ? Math.round((exitInsight.data.avgEfficiency as number) * 100)
-    : null;
-  const moneyLeft = typeof exitInsight?.data?.totalLeftOnTable === 'number'
-    ? Math.round(exitInsight.data.totalLeftOnTable as number)
-    : null;
-  const exitCount = tradeCount || ((exitInsight?.data?.tradeCount as number | undefined) ?? 0);
+  // Exit quality metrics derived from ExitAnalysis component (same data source as the summary)
+  const effPct = exitSummary != null ? parseFloat(exitSummary.avgEff) : null;
+  const moneyLeft = exitSummary != null ? parseFloat(exitSummary.totalLeft) : null;
+  const exitCount = exitSummary?.tradeCount ?? 0;
 
   // Timing metrics
   const bestHour = typeof timeInsight?.data?.bestHour === 'number'
@@ -1244,12 +1240,12 @@ function ExecutionTab({
     | null
     | undefined;
 
-  // Exit quality verdict & implication
+  // Exit quality verdict & implication — derived from exitSummary (same data as ExitAnalysis summary paragraph)
   let exitVerdict: string;
-  if (effPct != null && moneyLeft != null) {
-    exitVerdict = `You capture ${effPct}% of available moves, leaving $${moneyLeft.toLocaleString()} on the table across ${exitCount} trades.`;
-  } else if (effPct != null) {
-    exitVerdict = `You capture ${effPct}% of available profit across ${exitCount} trades.`;
+  if (exitSummary != null && moneyLeft != null && moneyLeft > 0) {
+    exitVerdict = `You capture ${exitSummary.avgEff}% of available moves, leaving $${Number(exitSummary.totalLeft).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} on the table across ${exitCount} trades.`;
+  } else if (exitSummary != null) {
+    exitVerdict = `You capture ${exitSummary.avgEff}% of available profit across ${exitCount} trades.`;
   } else {
     exitVerdict = NO_DATA_VERDICT;
   }
@@ -1301,7 +1297,7 @@ function ExecutionTab({
       <NarrativeSection
         question="Are you capturing enough profit?"
         verdict={exitVerdict}
-        evidence={<ExitAnalysis {...chartProps} />}
+        evidence={<ExitAnalysis {...chartProps} onSummary={setExitSummary} />}
         implication={exitImplication}
       />
       <NarrativeSection

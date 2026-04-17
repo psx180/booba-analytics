@@ -53,11 +53,12 @@ export class GroupingService {
     walletAddress: string,
     onProgress?: (percent: number, message: string) => void,
   ): Promise<GroupingSummary> {
+    onProgress?.(10, 'Loading fills…');
     const dbTrades = await prisma.trade.findMany({
       where: { walletAddress },
       orderBy: { entryTime: 'asc' },
     });
-    onProgress?.(15, 'Fills loaded, grouping positions…');
+    onProgress?.(15, `Fills loaded (${dbTrades.length}). Grouping orders…`);
 
     const fills: Fill[] = dbTrades.map((t) => ({
       id: t.id,
@@ -96,6 +97,7 @@ export class GroupingService {
 
     // Level 1: Fills → OrderGroups
     const orders = this.fillToOrder.group(fills);
+    onProgress?.(20, `Grouped ${orders.length} orders. Classifying…`);
 
     // Classify orders
     for (const order of orders) {
@@ -108,6 +110,7 @@ export class GroupingService {
 
     // Level 2: OrderGroups → Positions
     const positions = this.orderToPosition.group(orders);
+    onProgress?.(25, `Built ${positions.length} positions. Classifying…`);
 
     // Classify positions
     for (const position of positions) {
@@ -134,7 +137,7 @@ export class GroupingService {
     }
 
     // Persist
-    await this.persist(fills, orders, positions, walletAddress);
+    await this.persist(fills, orders, positions, walletAddress, onProgress);
 
     // Count linked strategies
     const linkedCount = await prisma.linkedStrategy.count({ where: { walletAddress } });
@@ -164,7 +167,9 @@ export class GroupingService {
     orders: OrderGroupData[],
     positions: PositionData[],
     walletAddress: string,
+    onProgress?: (percent: number, message: string) => void,
   ): Promise<void> {
+    onProgress?.(28, 'Snapshotting journal assignments…');
     // ─── Snapshot existing journal assignments ──────────────────────────
     // Regrouping deletes and rebuilds positions, so we'd lose every
     // journalId without snapshotting first. The mapping we need is
@@ -194,6 +199,7 @@ export class GroupingService {
     // with no prior journal assignment go here.
     const defaultJournal = await ensureDefaultJournal(walletAddress);
 
+    onProgress?.(30, 'Clearing old groupings…');
     // Clear existing order groups and positions (not linked strategies — those are manual)
     // First unlink fills from order groups
     await prisma.trade.updateMany({
@@ -210,8 +216,18 @@ export class GroupingService {
     // Track new positions for the auto-filter pass at the end.
     const createdPositionIds: string[] = [];
 
+    // Write phase maps to 35%→72% (leaves room for auto-filter → 75%).
+    const writeStart = 35;
+    const writeEnd = 72;
+    const writeSpan = writeEnd - writeStart;
+    const total = positions.length;
+    // Throttle progress emits to at most once every ~150ms so a large wallet
+    // doesn't flood the store with thousands of identical-message writes.
+    let lastEmit = 0;
+
     // Create positions, then order groups, then link fills
-    for (const position of positions) {
+    for (let i = 0; i < positions.length; i++) {
+      const position = positions[i];
       // Resolve this new position's journal by majority vote across its
       // constituent fills' prior assignments. Tie-breaker is "first non-
       // null we saw" — keeps things deterministic for the common case
@@ -290,6 +306,13 @@ export class GroupingService {
           data: { orderGroupId: dbOrder.id },
         });
       }
+
+      const now = Date.now();
+      if (onProgress && (now - lastEmit > 150 || i === total - 1)) {
+        lastEmit = now;
+        const pct = writeStart + Math.round(((i + 1) / total) * writeSpan);
+        onProgress(pct, `Saved ${i + 1}/${total} positions…`);
+      }
     }
 
     // Re-affirm linkedStrategy positions' journal assignments. They
@@ -302,6 +325,7 @@ export class GroupingService {
     // blob, find positions matching the filter and reassign them. This
     // is what makes "BTC Only" auto-collect new BTC positions on every
     // import without the user having to remember to assign them.
+    onProgress?.(75, 'Applying journal filters…');
     await this.applyAutoFilters(walletAddress);
   }
 
@@ -829,10 +853,19 @@ export class GroupingService {
       ? weightedAvg(exitFills.map((f) => ({ price: f.exitPrice!, size: f.size })))
       : null;
 
-    const allTimes = fills
-      .flatMap((f) => [f.entryTime, f.exitTime])
+    const entryTimes = fills
+      .map((f) => f.entryTime)
       .filter((t): t is Date => t != null && t.getTime() > 0)
       .map((t) => t.getTime());
+    const exitTimes = fills
+      .map((f) => f.exitTime)
+      .filter((t): t is Date => t != null && t.getTime() > 0)
+      .map((t) => t.getTime());
+
+    // Status by net exposure: open_* fills add size, close_* fills subtract.
+    // Matches order-to-position lifecycle logic so merge/split preserves the
+    // same 'closed' determination that initial grouping arrived at.
+    const status = computeStatusByExposure(fills);
 
     await prisma.orderGroup.update({
       where: { id: orderGroupId },
@@ -843,9 +876,11 @@ export class GroupingService {
         aggregateFunding: totalFunding,
         averageEntryPrice: avgEntry,
         averageExitPrice: avgExit,
-        firstEntryTime: allTimes.length > 0 ? new Date(Math.min(...allTimes)) : null,
-        lastExitTime: allTimes.length > 0 ? new Date(Math.max(...allTimes)) : null,
-        status: fills.some((f) => f.exitTime == null) ? 'open' : 'closed',
+        firstEntryTime: entryTimes.length > 0
+          ? new Date(Math.min(...entryTimes))
+          : exitTimes.length > 0 ? new Date(Math.min(...exitTimes)) : null,
+        lastExitTime: exitTimes.length > 0 ? new Date(Math.max(...exitTimes)) : null,
+        status,
       },
     });
   }
@@ -873,13 +908,22 @@ export class GroupingService {
       ? weightedAvg(exitFills.map((f) => ({ price: f.exitPrice!, size: f.size })))
       : null;
 
-    const allTimes = allFills
-      .flatMap((f) => [f.entryTime, f.exitTime])
+    const entryTimes = allFills
+      .map((f) => f.entryTime)
+      .filter((t): t is Date => t != null && t.getTime() > 0)
+      .map((t) => t.getTime());
+    const exitTimes = allFills
+      .map((f) => f.exitTime)
       .filter((t): t is Date => t != null && t.getTime() > 0)
       .map((t) => t.getTime());
 
-    const firstEntryTime = allTimes.length > 0 ? new Date(Math.min(...allTimes)) : null;
-    const lastExitTime = allTimes.length > 0 ? new Date(Math.max(...allTimes)) : null;
+    const firstEntryTime = entryTimes.length > 0
+      ? new Date(Math.min(...entryTimes))
+      : exitTimes.length > 0 ? new Date(Math.min(...exitTimes)) : null;
+    // lastExitTime must only reflect actual close events — not entry times —
+    // so the "possibly closed" UI heuristic (open + lastExitTime >24h old) isn't
+    // falsely triggered on a position whose close fills were never associated.
+    const lastExitTime = exitTimes.length > 0 ? new Date(Math.max(...exitTimes)) : null;
     const holdTimeSeconds = firstEntryTime && lastExitTime
       ? Math.round((lastExitTime.getTime() - firstEntryTime.getTime()) / 1000)
       : null;
@@ -887,6 +931,13 @@ export class GroupingService {
     const regimeAtEntry = allFills.sort(
       (a, b) => (a.entryTime?.getTime() ?? 0) - (b.entryTime?.getTime() ?? 0),
     )[0]?.regimeAtEntry ?? null;
+
+    // Status by net exposure (open_ sizes minus close_ sizes). Using the raw
+    // per-fill side — not exitTime/pnlRealized nullness — because a normal
+    // closed position contains both an open fill (exitTime/pnl null) and a
+    // close fill. The nullness-based check flags every closed position as
+    // 'open' on merge/split.
+    const status = computeStatusByExposure(allFills);
 
     await prisma.position.update({
       where: { id: positionId },
@@ -901,7 +952,7 @@ export class GroupingService {
         lastExitTime,
         holdTimeSeconds,
         regimeAtEntry,
-        status: allFills.some((f) => f.exitTime == null && f.pnlRealized == null) ? 'open' : 'closed',
+        status,
       },
     });
   }
@@ -929,4 +980,33 @@ function weightedAvg(items: { price: number; size: number }[]): number {
 function parseFillRaw(raw: string | null): ParsedRawData {
   if (!raw) return {};
   try { return JSON.parse(raw) as ParsedRawData; } catch { return {}; }
+}
+
+/**
+ * Determine open/closed by net directional exposure. A position (or order
+ * group) is closed iff the sum of open_* fill sizes equals the sum of
+ * close_* fill sizes. Mirrors `OrderToPositionLevel.computeExposureDelta`
+ * so that merge/split recomputes reproduce the same verdict that initial
+ * grouping lifecycle-crossings produced.
+ *
+ * Fallback when raw.side is absent: exitPrice presence indicates a close.
+ */
+function computeStatusByExposure(
+  fills: { size: number; exitPrice: number | null; rawData: string | null }[],
+): 'open' | 'closed' {
+  let net = 0;
+  for (const f of fills) {
+    const raw = parseFillRaw(f.rawData);
+    const side = raw.side ?? '';
+    if (side.startsWith('open_')) {
+      net += f.size;
+    } else if (side.startsWith('close_')) {
+      net -= f.size;
+    } else if (f.exitPrice != null) {
+      net -= f.size;
+    } else {
+      net += f.size;
+    }
+  }
+  return Math.abs(net) < 1e-10 ? 'closed' : 'open';
 }

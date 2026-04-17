@@ -58,16 +58,23 @@ function HistTooltip({ active, payload, label }: any) {
   );
 }
 
-function generateSummary(positions: PositionData[]) {
-  const withEff = positions.filter((p) => p.exitEfficiency != null && p.exitEfficiency > 0);
+export interface ExitSummary {
+  avgEff: string;
+  totalLeft: string;
+  tradeCount: number;
+}
+
+function generateSummary(positions: PositionData[]): ExitSummary | null {
+  const withMfe = positions.filter((p) => p.mfePnl != null);
+  if (withMfe.length === 0) return null;
+  const withEff = withMfe.filter((p) => p.exitEfficiency != null && p.exitEfficiency > 0);
   if (withEff.length === 0) return null;
   const avgEff = withEff.reduce((s, p) => s + (p.exitEfficiency ?? 0), 0) / withEff.length;
-  const totalLeft = positions.reduce((s, p) => s + (p.moneyLeftOnTable ?? 0), 0);
-  const n = positions.filter((p) => p.moneyLeftOnTable != null && p.moneyLeftOnTable > 0).length;
+  const totalLeft = withMfe.reduce((s, p) => s + ((p.mfePnl ?? 0) - (p.aggregatePnl ?? 0)), 0);
   return {
     avgEff: (avgEff * 100).toFixed(1),
     totalLeft: totalLeft.toFixed(2),
-    tradeCount: n,
+    tradeCount: withMfe.length,
   };
 }
 
@@ -77,7 +84,11 @@ const axisProps = {
   tickLine: false,
 };
 
-export default function ExitAnalysis({ filters, journalId }: AnalyticsChartProps) {
+export default function ExitAnalysis({
+  filters,
+  journalId,
+  onSummary,
+}: AnalyticsChartProps & { onSummary?: (s: ExitSummary | null) => void }) {
   const authFetch = useAuthFetch();
   const [positions, setPositions] = useState<PositionData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -86,7 +97,11 @@ export default function ExitAnalysis({ filters, journalId }: AnalyticsChartProps
     setLoading(true);
     authFetch(`/api/analytics/positions?${buildParams(filters, journalId)}`)
       .then((r) => r.json())
-      .then((d) => setPositions(d.positions ?? []))
+      .then((d) => {
+        const pos = d.positions ?? [];
+        setPositions(pos);
+        onSummary?.(generateSummary(pos));
+      })
       .finally(() => setLoading(false));
   }, [filters, journalId, authFetch]);
 
