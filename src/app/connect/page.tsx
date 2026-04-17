@@ -82,7 +82,7 @@ function ConnectLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center px-6">
       <div className="flex flex-col items-center max-w-md text-center">
-        <h1 className="text-4xl font-bold text-white tracking-wider mb-2">BOOBA</h1>
+        <h1 className="text-4xl font-bold text-white tracking-wider mb-2">BOOBAnalytics</h1>
         <p className="text-sm text-[#8b949e] mb-10">
           AI-powered trading journal for Pacifica
         </p>

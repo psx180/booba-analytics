@@ -36,7 +36,7 @@ export default function NavBar() {
       <nav className="border-b border-[#21262d] bg-[#161b22]">
         <div className="max-w-[1400px] mx-auto px-4">
           <div className="flex items-center gap-1 h-12">
-            <span className="text-sm font-bold text-white mr-4 tracking-wider">BOOBA</span>
+            <span className="text-sm font-bold text-white mr-4 tracking-wider">BOOBAnalytics</span>
             {tabs.map((tab) => {
               const isActive = !tab.disabled && pathname.startsWith(tab.href);
               return tab.disabled ? (

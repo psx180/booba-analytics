@@ -197,9 +197,9 @@ export async function GET(req: NextRequest) {
 
   for (const ls of linkedStrategies) {
     // Filter by asset: match if ANY leg contains the asset
-    if (asset && !ls.positions.some((p) => p.asset === asset)) continue;
+if (asset && !ls.positions.some((p: any) => p.asset === asset)) continue;
 
-    const assets = [...new Set(ls.positions.map((p) => p.asset))];
+const assets = [...new Set(ls.positions.map((p: any) => p.asset))];
     units.push({
       id: ls.id,
       kind: 'linked_strategy',
@@ -223,7 +223,7 @@ export async function GET(req: NextRequest) {
       strategyType: ls.strategyType,
       netDelta: ls.netDelta,
       spreadPnl: ls.spreadPnl,
-      legs: ls.positions.map((p) => ({
+      legs: ls.positions.map((p: any) => ({
         id: p.id,
         asset: p.asset,
         direction: p.direction,

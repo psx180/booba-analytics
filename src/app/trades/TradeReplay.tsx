@@ -33,6 +33,7 @@ import type {
   ISeriesMarkersPluginApi,
   SeriesMarker,
   CandlestickData,
+  WhitespaceData,
   UTCTimestamp,
   Time,
 } from 'lightweight-charts';
@@ -105,6 +106,7 @@ type Speed = typeof SPEEDS[number];
 
 const CONTEXT_CANDLES = 20;
 const BASE_TICK_MS = 500;
+const VIEWPORT = 35;
 
 // Colors (dark theme per spec)
 const UP_COLOR   = '#22c55e';
@@ -117,12 +119,21 @@ const CROSSHAIR_COLOR = '#64748b';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+// Auto-select the timeframe that yields a useful candle count for the trade's
+// hold duration. Picked to land roughly in the 5–80 candle range — a 5-minute
+// scalp on 15m would produce 1–2 bars (useless); an 11-hour trade on 1m would
+// produce 660 bars (unreadable). Thresholds below come from target-band math:
+//   < 15 min   → 1m   (5–15 bars)
+//   15 min–2h  → 5m   (3–24 bars)
+//   2h–12h     → 15m  (8–48 bars)
+//   12h–3d     → 1h   (12–72 bars)
+//   3d+        → 4h   (18+ bars)
 function pickTimeframe(holdSeconds: number | null): Timeframe {
   if (holdSeconds == null) return '15m';
-  if (holdSeconds < 3600) return '1m';
-  if (holdSeconds < 8 * 3600) return '5m';
-  if (holdSeconds < 48 * 3600) return '15m';
-  if (holdSeconds < 14 * 86400) return '1h';
+  if (holdSeconds < 15 * 60)     return '1m';
+  if (holdSeconds < 2 * 3600)    return '5m';
+  if (holdSeconds < 12 * 3600)   return '15m';
+  if (holdSeconds < 3 * 86400)   return '1h';
   return '4h';
 }
 
@@ -170,7 +181,11 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
   const [rawCandles, setRawCandles] = useState<RawCandle[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [timeframe, setTimeframe] = useState<Timeframe>(() => pickTimeframe(position.holdTimeSeconds));
+  const autoTimeframe = useMemo(
+    () => pickTimeframe(position.holdTimeSeconds),
+    [position.holdTimeSeconds],
+  );
+  const [timeframe, setTimeframe] = useState<Timeframe>(autoTimeframe);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState<Speed>(1);
 
@@ -390,12 +405,40 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
   }, [lcReady, hasCandles, timeframe, entryTime, position.averageEntryPrice, position.mfePrice, position.maePrice, position.direction]);
 
   // ── Candlestick data + per-bar dimming for context ───────────────────────
+  //
+  // Pre-pad with whitespace bars so the series length is >= VIEWPORT from
+  // tick 0. Pad count is frozen at mount time (computed from the initial
+  // revealed length: contextCount + 1) and never changes — as currentIndex
+  // advances, real bars accumulate and the total data length grows past
+  // VIEWPORT. The chart-update effect pins the visible range to
+  // [length - VIEWPORT, length], so the newest real bar sits flush right on
+  // every tick and older bars scroll left naturally. This replaces the
+  // earlier two-regime (fixed-window-below-VIEWPORT, scroll-above-VIEWPORT)
+  // logic, which left the first ~10 bars rendering statically.
+  //
+  // Whitespace bars use synthetic timestamps one `intervalSec` apart, placed
+  // strictly before the first real candle's time. lightweight-charts renders
+  // them as empty slots (no body, no wick) while still reserving horizontal
+  // space on the time axis.
 
-  const displayedCandles: CandlestickData[] = useMemo(() => {
+  const padCount = useMemo(() => {
+    if (rawCandles.length === 0) return 0;
+    return Math.max(0, VIEWPORT - (contextCount + 1));
+  }, [rawCandles.length, contextCount]);
+
+  const displayedCandles = useMemo<Array<CandlestickData | WhitespaceData<Time>>>(() => {
     if (rawCandles.length === 0) return [];
     const cutoff = contextCount + currentIndex;
     const slice = rawCandles.slice(0, cutoff);
-    return slice.map((c, i) => {
+    const intervalSec = TIMEFRAME_MS[timeframe] / 1000;
+    const firstRealTs = Math.floor(new Date(rawCandles[0].timestamp).getTime() / 1000);
+
+    const pads: WhitespaceData<Time>[] = [];
+    for (let i = padCount; i > 0; i--) {
+      pads.push({ time: (firstRealTs - i * intervalSec) as UTCTimestamp });
+    }
+
+    const real: CandlestickData[] = slice.map((c, i) => {
       const ts = Math.floor(new Date(c.timestamp).getTime() / 1000) as UTCTimestamp;
       const isContext = i < contextCount;
       const isUp = c.close >= c.open;
@@ -412,34 +455,24 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
         wickColor:   isUp ? colorUp   : colorDown,
       };
     });
-  }, [rawCandles, contextCount, currentIndex]);
+
+    return [...pads, ...real];
+  }, [rawCandles, contextCount, currentIndex, padCount, timeframe]);
 
   // Push data + viewport + markers on every reveal.
   //
-  // Viewport model (Bugs 1 + 3):
-  //   Two regimes. When we're displaying FEWER than VIEWPORT candles (early
-  //   playback or a very short trade), we hold a FIXED logical window
-  //   [0, VIEWPORT] so each candle renders at its intended density, flush
-  //   left, with empty space on the right. Once we hit VIEWPORT candles we
-  //   switch to a scrolling window of width VIEWPORT + HEADROOM that keeps
-  //   HEADROOM empty slots past the latest revealed bar (or past the final
-  //   exit candle, whichever is further right).
+  // Viewport: fixed width of VIEWPORT bars, pinned to the right edge of the
+  // data array. Because `displayedCandles` is pre-padded so its length is
+  // always >= VIEWPORT, the window [length - VIEWPORT, length] is valid from
+  // the very first tick — the newest real bar sits flush right and older
+  // bars (including whitespace pads) scroll left as data accumulates. No
+  // special-casing for short data.
   //
-  //   The previous code computed `to = length - 1 + HEADROOM` unconditionally
-  //   and clamped `from` to 0. That grew the visible range from ~25 units
-  //   (tick 1) to ~35 (tick 15), so early bars got stretched across a
-  //   narrower-than-intended window — the "compresses then unsticks ~tick 15"
-  //   symptom of Bug 1. Separately, nothing anchored the right edge to the
-  //   exit candle, so on the final tick the exit landed against the edge
-  //   instead of sitting HEADROOM slots in from it (Bug 3).
-  //
-  // Marker dedupe (Bug 2):
-  //   `entryFills` / `exitFills` carry one entry per ORDER, not per candle.
-  //   For scaled positions, two orders placed inside the same candle bar
-  //   (e.g. two 15m-timeframe orders 3 min apart) both map to the same
-  //   UTCTimestamp via `findCandleTs`, which stacked two identical BUY
-  //   arrows on that bar. We now collapse same-candle same-side fills to
-  //   a single marker.
+  // Marker dedupe: `entryFills` / `exitFills` carry one entry per ORDER, not
+  // per candle. For scaled positions, two orders placed inside the same
+  // candle bar both map to the same UTCTimestamp via `findCandleTs`, which
+  // would stack identical arrows on that bar. We collapse same-candle
+  // same-side fills to a single marker.
   useEffect(() => {
     const series = seriesRef.current;
     const chart = chartRef.current;
@@ -447,7 +480,9 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
 
     series.setData(displayedCandles);
 
-    const latestTs = displayedCandles[displayedCandles.length - 1].time as number; // UTCTimestamp (seconds)
+    // Last bar is always a real candle (pads sit at the start), so its
+    // `time` is the latest revealed candle timestamp.
+    const latestTs = displayedCandles[displayedCandles.length - 1].time as number;
     const isLong = position.direction === 'long';
 
     // Map a fill's epoch-ms to the UTCTimestamp of its containing candle bar.
@@ -476,45 +511,11 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
           ? [{ time: position.lastExitTime, price: position.averageExitPrice }]
           : [];
 
-    // Index of the final exit's candle inside rawCandles (= inside
-    // displayedCandles once revealed, since slice starts at 0). `null` when
-    // no exit is known. Used by the viewport to reserve right-side padding
-    // past the exit bar (Bug 3).
-    let lastExitCandleIndex: number | null = null;
-    if (xFills.length > 0) {
-      const finalExitMs = Math.max(...xFills.map((f) => new Date(f.time).getTime()));
-      for (let i = 0; i < rawCandles.length; i++) {
-        if (new Date(rawCandles[i].timestamp).getTime() <= finalExitMs) {
-          lastExitCandleIndex = i;
-        } else break;
-      }
-    }
+    // ── Viewport ────────────────────────────────────────────────────────
+    const length = displayedCandles.length;
+    chart.timeScale().setVisibleLogicalRange({ from: length - VIEWPORT, to: length });
 
-    // ── Viewport (Bugs 1 + 3) ───────────────────────────────────────────
-    const VIEWPORT = 35;
-    const HEADROOM = 5;
-    const length  = displayedCandles.length;
-    const lastIdx = length - 1;
-    // Only consider the exit index once it has actually been revealed —
-    // otherwise early ticks would extend the axis to reserve space for a
-    // not-yet-shown exit bar, creating a large empty gap on the right.
-    const revealedExitIdx =
-      lastExitCandleIndex != null && lastExitCandleIndex <= lastIdx
-        ? lastExitCandleIndex
-        : -Infinity;
-
-    let from: number;
-    let to:   number;
-    if (length < VIEWPORT) {
-      from = 0;
-      to   = VIEWPORT;
-    } else {
-      from = length - VIEWPORT;
-      to   = Math.max(lastIdx + HEADROOM, revealedExitIdx + HEADROOM);
-    }
-    chart.timeScale().setVisibleLogicalRange({ from, to });
-
-    // ── Markers (Bug 2) ─────────────────────────────────────────────────
+    // ── Markers ─────────────────────────────────────────────────────────
     const plugin = markersPluginRef.current;
     if (!plugin) return;
 
@@ -555,59 +556,6 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
     plugin.setMarkers(markers);
   }, [displayedCandles, rawCandles, position, entryTime, exitTime]);
 
-  // ── Mental simulation: 5-order scaled long (3 entries, 2 exits) ───────
-  //
-  // Setup: 15m timeframe, 20 context candles, 48 active candles, so
-  //   rawCandles.length = 68, totalActive = 48.
-  //   Entry fills map to active indices 0, 5, 10 → raw indices 20, 25, 30.
-  //   Exit fills  map to active indices 38, 47 → raw indices 58, 67.
-  //   lastExitCandleIndex = 67. VIEWPORT=35, HEADROOM=5.
-  //
-  // Phase "0 candles" — does not occur; currentIndex starts at 1 so the
-  //   first render is length=21 (Phase "at first entry" below).
-  //
-  // Tick 5  (currentIndex=5, length=25):
-  //   length<VIEWPORT → window [0, 35]. Candles fill indices 0–24, indices
-  //   25–34 are empty on the right. Revealed fills: Entry 1 @ idx 20 only
-  //   (Entry 2 @ idx 25 is at the cutoff, excluded). 1 BUY arrow visible.
-  //
-  // Tick 15 (currentIndex=15, length=35):
-  //   length<VIEWPORT is false → scrolling. from = 35-35 = 0, to = 34+5 = 39.
-  //   Window [0, 39], width 40. All 3 entries revealed (idx 20, 25, 30),
-  //   no exits. 3 BUY arrows visible.
-  //
-  // Tick 30 (currentIndex=30, length=50):
-  //   Scrolling. from = 50-35 = 15, to = 49+5 = 54. Window [15, 54]. Visible
-  //   markers: Entries at 20, 25, 30 all in range. 3 BUY arrows, no exit yet.
-  //
-  // At first entry (currentIndex=1, length=21):
-  //   Fixed window [0, 35]. Candles 0–20 shown (Entry 1's candle is the
-  //   rightmost at idx 20). 1 BUY arrow. Context candles 0–19 dimmed.
-  //
-  // At second entry (currentIndex=6, length=26):
-  //   Fixed window [0, 35]. Candles 0–25 shown. 2 BUY arrows at idx 20, 25.
-  //   Entry 2's candle is the rightmost bar.
-  //
-  // At first exit (currentIndex=39, length=59):
-  //   Scrolling. revealedExitIdx = 58 (first exit candle revealed; final
-  //   exit at 67 not yet). from = 59-35 = 24, to = max(58+5, 58+5) = 63.
-  //   Window [24, 63]. Visible: Entry 2 @ 25, Entry 3 @ 30, Exit 1 @ 58.
-  //   Entry 1 @ 20 has scrolled off the left edge. 2 BUYs + 1 SELL.
-  //
-  // At final exit (currentIndex=48, length=68):
-  //   Scrolling. revealedExitIdx = 67. from = 68-35 = 33, to = max(67+5, 67+5)
-  //   = 72. Window [33, 72]. The exit at idx 67 sits 5 slots inside the
-  //   right edge — Bug 3 padding. Visible: Exit 1 @ 58, Exit 2 @ 67. All
-  //   three entries have scrolled off. 2 SELL arrows.
-  //
-  // 3 candles after final exit:
-  //   Playback ends at currentIndex=totalActive. The fetch only pulls one
-  //   extra candle-width past exit (see fetch-effect), so no further active
-  //   reveal happens — the 3–5 post-exit "breathing room" is provided by
-  //   the HEADROOM empty slots in the logical range (indices 68–72 in the
-  //   example above). The exit candle is clearly inside the chart, not
-  //   clamped to the right edge.
-
   // ── Dynamic exit price line ──────────────────────────────────────────────
   //
   // The only line that isn't static. Appears labeled 'Exit $X' once the
@@ -621,10 +569,13 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
     if (!series || !lc) return;
     if (exitTime == null || position.averageExitPrice == null) return;
 
-    const shown = displayedCandles.length;
-    if (shown === 0) return;
+    // `displayedCandles` includes leading whitespace pads — index into
+    // rawCandles using the real-bar count instead so we read the actual
+    // latest revealed candle.
+    const realShown = Math.min(rawCandles.length, contextCount + currentIndex);
+    if (realShown === 0) return;
 
-    const latestMs = new Date(rawCandles[shown - 1].timestamp).getTime();
+    const latestMs = new Date(rawCandles[realShown - 1].timestamp).getTime();
     const shouldShow = latestMs >= exitTime;
     const existing = priceLinesRef.current.exit;
 
@@ -641,7 +592,7 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
       series.removePriceLine(existing);
       delete priceLinesRef.current.exit;
     }
-  }, [displayedCandles, rawCandles, exitTime, position.averageExitPrice, position.direction]);
+  }, [rawCandles, contextCount, currentIndex, exitTime, position.averageExitPrice, position.direction]);
 
   // ── Playback loop ────────────────────────────────────────────────────────
 
@@ -668,10 +619,15 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
   // ── Running P&L ──────────────────────────────────────────────────────────
 
   const runningPnl = useMemo(() => {
-    if (displayedCandles.length === 0 || position.averageEntryPrice == null || position.totalSize == null) return null;
-    const markBar = displayedCandles[displayedCandles.length - 1];
-    return unrealizedPnl(position.averageEntryPrice, position.totalSize, position.direction, markBar.close);
-  }, [displayedCandles, position]);
+    if (rawCandles.length === 0 || position.averageEntryPrice == null || position.totalSize == null) return null;
+    // Mark-to-market off the latest REAL revealed candle — `displayedCandles`
+    // has whitespace pads mixed in, so we index rawCandles by the real-bar
+    // count instead of pulling from the end of the displayed array.
+    const realShown = Math.min(rawCandles.length, contextCount + currentIndex);
+    if (realShown === 0) return null;
+    const markClose = rawCandles[realShown - 1].close;
+    return unrealizedPnl(position.averageEntryPrice, position.totalSize, position.direction, markClose);
+  }, [rawCandles, contextCount, currentIndex, position]);
 
   // ── Controls ─────────────────────────────────────────────────────────────
 
@@ -764,22 +720,32 @@ export default function TradeReplay({ position }: { position: ReplayPosition }) 
           ))}
         </div>
 
-        {/* Timeframe */}
+        {/* Timeframe — auto-selected (recommended for this trade duration)
+            is marked with a trailing dot. Default selection is the auto
+            value, but the user can pick any. */}
         <div className="flex items-center gap-1 ml-auto">
           <span className="text-[10px] uppercase tracking-widest text-[#6e7681]">TF</span>
-          {TIMEFRAME_LABELS.map(({ value, label }) => (
-            <button
-              key={value}
-              onClick={() => setTimeframe(value)}
-              className={`px-2 py-1 rounded border text-[11px] ${
-                value === timeframe
-                  ? 'border-blue-500/50 bg-blue-900/30 text-blue-300'
-                  : 'border-[#30363d] bg-[#21262d] text-[#8b949e] hover:text-white'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+          {TIMEFRAME_LABELS.map(({ value, label }) => {
+            const isSelected = value === timeframe;
+            const isAuto = value === autoTimeframe;
+            return (
+              <button
+                key={value}
+                onClick={() => setTimeframe(value)}
+                title={isAuto ? `${label} — recommended for this trade duration` : label}
+                className={`px-2 py-1 rounded border text-[11px] ${
+                  isSelected
+                    ? 'border-blue-500/50 bg-blue-900/30 text-blue-300'
+                    : isAuto
+                      ? 'border-blue-500/30 bg-[#21262d] text-[#8b949e] hover:text-white'
+                      : 'border-[#30363d] bg-[#21262d] text-[#8b949e] hover:text-white'
+                }`}
+              >
+                {label}
+                {isAuto && <span className="ml-0.5 text-blue-400">•</span>}
+              </button>
+            );
+          })}
         </div>
       </div>
 

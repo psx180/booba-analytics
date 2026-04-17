@@ -68,6 +68,10 @@ body {
 
 /* ── Booba Guided Tour (driver.js) ───────────────────────────────────────── */
 .booba-tour-popover {
+  /* Counter-zoom: html has zoom: 0.9, and driver.js popovers are position:fixed
+     in <body>, inheriting that zoom. Combined with JS-computed pixel coords from
+     getBoundingClientRect, text lands on fractional pixels and renders doubled. */
+  zoom: 1.1111111 !important;
   background-color: #161b22 !important;
   color: #c9d1d9 !important;
   border: 1px solid #30363d !important;
