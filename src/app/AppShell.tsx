@@ -39,9 +39,9 @@ import NavBar from './NavBar';
 import { isDevBypass, DEV_WALLET } from './privy-env';
 import { AccountProvider } from '@/contexts/AccountContext';
 import { SyncProvider } from '@/contexts/SyncContext';
-import IntroOverlay from './components/onboarding/IntroOverlay';
+import IntroOverlay, { type IntroPhase } from './components/onboarding/IntroOverlay';
 import IntroOverlayClassic from './components/onboarding/IntroOverlayClassic';
-import { startGuidedTour } from './components/onboarding/GuidedTour';
+import ProductTour from './components/onboarding/ProductTour';
 
 const USE_CINEMATIC_INTRO = true; // flip to false to revert to classic modal
 import { BoobaProvider, useBooba } from './components/booba/BoobaContext';
@@ -117,11 +117,18 @@ function AuthedShell({
   walletAddress: string;
   children: React.ReactNode;
 }) {
-  const [showIntro, setShowIntro] = useState(false);
+  // Cinematic flow runs as a small state machine:
+  //   idle → intro (full overlay)
+  //        → companion (Booba image stays put while ProductTour runs)
+  //        → fading (image fades out after tour completes)
+  //        → idle (overlay unmounts)
+  // Classic flow only uses 'intro' / 'idle' — no companion handoff.
+  const [introPhase, setIntroPhase] = useState<IntroPhase | 'idle'>('idle');
+  const [showTour, setShowTour] = useState(false);
 
   useEffect(() => {
     if (!localStorage.getItem('hasSeenAppIntro')) {
-      setShowIntro(true);
+      setIntroPhase('intro');
     }
   }, []);
 
@@ -137,29 +144,38 @@ function AuthedShell({
                 <footer className="text-center text-[10px] text-[#484f58] py-4 font-mono">
                   Booba · Built for Pacifica Hackathon · Builder code: BOOBAI
                 </footer>
-                {showIntro && (USE_CINEMATIC_INTRO ? (
+                {USE_CINEMATIC_INTRO && introPhase !== 'idle' && (
                   <IntroOverlay
-                    onStartTour={() => {
-                      setShowIntro(false);
-                      startGuidedTour();
+                    phase={introPhase}
+                    onDismiss={() => {
+                      setIntroPhase('companion');
+                      setShowTour(true);
                     }}
-                    onSkip={() => {
-                      setShowIntro(false);
-                      localStorage.setItem('hasSeenAppIntro', 'true');
-                    }}
+                    onFadeComplete={() => setIntroPhase('idle')}
                   />
-                ) : (
+                )}
+                {!USE_CINEMATIC_INTRO && introPhase === 'intro' && (
                   <IntroOverlayClassic
                     onStartTour={() => {
-                      setShowIntro(false);
-                      startGuidedTour();
+                      setIntroPhase('idle');
+                      setShowTour(true);
                     }}
                     onSkip={() => {
-                      setShowIntro(false);
+                      setIntroPhase('idle');
                       localStorage.setItem('hasSeenAppIntro', 'true');
                     }}
                   />
-                ))}
+                )}
+                {showTour && (
+                  <ProductTour
+                    onComplete={() => {
+                      setShowTour(false);
+                      // Cinematic flow holds Booba on-screen during the tour;
+                      // trigger the fade-out only after the tour finishes.
+                      if (USE_CINEMATIC_INTRO) setIntroPhase('fading');
+                    }}
+                  />
+                )}
                 <BoobaShellLayer />
                 <ProgressToast />
               </GroupingProgressProvider>

@@ -22,7 +22,8 @@
       "Bash(cmd /c \"dir /s /b C:\\\\sqlite3.exe 2>nul\")",
       "Bash(cmd *)",
       "Bash(xargs grep *)",
-      "WebFetch(domain:docs.pacifica.fi)"
+      "WebFetch(domain:docs.pacifica.fi)",
+      "Bash(npx vitest *)"
     ]
   }
 }

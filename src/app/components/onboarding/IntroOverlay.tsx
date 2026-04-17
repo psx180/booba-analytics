@@ -2,23 +2,30 @@
 
 import { useState, useEffect } from 'react';
 
+export type IntroPhase = 'intro' | 'companion' | 'fading';
+
 interface IntroOverlayProps {
-  onStartTour: () => void;
-  onSkip: () => void;
+  phase: IntroPhase;
+  onDismiss: () => void;
+  onFadeComplete?: () => void;
 }
 
 const INTRO_TEXT = "Hi! I'm Booba, your AI trading copilot for Pacifica. Connect your wallet and I'll analyze your trades, spot your patterns, and tell you what matters.";
 const TYPEWRITER_DELAY = 30; // ms per character
+const FADE_OUT_MS = 600;
 
-export default function IntroOverlay({ onStartTour, onSkip }: IntroOverlayProps) {
+export default function IntroOverlay({ phase, onDismiss, onFadeComplete }: IntroOverlayProps) {
   const [imageReady, setImageReady] = useState(false);
   const [typedText, setTypedText] = useState('');
   const [typingDone, setTypingDone] = useState(false);
   const [showButton, setShowButton] = useState(false);
 
+  const showBackdrop = phase === 'intro';
+  const showText = phase === 'intro';
+
   // Start typewriter 500ms after image fade completes (800ms fade + 500ms delay)
   useEffect(() => {
-    if (!imageReady) return;
+    if (!imageReady || phase !== 'intro') return;
     const startDelay = setTimeout(() => {
       let i = 0;
       const interval = setInterval(() => {
@@ -32,7 +39,7 @@ export default function IntroOverlay({ onStartTour, onSkip }: IntroOverlayProps)
       return () => clearInterval(interval);
     }, 500);
     return () => clearTimeout(startDelay);
-  }, [imageReady]);
+  }, [imageReady, phase]);
 
   // Show button shortly after typing completes
   useEffect(() => {
@@ -40,6 +47,13 @@ export default function IntroOverlay({ onStartTour, onSkip }: IntroOverlayProps)
     const t = setTimeout(() => setShowButton(true), 300);
     return () => clearTimeout(t);
   }, [typingDone]);
+
+  // When parent flips to 'fading', schedule onFadeComplete after the CSS animation runs.
+  useEffect(() => {
+    if (phase !== 'fading' || !onFadeComplete) return;
+    const t = setTimeout(onFadeComplete, FADE_OUT_MS);
+    return () => clearTimeout(t);
+  }, [phase, onFadeComplete]);
 
   return (
     <>
@@ -52,73 +66,88 @@ export default function IntroOverlay({ onStartTour, onSkip }: IntroOverlayProps)
           from { opacity: 0; transform: translateY(8px); }
           to   { opacity: 1; transform: translateY(0); }
         }
+        @keyframes boobaFadeOut {
+          from { opacity: 1; transform: translateX(-50%) translateY(0); }
+          to   { opacity: 0; transform: translateX(-50%) translateY(20px); }
+        }
+        @keyframes boobaBackdropOut {
+          from { background: rgba(13,17,23,0.92); }
+          to   { background: rgba(13,17,23,0); }
+        }
       `}</style>
       <div
         style={{
           position: 'fixed',
           inset: 0,
-          zIndex: 20000,
-          background: 'rgba(13,17,23,0.92)',
+          // Backdrop sits above page, character image sits above backdrop.
+          // During companion/fading phases the wrapper itself becomes click-through
+          // so the tour highlights underneath remain interactive.
+          zIndex: showBackdrop ? 20000 : 9000,
+          background: showBackdrop ? 'rgba(13,17,23,0.92)' : 'transparent',
+          transition: showBackdrop ? undefined : 'background 350ms ease',
           overflow: 'hidden',
+          pointerEvents: showBackdrop ? 'auto' : 'none',
         }}
       >
-        {/* Text block — 25% from top */}
-        <div
-          style={{
-            position: 'absolute',
-            top: '25%',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            width: '100%',
-            maxWidth: '500px',
-            textAlign: 'center',
-            padding: '0 24px',
-            zIndex: 1,
-          }}
-        >
-          <p
+        {showText && (
+          <div
             style={{
-              color: '#e6edf3',
-              fontSize: '1.125rem',
-              lineHeight: 1.7,
-              margin: '0 0 24px',
-              minHeight: '5em',
+              position: 'absolute',
+              top: '25%',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              width: '100%',
+              maxWidth: '500px',
+              textAlign: 'center',
+              padding: '0 24px',
+              zIndex: 1,
+              pointerEvents: 'auto',
             }}
           >
-            {typedText}
-            {!typingDone && <span style={{ opacity: 0.6 }}>▍</span>}
-          </p>
-
-          {showButton && (
-            <button
-              onClick={onSkip}
+            <p
               style={{
-                display: 'inline-block',
-                padding: '11px 32px',
-                borderRadius: '8px',
-                border: 'none',
-                background: '#1f6feb',
-                color: '#ffffff',
-                fontSize: '1rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                animation: 'boobaBtnIn 400ms ease forwards',
-                transition: 'background 150ms ease',
+                color: '#e6edf3',
+                fontSize: '1.125rem',
+                lineHeight: 1.7,
+                margin: '0 0 24px',
+                minHeight: '5em',
               }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#388bfd'; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1f6feb'; }}
             >
-              Let&apos;s Go
-            </button>
-          )}
-        </div>
+              {typedText}
+              {!typingDone && <span style={{ opacity: 0.6 }}>▍</span>}
+            </p>
 
-        {/* Character image anchored to bottom-center */}
+            {showButton && (
+              <button
+                onClick={onDismiss}
+                style={{
+                  display: 'inline-block',
+                  padding: '11px 32px',
+                  borderRadius: '8px',
+                  border: 'none',
+                  background: '#1f6feb',
+                  color: '#ffffff',
+                  fontSize: '1rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  animation: 'boobaBtnIn 400ms ease forwards',
+                  transition: 'background 150ms ease',
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#388bfd'; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1f6feb'; }}
+              >
+                Let&apos;s Go
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Character image anchored to bottom-center, persists through every phase. */}
         <img
           src="/booba/intro.png"
           alt="Booba"
           onLoad={() => setImageReady(true)}
-          onError={() => setImageReady(true)} // still start typewriter if image 404s
+          onError={() => setImageReady(true)}
           style={{
             position: 'absolute',
             bottom: 0,
@@ -127,8 +156,13 @@ export default function IntroOverlay({ onStartTour, onSkip }: IntroOverlayProps)
             maxHeight: '70vh',
             width: 'auto',
             objectFit: 'contain',
-            animation: 'boobaFadeIn 800ms ease forwards',
-            opacity: 0,
+            // Keep the entry animation on first mount; fade out when parent
+            // signals 'fading'. In 'companion' phase we hold opacity 1.
+            animation: phase === 'fading'
+              ? `boobaFadeOut ${FADE_OUT_MS}ms ease forwards`
+              : 'boobaFadeIn 800ms ease forwards',
+            opacity: phase === 'fading' ? 1 : 0,
+            pointerEvents: 'none',
           }}
         />
       </div>

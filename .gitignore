@@ -9,5 +9,6 @@ dev.db
 .next
 
 .env.local
+.claude/
 dev/
-
+memory/
