@@ -55,46 +55,64 @@ export async function GET(req: NextRequest) {
       : {}),
   };
 
-  const [positions, linkedStrategies] = await Promise.all([
-    prisma.position.findMany({
-      where: positionWhere,
-      include: {
-        _count: { select: { orderGroups: true } },
-        orderGroups: {
-          select: {
-            trades: {
-              where: { builderCode: { not: null } },
-              select: { builderCode: true },
-            },
+  let positions: any[];
+  let linkedStrategies: any[];
+  let builderCodeRows: { positionId: string; builderCode: string }[];
+  try {
+    [positions, linkedStrategies, builderCodeRows] = await Promise.all([
+      prisma.position.findMany({
+        where: positionWhere,
+        include: {
+          _count: { select: { orderGroups: true } },
+        },
+        orderBy: { [sortBy]: sortDir },
+        take: 2000,
+      }),
+      prisma.linkedStrategy.findMany({
+        where: {
+          walletAddress,
+          // When journal-scoped, include strategies with at least one leg in this journal.
+          ...(journalId ? { positions: { some: { journalId } } } : {}),
+          ...(status ? { status } : {}),
+          ...(tradeType ? { tradeType } : {}),
+          ...(dateFrom || dateTo
+            ? {
+                firstEntryTime: {
+                  ...(dateFrom ? { gte: new Date(dateFrom) } : {}),
+                  ...(dateTo ? { lte: new Date(dateTo) } : {}),
+                },
+              }
+            : {}),
+        },
+        include: {
+          positions: {
+            select: { id: true, asset: true, direction: true, aggregatePnl: true, status: true },
           },
         },
-      },
-      orderBy: { [sortBy]: sortDir },
-      take: 2000,
-    }),
-    prisma.linkedStrategy.findMany({
-      where: {
-        walletAddress,
-        // When journal-scoped, include strategies with at least one leg in this journal.
-        ...(journalId ? { positions: { some: { journalId } } } : {}),
-        ...(status ? { status } : {}),
-        ...(tradeType ? { tradeType } : {}),
-        ...(dateFrom || dateTo
-          ? {
-              firstEntryTime: {
-                ...(dateFrom ? { gte: new Date(dateFrom) } : {}),
-                ...(dateTo ? { lte: new Date(dateTo) } : {}),
-              },
-            }
-          : {}),
-      },
-      include: {
-        positions: {
-          select: { id: true, asset: true, direction: true, aggregatePnl: true, status: true },
-        },
-      },
-    }),
-  ]);
+      }),
+      prisma.$queryRaw<{ positionId: string; builderCode: string }[]>`
+        SELECT DISTINCT p.id as positionId, t.builderCode
+        FROM Position p
+        JOIN OrderGroup og ON og.positionId = p.id
+        JOIN Trade t ON t.orderGroupId = og.id
+        WHERE p.walletAddress = ${walletAddress}
+        AND t.builderCode IS NOT NULL
+      `,
+    ]);
+  } catch (err) {
+    console.error('[trade-units] query failed:', err);
+    return NextResponse.json(
+      { error: 'Failed to load trade units', detail: err instanceof Error ? err.message : String(err) },
+      { status: 500 },
+    );
+  }
+
+  const builderCodesByPosition = new Map<string, string[]>();
+  for (const row of builderCodeRows) {
+    const list = builderCodesByPosition.get(row.positionId) ?? [];
+    list.push(row.builderCode);
+    builderCodesByPosition.set(row.positionId, list);
+  }
 
   // Build unified trade units
   type TradeUnitRow = {
@@ -162,7 +180,7 @@ export async function GET(req: NextRequest) {
       lastExitTime: p.lastExitTime?.toISOString() ?? null,
       regimeAtEntry: p.regimeAtEntry,
       childCount: p._count.orderGroups,
-      builderCodes: [...new Set(p.orderGroups.flatMap((og: any) => og.trades.map((t: any) => t.builderCode as string)))],
+      builderCodes: builderCodesByPosition.get(p.id) ?? [],
       thesis: p.thesis,
       strategyId: p.strategyId,
       emotion: p.emotion,
