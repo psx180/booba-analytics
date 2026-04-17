@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from 'react';
+import { useSearchParams } from 'next/navigation';
 import TradeDetailModal from './TradeDetailModal';
 import TradeAnnotationPopup, { type PopupPosition } from '@/app/components/trade-popup/TradeAnnotationPopup';
 import { useBooba } from '@/app/components/booba/BoobaContext';
@@ -1932,6 +1933,7 @@ export default function TradesClient() {
   const { syncImportCount } = useSync();
   const authFetch = useAuthFetch();
   const { filter, setFilter } = useTradesFilter();
+  const searchParams = useSearchParams();
   const { setBoobaState } = useBooba();
   const { startJob, setProgress, dismissed } = useGroupingProgress();
   // All trade units fetched from server — filtering/sorting done client-side.
@@ -2071,16 +2073,16 @@ export default function TradesClient() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── URL sync: parse on mount, serialize on filter change ──────────────────
+  // ── URL sync: parse on mount and on URL change, serialize on filter change ──
+  // searchParams updates when router.push/replace changes the URL (e.g. Booba
+  // navigating to /trades?assets=BTC from another page). window.history
+  // .replaceState (used in the write-back effect below) does NOT update
+  // useSearchParams, so there is no read↔write loop.
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const parsed = parseFilterFromUrl(new URLSearchParams(window.location.search));
-    if (Object.keys(parsed).length > 0) {
-      setFilter({ ...EMPTY_TRADES_FILTER, ...parsed });
-    }
-  // Run once on mount only.
+    const parsed = parseFilterFromUrl(new URLSearchParams(searchParams.toString()));
+    setFilter({ ...EMPTY_TRADES_FILTER, ...parsed });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [searchParams]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
