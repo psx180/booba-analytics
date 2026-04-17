@@ -31,6 +31,10 @@ export function parseFilters(sp: URLSearchParams): Filters {
   const tradeType = sp.get('tradeType');
   if (tradeType) filters.tradeType = tradeType;
 
+  const builderCode = sp.get('builderCode');
+  if (builderCode) filters.builderCode = builderCode;
+  if (sp.get('builderCodeExclude') === 'true') filters.builderCodeExclude = true;
+
   const dateFrom = sp.get('dateFrom');
   if (dateFrom) {
     const d = new Date(dateFrom);

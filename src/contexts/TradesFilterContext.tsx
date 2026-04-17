@@ -34,6 +34,8 @@ export interface TradesFilter {
   pnlMax: string;
   signalSource: '' | 'has_signal' | 'no_signal';
   signalCaller: string;
+  builderCodes: string[];
+  builderCodeExclude: boolean;
 }
 
 export const EMPTY_TRADES_FILTER: TradesFilter = {
@@ -52,6 +54,8 @@ export const EMPTY_TRADES_FILTER: TradesFilter = {
   pnlMax: '',
   signalSource: '',
   signalCaller: '',
+  builderCodes: [],
+  builderCodeExclude: false,
 };
 
 export function isFilterActive(f: TradesFilter): boolean {
@@ -67,7 +71,8 @@ export function isFilterActive(f: TradesFilter): boolean {
     f.dateTo !== '' ||
     f.pnlFilter !== '' ||
     f.signalSource !== '' ||
-    f.signalCaller !== ''
+    f.signalCaller !== '' ||
+    f.builderCodes.length > 0
   );
 }
 
@@ -128,6 +133,8 @@ export function serializeFilterToUrl(f: TradesFilter): URLSearchParams {
   if (f.pnlMax) p.set('pnlMax', f.pnlMax);
   if (f.signalSource) p.set('signalSource', f.signalSource);
   if (f.signalCaller) p.set('signalCaller', f.signalCaller);
+  if (f.builderCodes.length) p.set('builderCodes', f.builderCodes.join(','));
+  if (f.builderCodeExclude) p.set('builderCodeExclude', 'true');
   return p;
 }
 
@@ -156,5 +163,7 @@ export function parseFilterFromUrl(p: URLSearchParams): Partial<TradesFilter> {
   const ss = p.get('signalSource');
   if (ss === 'has_signal' || ss === 'no_signal') out.signalSource = ss;
   const sc = p.get('signalCaller'); if (sc) out.signalCaller = sc;
+  const bc = split('builderCodes'); if (bc) out.builderCodes = bc;
+  if (p.get('builderCodeExclude') === 'true') out.builderCodeExclude = true;
   return out;
 }

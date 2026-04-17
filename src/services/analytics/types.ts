@@ -32,6 +32,8 @@ export interface Filters {
   tradeType?: string;
   dateFrom?: Date;
   dateTo?: Date;
+  builderCode?: string;
+  builderCodeExclude?: boolean;
   /**
    * Journal scope. When set, the analytics service only loads positions
    * whose journalId matches. Routes resolve this to the wallet's default

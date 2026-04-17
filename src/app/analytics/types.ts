@@ -6,6 +6,8 @@ export interface AnalyticsFilters {
   asset: string;
   strategy: string;
   source: string;
+  builderCode: string;
+  builderCodeExclude: boolean;
 }
 
 export const EMPTY_FILTERS: AnalyticsFilters = {
@@ -14,6 +16,8 @@ export const EMPTY_FILTERS: AnalyticsFilters = {
   asset: '',
   strategy: '',
   source: '',
+  builderCode: '',
+  builderCodeExclude: false,
 };
 
 export interface AnalyticsChartProps {
@@ -37,6 +41,10 @@ export function buildParams(
   if (filters.asset) p.set('asset', filters.asset);
   if (filters.strategy) p.set('strategy', filters.strategy);
   if (filters.source) p.set('source', filters.source);
+  if (filters.builderCode) {
+    p.set('builderCode', filters.builderCode);
+    if (filters.builderCodeExclude) p.set('builderCodeExclude', 'true');
+  }
   return p;
 }
 

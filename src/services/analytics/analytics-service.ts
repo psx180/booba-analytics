@@ -509,6 +509,17 @@ export class AnalyticsService {
       };
     }
 
+    if (filters?.builderCode) {
+      const builderClause = {
+        orderGroups: { some: { trades: { some: { builderCode: filters.builderCode } } } },
+      };
+      if (filters.builderCodeExclude) {
+        where.NOT = builderClause;
+      } else {
+        Object.assign(where, builderClause);
+      }
+    }
+
     return this.db.position.findMany({ where });
   }
 }

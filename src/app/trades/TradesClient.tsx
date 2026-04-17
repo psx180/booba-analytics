@@ -53,6 +53,7 @@ interface TradeUnit {
   playbookId?: string | null;
   confirmation?: string | null;
   adherenceScore?: number | null;
+  builderCodes?: string[];
   // Linked strategy extras
   strategyType?: string;
   netDelta?: number | null;
@@ -899,17 +900,18 @@ function ReclassifyDialog({
 
 type FilterType =
   | 'direction' | 'regime' | 'asset' | 'tradeType' | 'status'
-  | 'dateRange' | 'strategy' | 'playbook' | 'pnl' | 'signal';
+  | 'dateRange' | 'strategy' | 'playbook' | 'pnl' | 'signal' | 'builderCode';
 
 const ALL_FILTER_TYPES: FilterType[] = [
   'direction', 'regime', 'asset', 'tradeType', 'status',
-  'dateRange', 'strategy', 'playbook', 'pnl', 'signal',
+  'dateRange', 'strategy', 'playbook', 'pnl', 'signal', 'builderCode',
 ];
 
 const FILTER_TYPE_LABELS: Record<FilterType, string> = {
   direction: 'Direction', regime: 'Regime', asset: 'Asset',
   tradeType: 'Trade Type', status: 'Status', dateRange: 'Date Range',
   strategy: 'Strategy', playbook: 'Playbook', pnl: 'P&L', signal: 'Signal',
+  builderCode: 'Builder Code',
 };
 
 function isFilterTypeActive(type: FilterType, f: TradesFilter): boolean {
@@ -924,6 +926,7 @@ function isFilterTypeActive(type: FilterType, f: TradesFilter): boolean {
     case 'playbook': return f.playbookId !== '';
     case 'pnl': return f.pnlFilter !== '';
     case 'signal': return f.signalSource !== '';
+    case 'builderCode': return f.builderCodes.length > 0;
   }
 }
 
@@ -939,6 +942,7 @@ function clearFilterType(type: FilterType, f: TradesFilter): TradesFilter {
     case 'playbook': return { ...f, playbookId: '', playbookAdherence: '' };
     case 'pnl': return { ...f, pnlFilter: '', pnlMin: '', pnlMax: '' };
     case 'signal': return { ...f, signalSource: '', signalCaller: '' };
+    case 'builderCode': return { ...f, builderCodes: [], builderCodeExclude: false };
   }
 }
 
@@ -982,13 +986,18 @@ function getChipLabel(
     case 'signal':
       if (f.signalCaller) return f.signalCaller;
       return f.signalSource === 'has_signal' ? 'Has Signal' : 'No Signal';
+    case 'builderCode': {
+      const prefix = f.builderCodeExclude ? 'Excl. ' : '';
+      if (f.builderCodes.length === 1) return `${prefix}${f.builderCodes[0]}`;
+      return `${prefix}Builder (${f.builderCodes.length})`;
+    }
   }
 }
 
 // ── Per-type filter editors ──────────────────────────────────────────────────
 
 function FilterEditor({
-  type, filter, setFilter, assetOptions, strategies, playbooks, sourceTags, onClose,
+  type, filter, setFilter, assetOptions, strategies, playbooks, sourceTags, builderCodeOptions, onClose,
 }: {
   type: FilterType;
   filter: TradesFilter;
@@ -997,6 +1006,7 @@ function FilterEditor({
   strategies: { id: string; name: string }[];
   playbooks: { id: string; name: string }[];
   sourceTags: string[];
+  builderCodeOptions: string[];
   onClose: () => void;
 }) {
   const sel = 'w-full bg-[#0d1117] border border-[#30363d] text-sm text-[#e6edf3] rounded px-2 py-1.5 focus:outline-none focus:border-blue-500';
@@ -1195,6 +1205,48 @@ function FilterEditor({
           {filter.signalSource === 'has_signal' && <button onClick={onClose} className="w-full text-center text-xs text-blue-400 hover:text-blue-300 py-0.5 transition-colors">Apply</button>}
         </div>
       );
+
+    case 'builderCode':
+      return (
+        <div className="p-2 w-52 space-y-1.5">
+          <div className="flex gap-1 pb-1 border-b border-[#30363d]">
+            <button
+              className={`flex-1 py-1 text-xs rounded transition-colors ${!filter.builderCodeExclude ? 'bg-blue-700 text-white' : 'text-[#8b949e] hover:bg-[#21262d]'}`}
+              onClick={() => setFilter({ ...filter, builderCodeExclude: false })}
+            >
+              Include
+            </button>
+            <button
+              className={`flex-1 py-1 text-xs rounded transition-colors ${filter.builderCodeExclude ? 'bg-red-800 text-white' : 'text-[#8b949e] hover:bg-[#21262d]'}`}
+              onClick={() => setFilter({ ...filter, builderCodeExclude: true })}
+            >
+              Exclude
+            </button>
+          </div>
+          {builderCodeOptions.length === 0 ? (
+            <p className="px-2 py-2 text-xs text-[#6e7681]">No builder codes in your trades</p>
+          ) : (
+            <div className="max-h-48 overflow-y-auto space-y-0.5">
+              {builderCodeOptions.map((code) => (
+                <label key={code} className="flex items-center gap-2 px-2 py-1.5 text-sm text-[#e6edf3] hover:bg-[#21262d] cursor-pointer rounded">
+                  <input
+                    type="checkbox"
+                    className="accent-blue-500 w-3.5 h-3.5"
+                    checked={filter.builderCodes.includes(code)}
+                    onChange={() => {
+                      const next = filter.builderCodes.includes(code)
+                        ? filter.builderCodes.filter((x) => x !== code)
+                        : [...filter.builderCodes, code];
+                      setFilter({ ...filter, builderCodes: next });
+                    }}
+                  />
+                  {code}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      );
   }
 }
 
@@ -1305,7 +1357,7 @@ const OVERFLOW_FILTER_TYPES: FilterType[] = ALL_FILTER_TYPES.filter(
 );
 
 function ChipFilterBar({
-  filter, setFilter, assetOptions, strategies, playbooks, sourceTags,
+  filter, setFilter, assetOptions, strategies, playbooks, sourceTags, builderCodeOptions,
   savedFilters, setSavedFilters, walletAddress,
 }: {
   filter: TradesFilter;
@@ -1314,6 +1366,7 @@ function ChipFilterBar({
   strategies: { id: string; name: string }[];
   playbooks: { id: string; name: string }[];
   sourceTags: string[];
+  builderCodeOptions: string[];
   savedFilters: SavedFilter[];
   setSavedFilters: (sf: SavedFilter[]) => void;
   walletAddress: string;
@@ -1400,7 +1453,7 @@ function ChipFilterBar({
                   <div className="absolute left-0 top-full mt-1 bg-[#1c2128] border border-[#30363d] rounded shadow-xl z-30">
                     <FilterEditor type={type} filter={filter} setFilter={setFilter}
                       assetOptions={assetOptions} strategies={strategies} playbooks={playbooks}
-                      sourceTags={sourceTags} onClose={() => setEditingType(null)} />
+                      sourceTags={sourceTags} builderCodeOptions={builderCodeOptions} onClose={() => setEditingType(null)} />
                   </div>
                 )}
               </div>
@@ -1431,7 +1484,7 @@ function ChipFilterBar({
                   <div className="absolute left-0 top-full mt-1 bg-[#1c2128] border border-[#30363d] rounded shadow-xl z-30">
                     <FilterEditor type={type} filter={filter} setFilter={setFilter}
                       assetOptions={assetOptions} strategies={strategies} playbooks={playbooks}
-                      sourceTags={sourceTags} onClose={() => setEditingType(null)} />
+                      sourceTags={sourceTags} builderCodeOptions={builderCodeOptions} onClose={() => setEditingType(null)} />
                   </div>
                 )}
               </div>
@@ -1466,7 +1519,7 @@ function ChipFilterBar({
               <div className="absolute left-0 top-full mt-1 bg-[#1c2128] border border-[#30363d] rounded shadow-xl z-30">
                 <FilterEditor type={editingType} filter={filter} setFilter={setFilter}
                   assetOptions={assetOptions} strategies={strategies} playbooks={playbooks}
-                  sourceTags={sourceTags} onClose={() => setEditingType(null)} />
+                  sourceTags={sourceTags} builderCodeOptions={builderCodeOptions} onClose={() => setEditingType(null)} />
               </div>
               <span className="text-xs text-[#6e7681] px-2">{FILTER_TYPE_LABELS[editingType]}</span>
             </div>
@@ -1797,6 +1850,12 @@ function applyTradesFilter(units: TradeUnit[], f: TradesFilter): TradeUnit[] {
     if (f.signalSource === 'has_signal' && !u.sourceTag) return false;
     if (f.signalSource === 'no_signal' && u.sourceTag) return false;
     if (f.signalSource === 'has_signal' && f.signalCaller && u.sourceTag !== f.signalCaller) return false;
+    // Builder code (positions where any fill has this builder code)
+    if (f.builderCodes.length > 0) {
+      const unitCodes = u.builderCodes ?? [];
+      const hasMatch = f.builderCodes.some((bc) => unitCodes.includes(bc));
+      if (f.builderCodeExclude ? hasMatch : !hasMatch) return false;
+    }
     return true;
   });
 }
@@ -2087,6 +2146,10 @@ export default function TradesClient() {
     return [
       ...new Set(allTradeUnits.flatMap((u) => u.asset.split(' / '))),
     ].sort();
+  }, [allTradeUnits]);
+
+  const builderCodeOptions = useMemo(() => {
+    return [...new Set(allTradeUnits.flatMap((u) => u.builderCodes ?? []))].sort();
   }, [allTradeUnits]);
 
   // ── Toast helpers ───────────────────────────────────────────────────────────
@@ -2574,6 +2637,7 @@ export default function TradesClient() {
             strategies={strategies}
             playbooks={playbooks}
             sourceTags={sourceTags}
+            builderCodeOptions={builderCodeOptions}
             savedFilters={savedFilters}
             setSavedFilters={(next) => { setSavedFilters(next); persistSavedFilters(walletAddress, next); }}
             walletAddress={walletAddress}

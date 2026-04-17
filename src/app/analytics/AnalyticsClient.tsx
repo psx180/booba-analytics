@@ -266,6 +266,84 @@ function FilterSelect({
   );
 }
 
+// ── Load Filter Dropdown ──────────────────────────────────────────────────────
+
+interface SavedTradeFilter {
+  name: string;
+  filters: {
+    regimes?: string[];
+    tradeTypes?: string[];
+    assets?: string[];
+    [key: string]: unknown;
+  };
+}
+
+function LoadFilterDropdown({ onLoad }: { onLoad: (patch: Partial<AnalyticsFilters>) => void }) {
+  const [open, setOpen] = useState(false);
+  const [saved, setSaved] = useState<SavedTradeFilter[]>([]);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    try {
+      const raw = localStorage.getItem('savedTradeFilters');
+      setSaved(raw ? (JSON.parse(raw) as SavedTradeFilter[]) : []);
+    } catch {
+      setSaved([]);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const apply = (sf: SavedTradeFilter) => {
+    const f = sf.filters;
+    onLoad({
+      regime: f.regimes?.[0] ?? '',
+      tradeType: f.tradeTypes?.[0] ?? '',
+      asset: f.assets?.[0] ?? '',
+    });
+    setOpen(false);
+  };
+
+  return (
+    <div ref={ref} className="relative self-end flex flex-col gap-1">
+      <label className="text-[10px] uppercase tracking-widest text-[#6e7681]">Load Filter</label>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="bg-[#21262d] border border-[#30363d] text-sm text-[#e6edf3] rounded px-2 py-1.5 flex items-center gap-1.5 hover:border-[#4a5568] transition-colors whitespace-nowrap"
+      >
+        Saved filters ▾
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 mt-1 z-20 bg-[#161b22] border border-[#30363d] rounded-lg shadow-xl min-w-[200px] max-h-[240px] overflow-y-auto">
+          {saved.length === 0 ? (
+            <p className="text-xs text-[#6e7681] px-3 py-3 leading-snug">
+              No saved filters — save filters on the Trades page first.
+            </p>
+          ) : (
+            saved.map((sf, i) => (
+              <button
+                key={i}
+                onClick={() => apply(sf)}
+                className="w-full text-left px-3 py-2 text-sm text-[#e6edf3] hover:bg-[#21262d] transition-colors"
+              >
+                {sf.name}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Impact-led insight framing ────────────────────────────────────────────────
 // The insight detectors produce neutral technical titles ("Exit Efficiency
 // Baseline", "Disposition Effect Detected"). For the cards we rewrite the
@@ -2227,6 +2305,7 @@ export default function AnalyticsClient() {
 
   const [filters, setFilters] = useState<AnalyticsFilters>(EMPTY_FILTERS);
   const [assetOptions, setAssetOptions] = useState<string[]>([]);
+  const [builderCodeOptions, setBuilderCodeOptions] = useState<string[]>([]);
   const [insights, setInsights] = useState<Insight[]>([]);
   const [wartResult, setWartResult] = useState<WartResult | null>(null);
   const [eloResult, setEloResult] = useState<EloResult | null>(null);
@@ -2256,19 +2335,22 @@ export default function AnalyticsClient() {
     setFilters((f) => ({ ...f, [key]: value }));
   }, []);
 
-  // Asset options
+  // Asset + builder code options
   useEffect(() => {
     if (!journalId) return;
     const p = new URLSearchParams({ journalId, pageSize: '500' });
     authFetch(`/api/trade-units?${p}`)
       .then((r) => r.json())
       .then((d) => {
+        const units: any[] = d.tradeUnits ?? [];
         const assets = [
-          ...new Set<string>(
-            (d.tradeUnits ?? []).flatMap((u: any) => (u.asset as string).split(' / ')),
-          ),
+          ...new Set<string>(units.flatMap((u) => (u.asset as string).split(' / '))),
         ].sort();
         setAssetOptions(assets);
+        const codes = [
+          ...new Set<string>(units.flatMap((u) => (u.builderCodes ?? []) as string[])),
+        ].sort();
+        setBuilderCodeOptions(codes);
       })
       .catch(() => {});
   }, [journalId, authFetch]);
@@ -2423,6 +2505,39 @@ export default function AnalyticsClient() {
             value={filters.asset}
             onChange={(v) => set('asset', v)}
             options={assetOptions.map((a) => ({ value: a, label: a }))}
+          />
+          {builderCodeOptions.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] uppercase tracking-widest text-[#6e7681]">Builder Code</label>
+              <div className="flex gap-1.5 items-center">
+                <select
+                  value={filters.builderCode}
+                  onChange={(e) => set('builderCode', e.target.value)}
+                  className="bg-[#21262d] border border-[#30363d] text-sm text-[#e6edf3] rounded px-2 py-1.5 focus:outline-none focus:border-blue-500 min-w-[120px]"
+                >
+                  <option value="">All</option>
+                  {builderCodeOptions.map((code) => (
+                    <option key={code} value={code}>{code}</option>
+                  ))}
+                </select>
+                {filters.builderCode && (
+                  <button
+                    onClick={() => setFilters((f) => ({ ...f, builderCodeExclude: !f.builderCodeExclude }))}
+                    title={filters.builderCodeExclude ? 'Excluding — click to include instead' : 'Including — click to exclude instead'}
+                    className={`px-2 py-1.5 text-xs rounded border transition-colors whitespace-nowrap ${
+                      filters.builderCodeExclude
+                        ? 'bg-red-900/30 border-red-700/40 text-red-300 hover:bg-red-900/50'
+                        : 'bg-blue-900/20 border-blue-700/40 text-blue-300 hover:bg-blue-900/40'
+                    }`}
+                  >
+                    {filters.builderCodeExclude ? 'Excl.' : 'Incl.'}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+          <LoadFilterDropdown
+            onLoad={(patch) => setFilters((f) => ({ ...f, ...patch }))}
           />
           {hasFilters && (
             <button

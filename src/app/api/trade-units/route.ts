@@ -58,7 +58,17 @@ export async function GET(req: NextRequest) {
   const [positions, linkedStrategies] = await Promise.all([
     prisma.position.findMany({
       where: positionWhere,
-      include: { _count: { select: { orderGroups: true } } },
+      include: {
+        _count: { select: { orderGroups: true } },
+        orderGroups: {
+          select: {
+            trades: {
+              where: { builderCode: { not: null } },
+              select: { builderCode: true },
+            },
+          },
+        },
+      },
       orderBy: { [sortBy]: sortDir },
       take: 2000,
     }),
@@ -108,6 +118,7 @@ export async function GET(req: NextRequest) {
     lastExitTime: string | null;
     regimeAtEntry: string | null;
     childCount: number;
+    builderCodes: string[];
     // Annotation fields (positions only)
     thesis?: string | null;
     strategyId?: string | null;
@@ -151,6 +162,7 @@ export async function GET(req: NextRequest) {
       lastExitTime: p.lastExitTime?.toISOString() ?? null,
       regimeAtEntry: p.regimeAtEntry,
       childCount: p._count.orderGroups,
+      builderCodes: [...new Set(p.orderGroups.flatMap((og: any) => og.trades.map((t: any) => t.builderCode as string)))],
       thesis: p.thesis,
       strategyId: p.strategyId,
       emotion: p.emotion,
@@ -189,6 +201,7 @@ export async function GET(req: NextRequest) {
       lastExitTime: ls.lastExitTime?.toISOString() ?? null,
       regimeAtEntry: null,
       childCount: ls.positions.length,
+      builderCodes: [],
       strategyType: ls.strategyType,
       netDelta: ls.netDelta,
       spreadPnl: ls.spreadPnl,
