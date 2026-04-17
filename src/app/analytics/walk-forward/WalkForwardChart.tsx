@@ -198,7 +198,7 @@ export default function WalkForwardChart({ journalId }: WalkForwardChartProps) {
         if (d.error) setError(d.error as string);
         else setData(d as WalkForwardResult);
       })
-      .catch(() => setError('Failed to load walk-forward analysis.'))
+      .catch(() => setError('Failed to load Edge Persistence analysis.'))
       .finally(() => setLoading(false));
   }, [journalId, authFetch]);
 
@@ -216,7 +216,7 @@ export default function WalkForwardChart({ journalId }: WalkForwardChartProps) {
   if (error) {
     return (
       <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-6">
-        <h2 className="text-sm font-semibold text-white mb-1">Walk-Forward Validation</h2>
+        <h2 className="text-sm font-semibold text-white mb-1">Edge Persistence</h2>
         <p className="text-xs text-[#6e7681]">{error}</p>
       </div>
     );
@@ -250,9 +250,9 @@ export default function WalkForwardChart({ journalId }: WalkForwardChartProps) {
       <div className="px-4 py-3 border-b border-[#21262d]">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-sm font-semibold text-white">Walk-Forward Validation</h2>
+            <h2 className="text-sm font-semibold text-white">Edge Persistence</h2>
             <p className="text-xs text-[#6e7681] mt-0.5">
-              Performance over {numWindows} windows of ~{Math.round(data.windows[0]?.tradeCount ?? 0)} trades each
+              Performance stability across 6 time windows
             </p>
           </div>
           {/* Trend indicators */}

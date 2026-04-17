@@ -1601,7 +1601,7 @@ function StrategyTab({
     wfImplication = '';
   } else if (wf == null) {
     wfVerdict = NO_DATA_VERDICT;
-    wfImplication = 'Not enough trades yet for walk-forward analysis.';
+    wfImplication = 'Not enough trades yet for Edge Persistence analysis.';
   } else {
     const trend = wf.expectancyTrend ?? (wf.edgePersistent ? 'stable' : 'stable');
     const trendWord =
