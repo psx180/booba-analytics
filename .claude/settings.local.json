@@ -21,7 +21,8 @@
       "Bash(cmd /c \"where sqlite3 2>nul\")",
       "Bash(cmd /c \"dir /s /b C:\\\\sqlite3.exe 2>nul\")",
       "Bash(cmd *)",
-      "Bash(xargs grep *)"
+      "Bash(xargs grep *)",
+      "WebFetch(domain:docs.pacifica.fi)"
     ]
   }
 }
