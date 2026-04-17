@@ -65,7 +65,7 @@ export default function NavBar() {
             <div className="ml-auto flex items-center gap-2">
               <LiveIndicator />
               <SyncButton />
-              <NetworkSelector />
+              {/* NetworkSelector hidden — testnet not exposed in UI */}
               <SubAccountSelector />
               <JournalSelector />
               <WalletBadge />
@@ -73,13 +73,7 @@ export default function NavBar() {
           </div>
         </div>
       </nav>
-      {/* Testnet banner — always visible so the user never forgets they're in
-          test mode. Keeps the same max-width as the nav content. */}
-      {isTestnet && (
-        <div className="bg-orange-900/30 border-b border-orange-700/50 text-orange-300 text-[10px] uppercase tracking-widest text-center py-0.5">
-          Testnet data
-        </div>
-      )}
+      {/* Testnet banner hidden — testnet not exposed in UI */}
     </>
   );
 }

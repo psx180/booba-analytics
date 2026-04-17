@@ -29,14 +29,15 @@ export default function JournalSelector() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const active = journals.find((j) => j.id === journalId) ?? null;
+  const visibleJournals = journals.filter((j) => j.name !== 'Testnet');
+  const active = visibleJournals.find((j) => j.id === journalId) ?? null;
 
   return (
     <>
       <div className="relative" ref={ref}>
         <button
           onClick={() => setOpen((o) => !o)}
-          disabled={loading || journals.length === 0}
+          disabled={loading || visibleJournals.length === 0}
           className="flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium bg-[#21262d] hover:bg-[#30363d] text-[#e6edf3] border border-[#30363d] transition-colors disabled:opacity-50"
           title="Switch journal"
         >
@@ -50,7 +51,7 @@ export default function JournalSelector() {
         {open && (
           <div className="absolute right-0 top-full mt-1 bg-[#1c2128] border border-[#30363d] rounded shadow-xl z-30 min-w-[240px]">
             <div className="max-h-[320px] overflow-y-auto">
-              {journals.map((j) => {
+              {visibleJournals.map((j) => {
                 const isActive = j.id === journalId;
                 return (
                   <button
