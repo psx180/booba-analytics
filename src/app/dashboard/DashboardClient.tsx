@@ -831,9 +831,20 @@ export default function DashboardClient() {
   // ── Onboarding import handler ───────────────────────────────────────────
   const handleImport = async () => {
     setImporting(true);
-    setImportProgress('Fetching trades from Pacifica…');
+    setImportProgress('Fetching trades from Pacifica... (0 fills loaded)');
     setImportDone(false);
     setImportSummary(null);
+
+    const stageLabel = (stage: string, fillsFetched: number) => {
+      switch (stage) {
+        case 'fetching':  return `Fetching trades from Pacifica... (${fillsFetched} fills loaded)`;
+        case 'grouping':  return 'Grouping trades into positions...';
+        case 'regimes':   return 'Detecting market regimes...';
+        case 'computing': return 'Computing analytics...';
+        case 'done':      return 'Done! Redirecting...';
+        default:          return null;
+      }
+    };
 
     // Poll /api/import/status every 2 seconds to surface live progress
     const pollInterval = setInterval(async () => {
@@ -841,8 +852,9 @@ export default function DashboardClient() {
         const statusRes = await authFetch('/api/import/status');
         if (statusRes.ok) {
           const status = await statusRes.json();
-          if (status.message && status.stage !== 'idle' && status.stage !== 'done') {
-            setImportProgress(status.message);
+          if (status.stage && status.stage !== 'idle') {
+            const label = stageLabel(status.stage, status.fillsFetched ?? 0);
+            if (label) setImportProgress(label);
           }
         }
       } catch { /* ignore — the import itself will surface errors */ }
@@ -870,17 +882,17 @@ export default function DashboardClient() {
       if (totalPositions > 0) parts.push(`Grouped into ${totalPositions} positions`);
       if (steps?.regimes?.tagged > 0) parts.push(`Tagged ${steps.regimes.tagged} trades with market regime`);
 
+      setImportProgress('Done! Redirecting...');
       setImportSummary(
         parts.length > 0
           ? parts.join('. ') + '.'
           : summary?.message ?? 'Import complete.',
       );
       setImportDone(true);
-      setImportProgress(null);
     } catch {
       setImportSummary('Import failed — check server logs.');
-      setImportDone(true);
       setImportProgress(null);
+      setImportDone(true);
     } finally {
       clearInterval(pollInterval);
       setImporting(false);

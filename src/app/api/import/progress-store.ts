@@ -5,7 +5,7 @@
  */
 
 export interface ImportProgress {
-  stage: 'fetching' | 'grouping' | 'computing' | 'done' | 'error';
+  stage: 'fetching' | 'grouping' | 'regimes' | 'computing' | 'done' | 'error';
   message: string;
   fillsFetched: number;
   updatedAt: number;

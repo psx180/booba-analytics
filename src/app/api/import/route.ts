@@ -151,6 +151,7 @@ export async function POST(req: NextRequest) {
     // 8. Regime tagging — now redundant for BTC proxy (runCompute slow tier handles it),
     // but kept as optional override so the route stays backwards-compatible.
     if (withRegimes) {
+      setProgress(walletAddress, { stage: 'regimes', message: 'Detecting market regimes…', fillsFetched: fills.length });
       try {
         const { AdxAtrDetector, RegimeService } = await import('@/services/regime');
         const { getCandleCache, CacheBackedCandleSource } = await import('@/services/candles');
