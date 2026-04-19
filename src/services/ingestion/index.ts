@@ -217,13 +217,36 @@ export async function syncEquitySnapshots(
 ): Promise<SyncEquitySnapshotsResult> {
   const result: SyncEquitySnapshotsResult = { fetched: 0, upserted: 0, errors: [] };
 
-  let snapshots;
-  try {
-    snapshots = await accountApi.getEquityHistory({ account: walletAddress, timeRange: 'all' });
-  } catch (err) {
-    result.errors.push(`getEquityHistory: ${String(err)}`);
+  // Try successively narrower timeRanges if 'all' returns nothing — Pacifica
+  // /portfolio has been observed to return empty for 'all' on some accounts
+  // while returning data for shorter windows.
+  const timeRanges: Array<'all' | '30d' | '7d' | '14d' | '1d'> = ['all', '30d', '14d', '7d', '1d'];
+  let snapshots: Awaited<ReturnType<typeof accountApi.getEquityHistory>> = [];
+  let usedTimeRange: typeof timeRanges[number] | null = null;
+
+  for (const timeRange of timeRanges) {
+    try {
+      const page = await accountApi.getEquityHistory({ account: walletAddress, timeRange });
+      console.log(
+        `[sync] getEquityHistory(timeRange=${timeRange}) → ${page.length} snapshots`,
+        page[0] ? `first: ${JSON.stringify(page[0])}` : '',
+      );
+      if (page.length > 0) {
+        snapshots = page;
+        usedTimeRange = timeRange;
+        break;
+      }
+    } catch (err) {
+      result.errors.push(`getEquityHistory(${timeRange}): ${String(err)}`);
+      console.error(`[sync] getEquityHistory(timeRange=${timeRange}) failed`, err);
+    }
+  }
+
+  if (snapshots.length === 0) {
+    console.warn(`[sync] No equity snapshots returned for ${walletAddress} across any timeRange`);
     return result;
   }
+  console.log(`[sync] Using timeRange=${usedTimeRange} — ${snapshots.length} snapshots for ${walletAddress}`);
 
   result.fetched = snapshots.length;
 
@@ -254,7 +277,9 @@ export async function syncEquitySnapshots(
       });
       result.upserted++;
     } catch (err) {
-      result.errors.push(`snapshot ${snap.timestamp}: ${String(err)}`);
+      const msg = `snapshot ${snap.timestamp}: ${String(err)}`;
+      result.errors.push(msg);
+      console.error(`[sync] equitySnapshot upsert failed — ${msg}`);
     }
   }
 
@@ -276,6 +301,7 @@ export interface SyncBalanceEventsResult {
 
 const KNOWN_EVENT_TYPES = new Set([
   'deposit',
+  'withdraw',
   'withdrawal',
   'trade',
   'funding',
@@ -289,6 +315,8 @@ const KNOWN_EVENT_TYPES = new Set([
   'realized_pnl',
 ]);
 
+// Pacifica returns 'withdraw' (not 'withdrawal'); match both spellings via
+// substring so future variants like 'withdraw_request' still classify.
 function classifyEventType(eventType: string): 'deposit' | 'withdrawal' | 'other' {
   const lower = eventType.toLowerCase();
   if (lower.includes('deposit')) return 'deposit';
@@ -375,7 +403,9 @@ export async function syncBalanceEvents(
         });
         result.upserted++;
       } catch (err) {
-        result.errors.push(`event ${entry.created_at}/${eventType}: ${String(err)}`);
+        const msg = `event ${entry.created_at}/${eventType} amount=${amount}: ${String(err)}`;
+        result.errors.push(msg);
+        console.error(`[sync] balanceEvent upsert failed — ${msg}`);
       }
     }
 
