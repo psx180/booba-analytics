@@ -33,7 +33,7 @@ import { computeWartResult, type WartResult } from './metrics/wart';
 import { computeEntropyResult, type EntropyResult } from './insights/entropy-insight';
 import { computeRiskMetrics, type RiskMetrics } from './metrics/risk-metrics';
 import { performanceAggregator } from './aggregations/performance';
-import { equityCurveAggregator } from './aggregations/equity-curve';
+import { equityCurveAggregator, getEquityCurveAsync } from './aggregations/equity-curve';
 
 export interface MetricComputeSummary {
   computed: number;
@@ -219,6 +219,21 @@ export class AnalyticsService {
       throw new Error(`Unknown aggregator: ${name}`);
     }
     return (aggregator.aggregate as any)(positions, options ?? filters);
+  }
+
+  /**
+   * Async equity-curve path that routes through the pluggable
+   * EquitySourceProvider. Callers opt in when EQUITY_PROVIDER_MODE is set
+   * to something other than 'legacy'; the sync aggregator path remains the
+   * default so existing output is byte-identical until the feature is
+   * explicitly enabled.
+   */
+  async aggregateEquityCurveAsync(
+    walletAddress: string,
+    filters?: Filters,
+  ): Promise<AggregationResult> {
+    const positions = await this.loadFilteredPositions(walletAddress, filters);
+    return getEquityCurveAsync(walletAddress, positions);
   }
 
   async aggregateAll(

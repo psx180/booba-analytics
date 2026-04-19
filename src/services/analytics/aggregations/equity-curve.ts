@@ -21,6 +21,7 @@
 import * as ss from 'simple-statistics';
 import type { Aggregator, Position } from './base';
 import type { AggregationResult } from '../types';
+import { defaultEquityProvider, computeDrawdownSummary } from '../equity';
 
 export interface UnderwaterPoint {
   date: string;
@@ -28,6 +29,10 @@ export interface UnderwaterPoint {
   underwaterPct: number;
 }
 
+// TODO: make the Aggregator interface async so this module can delegate
+// entirely to EquitySourceProvider. Until then, the sync path below
+// preserves legacy behavior bit-for-bit and API routes that want the new
+// provider pipeline call getEquityCurveAsync() instead.
 export const equityCurveAggregator: Aggregator = {
   name: 'equity-curve',
 
@@ -129,4 +134,64 @@ function consistencyR2(series: { cumulativePnl: number }[]): number {
 function round(value: number, digits: number): number {
   const mult = Math.pow(10, digits);
   return Math.round(value * mult) / mult;
+}
+
+/**
+ * Async equity-curve computation that routes through the pluggable
+ * EquitySourceProvider. API routes should call this when
+ * EQUITY_PROVIDER_MODE is set to anything other than 'legacy'.
+ *
+ * Returns the same AggregationResult shape as the sync aggregator so the
+ * frontend contract is preserved.
+ */
+export async function getEquityCurveAsync(
+  walletAddress: string,
+  positions: Position[],
+): Promise<AggregationResult> {
+  const equitySeries = await defaultEquityProvider.getEquityCurve(walletAddress, positions);
+  const drawdown = computeDrawdownSummary(equitySeries);
+  const startingCapital = await defaultEquityProvider.getStartingCapital(walletAddress);
+
+  const series = equitySeries.map((pt) => ({
+    date: pt.timestamp.toISOString(),
+    value: round(pt.equity, 2),
+    cumulativePnl: round(pt.cumulativePnl, 2),
+    regime: pt.regime ?? 'unknown',
+    positionId: '',
+  }));
+
+  const underwaterSeries: UnderwaterPoint[] = equitySeries.map((pt) => ({
+    date: pt.timestamp.toISOString(),
+    underwater: round(pt.underwaterDollars, 2),
+    underwaterPct: round(pt.underwaterPct, 2),
+  }));
+
+  const consistency = consistencyR2(series);
+  const finalPnl = equitySeries.length > 0
+    ? equitySeries[equitySeries.length - 1].cumulativePnl
+    : 0;
+  const hwm = equitySeries.length > 0
+    ? Math.max(...equitySeries.map((p) => p.peakEquity))
+    : 0;
+
+  return {
+    name: 'equity-curve',
+    data: {
+      tradeCount: equitySeries.length,
+      startingCapital,
+      finalPnl: round(finalPnl, 2),
+      consistency: round(consistency, 4),
+      hwm: round(hwm, 2),
+      maxDrawdown: round(drawdown.maxDrawdownDollars, 2),
+      maxDrawdownPct: round(drawdown.maxDrawdownPct, 2),
+      maxDrawdownDuration: drawdown.maxDrawdownDuration,
+      currentDrawdown: round(drawdown.currentDrawdownDollars, 2),
+      currentDrawdownPct: round(drawdown.currentDrawdownPct, 2),
+      drawdownEpisodesOver5Pct: drawdown.drawdownEpisodesOver5Pct,
+      avgRecoveryTrades: drawdown.avgRecoveryTrades,
+      timeUnderwaterPct: round(drawdown.timeUnderwaterPct, 2),
+      underwaterSeries,
+    },
+    series,
+  };
 }
