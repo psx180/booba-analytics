@@ -3,6 +3,7 @@ import type { EquitySourceProvider, EquityProviderMode } from './types';
 import { LegacyPnlBasedProvider } from './legacy-pnl-based';
 import { StartingCapitalProvider } from './starting-capital';
 import { SnapshotTwrProvider } from './snapshot-twr';
+import { ReconstructedProvider } from './reconstructed';
 import { prisma } from '../../../lib/prisma';
 export type {
   EquitySourceProvider,
@@ -16,6 +17,7 @@ export { computeSharpe, computeSortino, computeCalmar } from './risk-metrics';
 export { LegacyPnlBasedProvider } from './legacy-pnl-based';
 export { StartingCapitalProvider } from './starting-capital';
 export { SnapshotTwrProvider } from './snapshot-twr';
+export { ReconstructedProvider } from './reconstructed';
 export function createEquityProvider(
   mode: EquityProviderMode,
   db?: PrismaClient,
@@ -28,9 +30,11 @@ export function createEquityProvider(
       return new StartingCapitalProvider(database);
     case 'snapshot-twr':
       return new SnapshotTwrProvider(database);
+    case 'reconstructed':
+      return new ReconstructedProvider(database);
     default:
-      return new LegacyPnlBasedProvider();
+      return new ReconstructedProvider(database);
   }
 }
-const mode = (process.env.EQUITY_PROVIDER_MODE ?? 'starting-capital') as EquityProviderMode;
+const mode = (process.env.EQUITY_PROVIDER_MODE ?? 'reconstructed') as EquityProviderMode;
 export const defaultEquityProvider = createEquityProvider(mode);

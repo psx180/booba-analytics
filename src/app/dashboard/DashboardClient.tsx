@@ -133,7 +133,7 @@ interface EquityCurveResult {
     chartMode?: ChartMode;
     hasFilters?: boolean;
   };
-  series: (EquityCurvePoint & { value?: number })[];
+  series: (EquityCurvePoint & { value?: number; equity?: number })[];
 }
 
 interface Insight {
@@ -483,6 +483,7 @@ export default function DashboardClient() {
             date: p.date,
             cumulativePnl: p.cumulativePnl,
             value: p.value,
+            equity: p.equity ?? p.value,
           })),
           tradeMetas: (equityData.series ?? []).map((p) => ({
             date: p.date,
@@ -863,13 +864,40 @@ export default function DashboardClient() {
   );
 
   // ── Client-side underwater curve ──────────────────────────────────────────
-  // Recomputed from the same position-based cumulativePnl series the P&L chart
-  // plots, so the x-axis dates and peak alignment match point-for-point.
-  // startingCapital comes from the equity provider (earliest snapshot equity
-  // or deposit sum) to give us a real % denominator; when unavailable we fall
-  // back to 1 so the curve still renders without divide-by-zero.
+  // Two code paths, branched on whether the API exposed a per-point `equity`
+  // field (populated by providers that reconstruct true equity — reconstructed
+  // and snapshot-twr).
+  //
+  // When `equity` is present: use it directly. This reflects every deposit
+  // and withdrawal at its real timestamp, so a mid-history deposit doesn't
+  // manufacture a fake recovery on the underwater curve.
+  //
+  // When it's absent (legacy provider): fall back to the previous
+  // startingCapital + cumulativePnl proxy, which is the right shape but
+  // collapses all cash flows into the single starting-capital number.
+  //
+  // Peak tracks the higher of equity and a 1-dollar floor so the very first
+  // point (where peak could otherwise be 0) doesn't blow up the % ratio.
   const clientUnderwaterSeries = useMemo<UnderwaterPoint[]>(() => {
     if (equityCurve.length === 0) return [];
+    const hasEquity = equityCurve[0].equity != null;
+
+    if (hasEquity) {
+      let peak = 0;
+      return equityCurve.map((p) => {
+        const equity = p.equity ?? 0;
+        if (equity > peak) peak = equity;
+        const safePeak = Math.max(peak, 1);
+        const underwater = equity - safePeak;
+        const uwPct = (underwater / safePeak) * 100;
+        return {
+          date: p.date,
+          underwater: Math.round(Math.min(0, underwater) * 100) / 100,
+          underwaterPct: Math.round(Math.max(-100, Math.min(0, uwPct)) * 100) / 100,
+        };
+      });
+    }
+
     const startingCapital = equityContext?.startingCapital ?? 0;
     let peak = Math.max(startingCapital, 0);
     return equityCurve.map((p) => {
