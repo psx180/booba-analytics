@@ -35,6 +35,9 @@ model Journal {
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
+  startingCapital        Float?
+  startingCapitalSource  String?
+
   positions     Position[]
 
   @@index([walletAddress])
