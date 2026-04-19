@@ -19,13 +19,15 @@ export async function GET(req: NextRequest) {
   }
   if (journalRes.id) filters.journalId = journalRes.id;
 
-  // Route to the pluggable EquitySourceProvider pipeline when the operator
-  // has opted in via EQUITY_PROVIDER_MODE. Default ('legacy' or unset) keeps
-  // the existing sync aggregator path so output is unchanged.
-  const equityMode = process.env.EQUITY_PROVIDER_MODE ?? 'legacy';
-  const result = equityMode !== 'legacy'
-    ? await service.aggregateEquityCurveAsync(walletAddress, filters)
-    : await service.aggregate('equity-curve', walletAddress, filters);
+  const result = await service.aggregateEquityCurveAsync(walletAddress, filters);
+
+  // Fetch startingCapitalSource from DB to include in the response
+  const journal = await prisma.journal.findFirst({ where: { walletAddress } });
+  const startingCapitalSource = journal?.startingCapitalSource ?? 'default';
+  const enriched = {
+    ...result,
+    data: { ...result.data, startingCapitalSource },
+  };
 
   // Optional xPnL overlay — opt-in via ?withXpnl=true so existing callers
   // (regime breakdown table, weekly summary jobs) don't pay the KNN cost.
@@ -45,9 +47,9 @@ export async function GET(req: NextRequest) {
     }
     const positions = await prisma.position.findMany({ where });
     const xpnlResult = computeXpnlResult(positions as any);
-    return NextResponse.json({ ...result, xpnl: xpnlResult });
+    return NextResponse.json({ ...enriched, xpnl: xpnlResult });
   }
 
-  return NextResponse.json(result);
+  return NextResponse.json(enriched);
   });
 }

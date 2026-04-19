@@ -114,6 +114,8 @@ interface EquityCurveResult {
   data: {
     tradeCount: number;
     finalPnl: number;
+    startingCapital?: number;
+    startingCapitalSource?: string;
     maxDrawdown?: number;
     maxDrawdownPct?: number;
     maxDrawdownDuration?: number;
@@ -171,6 +173,8 @@ interface DashboardCacheEntry {
     avgDrawdownDuration: number;
     maxDrawdown: number;
   } | null;
+  startingCapital: number | null;
+  startingCapitalSource: string | null;
 }
 
 const dashboardCache = new Map<string, DashboardCacheEntry>();
@@ -400,6 +404,8 @@ export default function DashboardClient() {
     avgDrawdownDuration: number;
     maxDrawdown: number;
   } | null>(null);
+  const [startingCapital, setStartingCapital] = useState<number | null>(null);
+  const [startingCapitalSource, setStartingCapitalSource] = useState<string | null>(null);
 
   // ── Booba convergence suggestion cycling ──
   const [suggestionIdx, setSuggestionIdx] = useState(0);
@@ -479,6 +485,8 @@ export default function DashboardClient() {
           sharpeRatio: (summaryData as any).sharpeRatio ?? null,
           payoffRatio: (summaryData as any).payoffRatio ?? null,
           drawdownAnalysis: (summaryData as any).drawdownAnalysis ?? null,
+          startingCapital: equityData.data?.startingCapital ?? null,
+          startingCapitalSource: equityData.data?.startingCapitalSource ?? null,
         };
 
         dashboardCache.set(cacheKey, entry);
@@ -499,6 +507,8 @@ export default function DashboardClient() {
         setSharpeRatio(entry.sharpeRatio);
         setPayoffRatio(entry.payoffRatio);
         setDrawdownAnalysis(entry.drawdownAnalysis);
+        setStartingCapital(entry.startingCapital);
+        setStartingCapitalSource(entry.startingCapitalSource);
       } finally {
         if (!isBackground) setLoading(false);
       }
@@ -531,6 +541,8 @@ export default function DashboardClient() {
         setSharpeRatio(cached.sharpeRatio);
         setPayoffRatio(cached.payoffRatio);
         setDrawdownAnalysis(cached.drawdownAnalysis);
+        setStartingCapital(cached.startingCapital);
+        setStartingCapitalSource(cached.startingCapitalSource);
         setLoading(false);
         // Background refresh — no spinner, silently updates state when done
         doFetch(regime, true).catch(console.error);
@@ -1219,6 +1231,17 @@ export default function DashboardClient() {
               xpnlSeries={xpnlSummary?.cumulativeSeries}
               showXpnl={showXpnlOverlay}
             />
+            {startingCapital != null && (
+              <div className="text-xs text-gray-400 mt-1">
+                Starting capital: ${startingCapital.toLocaleString()}
+                <span className="text-gray-500 ml-1">
+                  ({startingCapitalSource === 'portfolio_snapshot' ? 'from Pacifica' :
+                    startingCapitalSource === 'deposit_sum' ? 'from deposits' :
+                    startingCapitalSource === 'manual' ? 'manually set' :
+                    'estimated'})
+                </span>
+              </div>
+            )}
             {underwaterSeries.length > 0 && (
               <div className="mt-2 pt-2 border-t border-[#21262d]">
                 <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
