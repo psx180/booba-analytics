@@ -21,6 +21,7 @@
  */
 
 import type { AccountFundingEntry, TradeHistoryEntry } from '../pacifica/types/account';
+import type { AccountAPI } from '../pacifica/rest/account';
 import { prisma } from '../../lib/prisma';
 import { fillId, mapFillToTrade } from './mapper';
 
@@ -185,6 +186,211 @@ export async function ingestFunding(
       result.errors.push(`Funding event ${event.history_id}: ${String(err)}`);
     }
   }
+
+  return result;
+}
+
+// ─── Equity snapshots ingestion ───────────────────────────────────────────────
+
+export interface SyncEquitySnapshotsResult {
+  fetched: number;
+  upserted: number;
+  errors: string[];
+}
+
+// Pacifica timestamps come back as Unix epoch — usually milliseconds but
+// occasionally seconds depending on endpoint. Magnitude check: ~1.7e12 = ms,
+// ~1.7e9 = s. Anything below 1e12 we treat as seconds and rescale.
+function toJsDate(ts: number): Date {
+  return new Date(ts > 1e12 ? ts : ts * 1000);
+}
+
+/**
+ * Pull total-equity snapshots from Pacifica's /portfolio endpoint and upsert
+ * them into the EquitySnapshot table. The @@unique([walletAddress, timestamp])
+ * constraint makes this idempotent — re-running the sync just refreshes the
+ * latest tail of snapshots.
+ */
+export async function syncEquitySnapshots(
+  walletAddress: string,
+  accountApi: AccountAPI,
+): Promise<SyncEquitySnapshotsResult> {
+  const result: SyncEquitySnapshotsResult = { fetched: 0, upserted: 0, errors: [] };
+
+  let snapshots;
+  try {
+    snapshots = await accountApi.getEquityHistory({ account: walletAddress, timeRange: 'all' });
+  } catch (err) {
+    result.errors.push(`getEquityHistory: ${String(err)}`);
+    return result;
+  }
+
+  result.fetched = snapshots.length;
+
+  for (const snap of snapshots) {
+    const accountEquity = parseFloat(snap.account_equity);
+    const pnl = parseFloat(snap.pnl);
+    const timestamp = toJsDate(snap.timestamp);
+
+    if (!isFinite(accountEquity) || isNaN(timestamp.getTime())) {
+      result.errors.push(`bad snapshot ${JSON.stringify(snap)}`);
+      continue;
+    }
+
+    try {
+      await prisma.equitySnapshot.upsert({
+        where: { walletAddress_timestamp: { walletAddress, timestamp } },
+        create: {
+          walletAddress,
+          timestamp,
+          accountEquity,
+          pnl: isFinite(pnl) ? pnl : null,
+          source: 'pacifica',
+        },
+        update: {
+          accountEquity,
+          pnl: isFinite(pnl) ? pnl : null,
+        },
+      });
+      result.upserted++;
+    } catch (err) {
+      result.errors.push(`snapshot ${snap.timestamp}: ${String(err)}`);
+    }
+  }
+
+  console.log(`[sync] Synced ${result.upserted} equity snapshots for ${walletAddress}`);
+  return result;
+}
+
+// ─── Balance events ingestion ─────────────────────────────────────────────────
+
+export interface SyncBalanceEventsResult {
+  fetched: number;
+  upserted: number;
+  deposits: number;
+  withdrawals: number;
+  other: number;
+  unknownTypes: string[];
+  errors: string[];
+}
+
+const KNOWN_EVENT_TYPES = new Set([
+  'deposit',
+  'withdrawal',
+  'trade',
+  'funding',
+  'liquidation',
+  'fee',
+  'transfer',
+  'transfer_in',
+  'transfer_out',
+  'subaccount_transfer',
+  'rebate',
+  'realized_pnl',
+]);
+
+function classifyEventType(eventType: string): 'deposit' | 'withdrawal' | 'other' {
+  const lower = eventType.toLowerCase();
+  if (lower.includes('deposit')) return 'deposit';
+  if (lower.includes('withdraw')) return 'withdrawal';
+  return 'other';
+}
+
+/**
+ * Pull the full balance-event log from Pacifica with cursor pagination and
+ * upsert each event into the BalanceEvent table. Mirrors the pagination
+ * pattern in AccountAPI.getAllTradeHistory(). Idempotent via the
+ * @@unique([walletAddress, timestamp, eventType, amount]) constraint.
+ */
+export async function syncBalanceEvents(
+  walletAddress: string,
+  accountApi: AccountAPI,
+): Promise<SyncBalanceEventsResult> {
+  const result: SyncBalanceEventsResult = {
+    fetched: 0,
+    upserted: 0,
+    deposits: 0,
+    withdrawals: 0,
+    other: 0,
+    unknownTypes: [],
+    errors: [],
+  };
+
+  const unknownSeen = new Set<string>();
+  let cursor: string | undefined;
+
+  do {
+    let page;
+    try {
+      page = await accountApi.getBalanceHistory({ account: walletAddress, cursor });
+    } catch (err) {
+      result.errors.push(`getBalanceHistory cursor=${cursor ?? 'start'}: ${String(err)}`);
+      break;
+    }
+
+    result.fetched += page.data.length;
+
+    for (const entry of page.data) {
+      const amount = parseFloat(entry.amount);
+      const balance = parseFloat(entry.balance);
+      const timestamp = toJsDate(entry.created_at);
+      const eventType = entry.event_type;
+
+      if (!isFinite(amount) || isNaN(timestamp.getTime())) {
+        result.errors.push(`bad balance entry ${JSON.stringify(entry)}`);
+        continue;
+      }
+
+      if (!KNOWN_EVENT_TYPES.has(eventType.toLowerCase()) && !unknownSeen.has(eventType)) {
+        unknownSeen.add(eventType);
+        console.warn(`[sync] unknown balance event_type "${eventType}" — classifying as 'other'`);
+      }
+
+      const bucket = classifyEventType(eventType);
+      if (bucket === 'deposit') result.deposits++;
+      else if (bucket === 'withdrawal') result.withdrawals++;
+      else result.other++;
+
+      try {
+        await prisma.balanceEvent.upsert({
+          where: {
+            walletAddress_timestamp_eventType_amount: {
+              walletAddress,
+              timestamp,
+              eventType,
+              amount,
+            },
+          },
+          create: {
+            walletAddress,
+            timestamp,
+            eventType,
+            amount,
+            balance: isFinite(balance) ? balance : null,
+            source: 'pacifica',
+          },
+          update: {
+            balance: isFinite(balance) ? balance : null,
+          },
+        });
+        result.upserted++;
+      } catch (err) {
+        result.errors.push(`event ${entry.created_at}/${eventType}: ${String(err)}`);
+      }
+    }
+
+    cursor = page.next_cursor ?? undefined;
+    if (!page.has_more) break;
+  } while (cursor);
+
+  result.unknownTypes = Array.from(unknownSeen);
+  console.log(
+    `[sync] Synced ${result.upserted} balance events ` +
+      `(${result.deposits} deposits, ${result.withdrawals} withdrawals, ${result.other} other)` +
+      (result.unknownTypes.length > 0
+        ? ` — unknown event_types: ${result.unknownTypes.join(', ')}`
+        : ''),
+  );
 
   return result;
 }

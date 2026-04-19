@@ -2,8 +2,8 @@ import type { PrismaClient } from '../../../../generated/prisma/client';
 import type { EquitySourceProvider, EquityProviderMode } from './types';
 import { LegacyPnlBasedProvider } from './legacy-pnl-based';
 import { StartingCapitalProvider } from './starting-capital';
+import { SnapshotTwrProvider } from './snapshot-twr';
 import { prisma } from '../../../lib/prisma';
-
 export type {
   EquitySourceProvider,
   EquityPoint,
@@ -15,7 +15,7 @@ export { computeDrawdownSummary } from './drawdown';
 export { computeSharpe, computeSortino, computeCalmar } from './risk-metrics';
 export { LegacyPnlBasedProvider } from './legacy-pnl-based';
 export { StartingCapitalProvider } from './starting-capital';
-
+export { SnapshotTwrProvider } from './snapshot-twr';
 export function createEquityProvider(
   mode: EquityProviderMode,
   db?: PrismaClient,
@@ -27,14 +27,10 @@ export function createEquityProvider(
     case 'starting-capital':
       return new StartingCapitalProvider(database);
     case 'snapshot-twr':
-      console.warn(
-        '[equity] snapshot-twr provider not yet implemented, falling back to legacy',
-      );
-      return new LegacyPnlBasedProvider();
+      return new SnapshotTwrProvider(database);
     default:
       return new LegacyPnlBasedProvider();
   }
 }
-
 const mode = (process.env.EQUITY_PROVIDER_MODE ?? 'starting-capital') as EquityProviderMode;
 export const defaultEquityProvider = createEquityProvider(mode);

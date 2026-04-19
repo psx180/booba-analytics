@@ -24,7 +24,8 @@
       "Bash(xargs grep *)",
       "WebFetch(domain:docs.pacifica.fi)",
       "Bash(npx vitest *)",
-      "Bash(DATABASE_URL=\"file:./dev.db\" npx prisma *)"
+      "Bash(DATABASE_URL=\"file:./dev.db\" npx prisma migrate deploy)",
+      "Bash(DATABASE_URL=\"file:./dev.db\" npx prisma migrate status)"
     ]
   }
 }

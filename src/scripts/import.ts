@@ -22,6 +22,8 @@ import {
   getExistingFillIds,
   ingestFunding,
   ingestTrades,
+  syncBalanceEvents,
+  syncEquitySnapshots,
 } from '../services/ingestion';
 import { ensureDefaultJournal } from '../lib/journals';
 
@@ -91,6 +93,36 @@ async function main() {
       console.log(`  Errors (${fundingResult.errors.length}):`);
       fundingResult.errors.forEach((e) => console.log(`    ${e}`));
     }
+  }
+
+  // ── Sync equity snapshots & balance events ─────────────────────────────────
+  // Required by the snapshot-twr equity provider — pulls Pacifica's portfolio
+  // history and the cash-flow event log into local tables.
+
+  console.log('\nFetching equity snapshots from Pacifica...');
+  const equityResult = await syncEquitySnapshots(walletAddress, client.account);
+  console.log('\nEquity snapshot sync:');
+  console.log(`  Snapshots fetched : ${equityResult.fetched}`);
+  console.log(`  Snapshots upserted: ${equityResult.upserted}`);
+  if (equityResult.errors.length > 0) {
+    console.log(`  Errors (${equityResult.errors.length}):`);
+    equityResult.errors.slice(0, 5).forEach((e) => console.log(`    ${e}`));
+  }
+
+  console.log('\nFetching balance event history from Pacifica...');
+  const balanceResult = await syncBalanceEvents(walletAddress, client.account);
+  console.log('\nBalance event sync:');
+  console.log(`  Events fetched   : ${balanceResult.fetched}`);
+  console.log(`  Events upserted  : ${balanceResult.upserted}`);
+  console.log(`  Deposits         : ${balanceResult.deposits}`);
+  console.log(`  Withdrawals      : ${balanceResult.withdrawals}`);
+  console.log(`  Other            : ${balanceResult.other}`);
+  if (balanceResult.unknownTypes.length > 0) {
+    console.log(`  Unknown types    : ${balanceResult.unknownTypes.join(', ')}`);
+  }
+  if (balanceResult.errors.length > 0) {
+    console.log(`  Errors (${balanceResult.errors.length}):`);
+    balanceResult.errors.slice(0, 5).forEach((e) => console.log(`    ${e}`));
   }
 
   console.log('\nDone.\n');
