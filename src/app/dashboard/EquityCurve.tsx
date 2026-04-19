@@ -16,7 +16,11 @@ import { useMemo } from 'react';
 export interface EquityPoint {
   date: string;
   cumulativePnl: number;
+  /** Absolute account equity at this point. Populated by the snapshot-twr provider. */
+  value?: number;
 }
+
+export type ChartMode = 'pnl' | 'equity';
 
 export interface XpnlOverlayPoint {
   date: string;
@@ -87,9 +91,17 @@ interface Props {
   equityCurve: EquityPoint[];
   tradeMetas: TradeMeta[];
   activeRegimeFilter: string | null;
-  /** Optional dual-curve overlay: actual vs expected P&L. */
+  /** Optional dual-curve overlay: actual vs expected P&L. Ignored when chartMode='equity'. */
   xpnlSeries?: XpnlOverlayPoint[];
   showXpnl?: boolean;
+  /**
+   * What the main line represents. 'pnl' plots cumulativePnl starting at 0
+   * (legacy behavior). 'equity' plots the absolute account equity from
+   * `point.value` — used by the snapshot-twr provider. xPnL overlay is
+   * suppressed in 'equity' mode because the two series live on different
+   * scales; the dashboard renders a separate PnlComparison chart instead.
+   */
+  chartMode?: ChartMode;
 }
 
 export default function EquityCurve({
@@ -98,14 +110,22 @@ export default function EquityCurve({
   activeRegimeFilter,
   xpnlSeries,
   showXpnl,
+  chartMode = 'pnl',
 }: Props) {
+  const isEquityMode = chartMode === 'equity';
+  const yKey = isEquityMode ? 'value' : 'cumulativePnl';
+  const yLabel = isEquityMode ? 'Equity' : 'Cum P&L';
   const regimeBands = useMemo(() => buildRegimeBands(tradeMetas), [tradeMetas]);
 
   // Merge xPnL into equity curve points by index. xPnL is computed from the
   // same set of closed positions ordered by exit time, so positional index
   // matching is safe — same trade lives at the same position in both arrays.
+  // xPnL is suppressed in equity mode because the two series are on different
+  // scales (account equity vs cumulative P&L); the dashboard stacks a
+  // PnlComparison chart below for that comparison.
   const merged = useMemo(() => {
-    if (!showXpnl || !xpnlSeries || xpnlSeries.length === 0) {
+    const xpnlActive = showXpnl && !isEquityMode && xpnlSeries && xpnlSeries.length > 0;
+    if (!xpnlActive) {
       return equityCurve.map((p, i) => ({
         ...p,
         xpnlCumPnl: null as number | null,
@@ -116,7 +136,7 @@ export default function EquityCurve({
       }));
     }
     return equityCurve.map((p, i) => {
-      const x = xpnlSeries[i];
+      const x = xpnlSeries![i];
       const xCum = x ? x.xpnlCumPnl : null;
       const gap = xCum != null ? p.cumulativePnl - xCum : 0;
       return {
@@ -132,10 +152,13 @@ export default function EquityCurve({
         regimeAtEntry: tradeMetas[i]?.regimeAtEntry ?? null,
       };
     });
-  }, [equityCurve, xpnlSeries, showXpnl, tradeMetas]);
+  }, [equityCurve, xpnlSeries, showXpnl, tradeMetas, isEquityMode]);
 
-  const isPositive =
-    equityCurve.length > 0 && equityCurve[equityCurve.length - 1].cumulativePnl >= 0;
+  // In equity mode we want the line green regardless — equity being positive
+  // is always "good". In P&L mode it reflects net gain/loss sign.
+  const isPositive = isEquityMode
+    ? true
+    : equityCurve.length > 0 && equityCurve[equityCurve.length - 1].cumulativePnl >= 0;
 
   if (equityCurve.length === 0) {
     return (
@@ -155,19 +178,27 @@ export default function EquityCurve({
       tradeCount?: number;
       regimeAtEntry?: string | null;
     };
+    const shownValue = isEquityMode ? (point.value ?? point.cumulativePnl) : point.cumulativePnl;
     const pnl = point.cumulativePnl;
     const xpnl = point.xpnlCumPnl;
     const regime = point.regimeAtEntry;
+    const valueColorClass = isEquityMode
+      ? 'text-white'
+      : shownValue >= 0
+        ? 'text-green-400'
+        : 'text-red-400';
     return (
       <div className="bg-[#1c2128] border border-[#30363d] rounded px-3 py-2 text-xs space-y-0.5">
         <div className="text-[#8b949e]">{formatDate(point.date)}</div>
         {point.tradeCount != null && (
           <div className="text-[#6e7681]">Trade #{point.tradeCount}</div>
         )}
-        <div className={pnl >= 0 ? 'text-green-400' : 'text-red-400'}>
-          Cum P&amp;L {formatPnl(pnl)}
+        <div className={valueColorClass}>
+          {yLabel} {isEquityMode
+            ? `$${shownValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+            : formatPnl(shownValue)}
         </div>
-        {xpnl != null && (
+        {xpnl != null && !isEquityMode && (
           <div className="text-slate-400">
             xPnL {formatPnl(xpnl)}
             <span className="ml-2 text-[#6e7681]">
@@ -227,7 +258,7 @@ export default function EquityCurve({
 
         <Area
           type="monotone"
-          dataKey="cumulativePnl"
+          dataKey={yKey}
           stroke={lineColor}
           strokeWidth={2}
           fill={`url(#${gradientId})`}
@@ -236,7 +267,7 @@ export default function EquityCurve({
         />
 
         {/* xPnL overlay — dashed gray line for the expected curve. */}
-        {showXpnl && xpnlSeries && xpnlSeries.length > 0 && (
+        {showXpnl && !isEquityMode && xpnlSeries && xpnlSeries.length > 0 && (
           <Line
             type="monotone"
             dataKey="xpnlCumPnl"

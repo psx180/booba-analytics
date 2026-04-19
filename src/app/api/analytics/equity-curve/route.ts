@@ -57,7 +57,6 @@ export async function GET(req: NextRequest) {
           (result.data?.startingCapital ?? 0) > 0 ? 'pacifica' : 'fallback',
       },
       returnsMethod: 'twr',
-      provider: 'snapshot-twr',
     };
   }
 

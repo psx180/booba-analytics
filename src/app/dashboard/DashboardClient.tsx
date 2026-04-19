@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import EquityCurve, { EquityPoint, TradeMeta, REGIME_LABELS } from './EquityCurve';
+import EquityCurve, { EquityPoint, TradeMeta, REGIME_LABELS, type ChartMode } from './EquityCurve';
+import PnlComparison from './PnlComparison';
 import UnderwaterCurve, { UnderwaterPoint } from './UnderwaterCurve';
 import OpenPositions from './OpenPositions';
 import LiveToast, { type Toast } from './LiveToast';
@@ -130,8 +131,10 @@ interface EquityCurveResult {
     cashFlowSummary?: CashFlowSummary;
     returnsMethod?: string;
     provider?: string;
+    chartMode?: ChartMode;
+    hasFilters?: boolean;
   };
-  series: EquityCurvePoint[];
+  series: (EquityCurvePoint & { value?: number })[];
 }
 
 interface Insight {
@@ -158,6 +161,8 @@ interface EquityContext {
   cashFlowSummary: CashFlowSummary | null;
   returnsMethod: string | null;
   provider: string | null;
+  chartMode: ChartMode;
+  hasFilters: boolean;
 }
 
 interface DashboardCacheEntry {
@@ -478,6 +483,7 @@ export default function DashboardClient() {
           equityCurve: (equityData.series ?? []).map((p) => ({
             date: p.date,
             cumulativePnl: p.cumulativePnl,
+            value: p.value,
           })),
           tradeMetas: (equityData.series ?? []).map((p) => ({
             date: p.date,
@@ -498,14 +504,14 @@ export default function DashboardClient() {
           sharpeRatio: (summaryData as any).sharpeRatio ?? null,
           payoffRatio: (summaryData as any).payoffRatio ?? null,
           drawdownAnalysis: (summaryData as any).drawdownAnalysis ?? null,
-          equityContext: equityData.data?.cashFlowSummary
-            ? {
-                startingCapital: equityData.data?.startingCapital ?? null,
-                cashFlowSummary: equityData.data.cashFlowSummary,
-                returnsMethod: equityData.data?.returnsMethod ?? null,
-                provider: equityData.data?.provider ?? null,
-              }
-            : null,
+          equityContext: {
+            startingCapital: equityData.data?.startingCapital ?? null,
+            cashFlowSummary: equityData.data?.cashFlowSummary ?? null,
+            returnsMethod: equityData.data?.returnsMethod ?? null,
+            provider: equityData.data?.provider ?? null,
+            chartMode: equityData.data?.chartMode ?? 'pnl',
+            hasFilters: equityData.data?.hasFilters ?? false,
+          },
         };
 
         dashboardCache.set(cacheKey, entry);
@@ -1276,13 +1282,35 @@ export default function DashboardClient() {
                 )}
               </div>
             )}
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-[10px] uppercase tracking-widest text-[#6e7681]">
+                {equityContext?.chartMode === 'equity' ? 'Account Equity' : 'Cumulative P&L'}
+                {equityContext?.hasFilters && (
+                  <span className="ml-2 text-[#6e7681] normal-case tracking-normal">
+                    (from filtered positions — starting at snapshot equity)
+                  </span>
+                )}
+              </div>
+            </div>
             <EquityCurve
               equityCurve={equityCurve}
               tradeMetas={tradeMetas}
               activeRegimeFilter={activeRegime}
               xpnlSeries={xpnlSummary?.cumulativeSeries}
               showXpnl={showXpnlOverlay}
+              chartMode={equityContext?.chartMode ?? 'pnl'}
             />
+            {equityContext?.chartMode === 'equity' &&
+              showXpnlOverlay &&
+              xpnlSummary?.cumulativeSeries &&
+              xpnlSummary.cumulativeSeries.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-[#21262d]">
+                  <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
+                    Actual vs Expected P&L (xPnL)
+                  </div>
+                  <PnlComparison series={xpnlSummary.cumulativeSeries} />
+                </div>
+              )}
             {underwaterSeries.length > 0 && (
               <div className="mt-2 pt-2 border-t border-[#21262d]">
                 <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
