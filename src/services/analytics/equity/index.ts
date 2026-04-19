@@ -1,5 +1,7 @@
 import type { EquitySourceProvider, EquityProviderMode } from './types';
 import { LegacyPnlBasedProvider } from './legacy-pnl-based';
+import { SnapshotTwrProvider } from './snapshot-twr';
+import { prisma } from '../../../lib/prisma';
 
 export type {
   EquitySourceProvider,
@@ -11,6 +13,7 @@ export type {
 export { computeDrawdownSummary } from './drawdown';
 export { computeSharpe, computeSortino, computeCalmar } from './risk-metrics';
 export { LegacyPnlBasedProvider } from './legacy-pnl-based';
+export { SnapshotTwrProvider } from './snapshot-twr';
 
 export function createEquityProvider(mode: EquityProviderMode): EquitySourceProvider {
   switch (mode) {
@@ -22,10 +25,7 @@ export function createEquityProvider(mode: EquityProviderMode): EquitySourceProv
       );
       return new LegacyPnlBasedProvider();
     case 'snapshot-twr':
-      console.warn(
-        '[equity] snapshot-twr provider not yet implemented, falling back to legacy',
-      );
-      return new LegacyPnlBasedProvider();
+      return new SnapshotTwrProvider(prisma as any);
     default:
       return new LegacyPnlBasedProvider();
   }

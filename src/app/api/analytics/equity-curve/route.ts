@@ -6,6 +6,8 @@ import { resolveJournalFilterId } from '@/lib/journals';
 import { parseFilters } from '../_filters';
 import { withAuth } from '@/lib/api-auth';
 
+const EQUITY_PROVIDER_MODE = process.env.EQUITY_PROVIDER_MODE ?? 'legacy';
+
 export async function GET(req: NextRequest) {
   return withAuth(req, async (walletAddress) => {
   const sp = req.nextUrl.searchParams;
@@ -19,7 +21,45 @@ export async function GET(req: NextRequest) {
   }
   if (journalRes.id) filters.journalId = journalRes.id;
 
-  const result = await service.aggregate('equity-curve', walletAddress, filters);
+  // Route through the async equity provider for non-legacy modes (snapshot-twr,
+  // starting-capital). Legacy keeps the byte-identical sync aggregator path so
+  // existing callers see no change unless they opt in via env.
+  const useAsync = EQUITY_PROVIDER_MODE !== 'legacy';
+  const result = useAsync
+    ? await service.aggregateEquityCurveAsync(walletAddress, filters)
+    : await service.aggregate('equity-curve', walletAddress, filters);
+
+  // When the snapshot-twr provider is active, attach cash-flow context so the
+  // dashboard can show "Starting capital: $X / Deposited: $Y / Withdrawn: $Z"
+  // and clarify the returns method. The provider itself stays pure and
+  // unaware of the API contract — context lives at the route boundary.
+  if (EQUITY_PROVIDER_MODE === 'snapshot-twr') {
+    const balanceEvents = await prisma.balanceEvent.findMany({
+      where: { walletAddress },
+      select: { eventType: true, amount: true },
+    });
+    let totalDeposited = 0;
+    let totalWithdrawn = 0;
+    for (const ev of balanceEvents) {
+      const lower = ev.eventType.toLowerCase();
+      if (lower.includes('deposit')) totalDeposited += Math.abs(ev.amount);
+      else if (lower.includes('withdraw')) totalWithdrawn += Math.abs(ev.amount);
+    }
+    result.data = {
+      ...(result.data ?? {}),
+      cashFlowSummary: {
+        totalDeposited: round2(totalDeposited),
+        totalWithdrawn: round2(totalWithdrawn),
+        startingCapitalSource:
+          // If the snapshot-twr provider produced a non-zero startingCapital
+          // we can attribute it to Pacifica equity history; else it came from
+          // the deposits-sum or the $10k floor fallback.
+          (result.data?.startingCapital ?? 0) > 0 ? 'pacifica' : 'fallback',
+      },
+      returnsMethod: 'twr',
+      provider: 'snapshot-twr',
+    };
+  }
 
   // Optional xPnL overlay — opt-in via ?withXpnl=true so existing callers
   // (regime breakdown table, weekly summary jobs) don't pay the KNN cost.
@@ -44,4 +84,8 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json(result);
   });
+}
+
+function round2(v: number): number {
+  return Math.round(v * 100) / 100;
 }

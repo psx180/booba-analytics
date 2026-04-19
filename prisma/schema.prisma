@@ -434,6 +434,46 @@ model Playbook {
   @@index([walletAddress])
 }
 
+// ─── Equity Snapshots (Pacifica /portfolio) ───────────────────────────────────
+//
+// Periodic snapshots of total account equity (cash + unrealized P&L). Source
+// of truth for the equity curve and TWR daily returns when EQUITY_PROVIDER_MODE
+// is 'snapshot-twr'. One row per (walletAddress, timestamp); upserted on sync.
+
+model EquitySnapshot {
+  id              String   @id @default(cuid())
+  walletAddress   String
+  timestamp       DateTime
+  accountEquity   Float
+  pnl             Float?
+  source          String   @default("pacifica")
+  createdAt       DateTime @default(now())
+
+  @@unique([walletAddress, timestamp])
+  @@index([walletAddress, timestamp])
+}
+
+// ─── Balance Events (Pacifica /account/balance/history) ───────────────────────
+//
+// Raw event log of cash flow into and out of the account: deposits,
+// withdrawals, trade settlements, funding, etc. Used by the snapshot-twr
+// provider to compute Time-Weighted Return (deposit/withdrawal awareness)
+// and to surface starting capital fallback when no equity snapshots exist.
+
+model BalanceEvent {
+  id              String   @id @default(cuid())
+  walletAddress   String
+  timestamp       DateTime
+  eventType       String
+  amount          Float
+  balance         Float?
+  source          String   @default("pacifica")
+  createdAt       DateTime @default(now())
+
+  @@unique([walletAddress, timestamp, eventType, amount])
+  @@index([walletAddress, timestamp])
+}
+
 // ─── Alerts ────────────────────────────────────────────────────────────────────
 
 model Alert {

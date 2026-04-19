@@ -109,6 +109,12 @@ interface EquityCurvePoint {
   positionId: string;
 }
 
+interface CashFlowSummary {
+  totalDeposited: number;
+  totalWithdrawn: number;
+  startingCapitalSource: 'pacifica' | 'fallback';
+}
+
 interface EquityCurveResult {
   name: string;
   data: {
@@ -120,6 +126,10 @@ interface EquityCurveResult {
     currentDrawdown?: number;
     currentDrawdownPct?: number;
     underwaterSeries?: UnderwaterPoint[];
+    startingCapital?: number;
+    cashFlowSummary?: CashFlowSummary;
+    returnsMethod?: string;
+    provider?: string;
   };
   series: EquityCurvePoint[];
 }
@@ -142,6 +152,13 @@ interface Insight {
 // Key: `${journalId}|${regime ?? ''}` — isolated per journal and regime filter.
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+interface EquityContext {
+  startingCapital: number | null;
+  cashFlowSummary: CashFlowSummary | null;
+  returnsMethod: string | null;
+  provider: string | null;
+}
 
 interface DashboardCacheEntry {
   timestamp: number;
@@ -171,6 +188,7 @@ interface DashboardCacheEntry {
     avgDrawdownDuration: number;
     maxDrawdown: number;
   } | null;
+  equityContext: EquityContext | null;
 }
 
 const dashboardCache = new Map<string, DashboardCacheEntry>();
@@ -400,6 +418,7 @@ export default function DashboardClient() {
     avgDrawdownDuration: number;
     maxDrawdown: number;
   } | null>(null);
+  const [equityContext, setEquityContext] = useState<EquityContext | null>(null);
 
   // ── Booba convergence suggestion cycling ──
   const [suggestionIdx, setSuggestionIdx] = useState(0);
@@ -479,6 +498,14 @@ export default function DashboardClient() {
           sharpeRatio: (summaryData as any).sharpeRatio ?? null,
           payoffRatio: (summaryData as any).payoffRatio ?? null,
           drawdownAnalysis: (summaryData as any).drawdownAnalysis ?? null,
+          equityContext: equityData.data?.cashFlowSummary
+            ? {
+                startingCapital: equityData.data?.startingCapital ?? null,
+                cashFlowSummary: equityData.data.cashFlowSummary,
+                returnsMethod: equityData.data?.returnsMethod ?? null,
+                provider: equityData.data?.provider ?? null,
+              }
+            : null,
         };
 
         dashboardCache.set(cacheKey, entry);
@@ -499,6 +526,7 @@ export default function DashboardClient() {
         setSharpeRatio(entry.sharpeRatio);
         setPayoffRatio(entry.payoffRatio);
         setDrawdownAnalysis(entry.drawdownAnalysis);
+        setEquityContext(entry.equityContext);
       } finally {
         if (!isBackground) setLoading(false);
       }
@@ -531,6 +559,7 @@ export default function DashboardClient() {
         setSharpeRatio(cached.sharpeRatio);
         setPayoffRatio(cached.payoffRatio);
         setDrawdownAnalysis(cached.drawdownAnalysis);
+        setEquityContext(cached.equityContext);
         setLoading(false);
         // Background refresh — no spinner, silently updates state when done
         doFetch(regime, true).catch(console.error);
@@ -1212,6 +1241,41 @@ export default function DashboardClient() {
           </div>
         ) : (
           <>
+            {equityContext?.cashFlowSummary && (
+              <div className="mb-2 pb-2 border-b border-[#21262d] text-xs text-[#8b949e] flex flex-wrap gap-x-4 gap-y-1">
+                {equityContext.startingCapital != null && (
+                  <span>
+                    Starting capital:{' '}
+                    <span className="text-white font-medium">
+                      {formatPnl(equityContext.startingCapital).replace('+', '')}
+                    </span>
+                    <span className="text-[#6e7681]">
+                      {' '}
+                      ({equityContext.cashFlowSummary.startingCapitalSource === 'pacifica'
+                        ? 'from Pacifica'
+                        : 'fallback'})
+                    </span>
+                  </span>
+                )}
+                <span>
+                  Total deposited:{' '}
+                  <span className="text-white font-medium">
+                    {formatPnl(equityContext.cashFlowSummary.totalDeposited).replace('+', '')}
+                  </span>
+                </span>
+                <span>
+                  Total withdrawn:{' '}
+                  <span className="text-white font-medium">
+                    {formatPnl(equityContext.cashFlowSummary.totalWithdrawn).replace('+', '')}
+                  </span>
+                </span>
+                {equityContext.returnsMethod === 'twr' && (
+                  <span className="text-[#6e7681]">
+                    Returns: Time-Weighted (adjusts for deposits/withdrawals)
+                  </span>
+                )}
+              </div>
+            )}
             <EquityCurve
               equityCurve={equityCurve}
               tradeMetas={tradeMetas}

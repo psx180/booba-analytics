@@ -21,7 +21,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withAuth } from '@/lib/api-auth';
 import { PacificaClient } from '@/services/pacifica';
 import { PacificaAuthError } from '@/services/pacifica/errors';
-import { ingestTrades } from '@/services/ingestion';
+import { ingestTrades, syncBalanceEvents, syncEquitySnapshots } from '@/services/ingestion';
 import { fillId } from '@/services/ingestion/mapper';
 import { GroupingService } from '@/services/grouping';
 import { prisma } from '@/lib/prisma';
@@ -41,6 +41,25 @@ export async function POST(req: NextRequest) {
     const lastEntryMs = agg._max.entryTime?.getTime() ?? 0;
     const lastFillMs = Math.max(lastExitMs, lastEntryMs);
 
+    const networkHeader = req.headers.get('X-Pacifica-Network');
+    const network = networkHeader === 'testnet' ? 'testnet' : 'mainnet';
+    const apiConfigKey = network === 'testnet'
+      ? (process.env.PACIFICA_TESTNET_API_KEY ?? process.env.PF_API_KEY)
+      : process.env.PF_API_KEY;
+    const client = new PacificaClient({ walletAddress, apiConfigKey, network });
+
+    // Equity snapshots and balance events are independent of fills — they
+    // change with deposits, withdrawals, mark-price moves, etc. Fire them
+    // off as soon as the client is built so they run on every /api/sync
+    // call (including the no-new-fills fast paths below). Required by the
+    // snapshot-twr equity provider.
+    syncEquitySnapshots(walletAddress, client.account).catch((err) =>
+      console.error('[sync] syncEquitySnapshots failed', err),
+    );
+    syncBalanceEvents(walletAddress, client.account).catch((err) =>
+      console.error('[sync] syncBalanceEvents failed', err),
+    );
+
     if (lastFillMs === 0) {
       // No existing fills — nothing to sync from (user hasn't imported yet).
       return NextResponse.json({ found: 0, imported: 0, alreadyExists: 0 });
@@ -51,12 +70,6 @@ export async function POST(req: NextRequest) {
     //    order or at the same millisecond as the last known fill. Dedup
     //    by fillId handles any overlap cleanly.
     const startTime = Math.max(0, lastFillMs - 60_000);
-    const networkHeader = req.headers.get('X-Pacifica-Network');
-    const network = networkHeader === 'testnet' ? 'testnet' : 'mainnet';
-    const apiConfigKey = network === 'testnet'
-      ? (process.env.PACIFICA_TESTNET_API_KEY ?? process.env.PF_API_KEY)
-      : process.env.PF_API_KEY;
-    const client = new PacificaClient({ walletAddress, apiConfigKey, network });
 
     let fills;
     try {
