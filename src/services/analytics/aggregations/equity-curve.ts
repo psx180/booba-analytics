@@ -174,6 +174,11 @@ export async function getEquityCurveAsync(
   const series = equitySeries.map((pt) => ({
     date: pt.timestamp.toISOString(),
     value: round(pt.equity, 2),
+    // Duplicate of `value` under a more honest name — providers that
+    // reconstruct absolute equity (reconstructed, snapshot-twr) expose it
+    // here so the dashboard can derive a cash-flow-aware underwater curve
+    // directly. `value` is retained for existing consumers.
+    equity: round(pt.equity, 2),
     cumulativePnl: round(pt.cumulativePnl, 2),
     regime: pt.regime ?? 'unknown',
     positionId: '',

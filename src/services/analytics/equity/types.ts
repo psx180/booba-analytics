@@ -40,4 +40,8 @@ export interface DrawdownSummary {
   timeUnderwaterPct: number;
 }
 
-export type EquityProviderMode = 'legacy' | 'starting-capital' | 'snapshot-twr';
+export type EquityProviderMode =
+  | 'legacy'
+  | 'starting-capital'
+  | 'snapshot-twr'
+  | 'reconstructed';

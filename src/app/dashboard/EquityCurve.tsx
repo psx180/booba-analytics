@@ -18,6 +18,13 @@ export interface EquityPoint {
   cumulativePnl: number;
   /** Absolute account equity at this point. Populated by the snapshot-twr provider. */
   value?: number;
+  /**
+   * Absolute account equity — same number as `value`, exposed under the more
+   * honest name. Populated by providers that reconstruct true equity
+   * (reconstructed, snapshot-twr). The dashboard uses this, when present, to
+   * compute a cash-flow-aware underwater curve.
+   */
+  equity?: number;
 }
 
 export type ChartMode = 'pnl' | 'equity';
