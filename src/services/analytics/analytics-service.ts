@@ -233,7 +233,24 @@ export class AnalyticsService {
     filters?: Filters,
   ): Promise<AggregationResult> {
     const positions = await this.loadFilteredPositions(walletAddress, filters);
-    return getEquityCurveAsync(walletAddress, positions);
+    // A filter that narrows positions (regime/asset/strategy/tradeType/date)
+    // can't be reflected in an unfiltered snapshot history, so tell the
+    // equity-curve builder to take the position-based path. Journal is an
+    // always-present scope, not a user-selected narrowing, so it doesn't
+    // trigger the fallback on its own.
+    const hasNarrowingFilter = Boolean(
+      filters?.regime ||
+      filters?.asset ||
+      filters?.strategy ||
+      filters?.tradeType ||
+      filters?.source ||
+      filters?.builderCode ||
+      filters?.dateFrom ||
+      filters?.dateTo,
+    );
+    return getEquityCurveAsync(walletAddress, positions, {
+      forcePositionBased: hasNarrowingFilter,
+    });
   }
 
   async aggregateAll(

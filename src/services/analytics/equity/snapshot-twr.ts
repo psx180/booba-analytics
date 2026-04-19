@@ -43,8 +43,8 @@ export class SnapshotTwrProvider implements EquitySourceProvider {
       where: {
         walletAddress,
         eventType: {
-        in: ['deposit', 'withdraw', 'withdrawal', 'DEPOSIT', 'WITHDRAW', 'WITHDRAWAL'],
-      },
+          in: ['deposit', 'withdraw', 'withdrawal', 'DEPOSIT', 'WITHDRAW', 'WITHDRAWAL'],
+        },
       },
       orderBy: { timestamp: 'asc' },
     });
@@ -54,14 +54,59 @@ export class SnapshotTwrProvider implements EquitySourceProvider {
       .sort((a, b) => a.lastExitTime!.getTime() - b.lastExitTime!.getTime());
 
     if (snapshots.length === 0) {
-      return this.fallbackFromPositions(walletAddress, closedPositions);
+      return this.buildFromPositions(walletAddress, positions);
     }
 
-    let peakEquity = 0;
+    // Hybrid curve: reconstruct pre-snapshot equity from positions (so pre-
+    // Pacifica-history trades aren't dropped), then hand off to snapshot-based
+    // equity once snapshots start. The transition is continuous by construction:
+    // starting capital for the pre-snapshot segment is chosen so that adding
+    // all pre-snapshot P&L lands exactly at the first snapshot's equity.
+    const firstSnap = snapshots[0];
+    const firstSnapTime = firstSnap.timestamp;
+    const firstSnapEquity = firstSnap.accountEquity;
+
+    const preSnapPositions = closedPositions.filter(
+      (p) => p.lastExitTime!.getTime() < firstSnapTime.getTime(),
+    );
+    const postSnapPositions = closedPositions.filter(
+      (p) => p.lastExitTime!.getTime() >= firstSnapTime.getTime(),
+    );
+
+    const preSnapTotalPnL = preSnapPositions.reduce(
+      (s, p) => s + (p.aggregatePnl ?? 0),
+      0,
+    );
+    // Note: pre-snapshot cash flows (if any) aren't subtracted here — without
+    // a full cash-flow history that predates the snapshot window we can't
+    // distinguish starting balance from deposits. The first snapshot still
+    // anchors the rest of the curve correctly.
+    const startingCapital = firstSnapEquity - preSnapTotalPnL;
+
+    let cumulativePnl = 0;
+    let peakEquity = Math.max(startingCapital, 0);
+    const series: EquityPoint[] = [];
+
+    for (const pos of preSnapPositions) {
+      cumulativePnl += pos.aggregatePnl ?? 0;
+      const equity = startingCapital + cumulativePnl;
+      if (equity > peakEquity) peakEquity = equity;
+      const underwater = equity - peakEquity;
+      const underwaterPct = peakEquity > 0 ? (underwater / peakEquity) * 100 : 0;
+
+      series.push({
+        timestamp: pos.lastExitTime!,
+        equity,
+        cumulativePnl,
+        peakEquity,
+        underwaterPct: Math.max(-100, Math.min(0, underwaterPct)),
+        underwaterDollars: underwater,
+        regime: pos.regimeAtEntry ?? null,
+      });
+    }
+
     let cfIndex = 0;
     let posIndex = 0;
-    let cumulativePnl = 0;
-    const series: EquityPoint[] = [];
 
     for (const snap of snapshots) {
       const equity = snap.accountEquity;
@@ -71,7 +116,10 @@ export class SnapshotTwrProvider implements EquitySourceProvider {
       // (so a deposit-driven equity bump doesn't look like a recovery to HWM);
       // withdrawals pull the peak down but never below the current equity
       // (otherwise withdrawing would manufacture a fresh drawdown floor).
-      while (cfIndex < cashFlowEvents.length && cashFlowEvents[cfIndex].timestamp <= snap.timestamp) {
+      while (
+        cfIndex < cashFlowEvents.length &&
+        cashFlowEvents[cfIndex].timestamp <= snap.timestamp
+      ) {
         const cf = cashFlowEvents[cfIndex];
         const isDeposit = cf.eventType.toLowerCase().includes('deposit');
         const isWithdrawal = cf.eventType.toLowerCase().includes('withdraw');
@@ -84,10 +132,10 @@ export class SnapshotTwrProvider implements EquitySourceProvider {
       }
 
       while (
-        posIndex < closedPositions.length &&
-        closedPositions[posIndex].lastExitTime! <= snap.timestamp
+        posIndex < postSnapPositions.length &&
+        postSnapPositions[posIndex].lastExitTime! <= snap.timestamp
       ) {
-        cumulativePnl += closedPositions[posIndex].aggregatePnl ?? 0;
+        cumulativePnl += postSnapPositions[posIndex].aggregatePnl ?? 0;
         posIndex++;
       }
 
@@ -97,7 +145,7 @@ export class SnapshotTwrProvider implements EquitySourceProvider {
         ? ((equity - peakEquity) / peakEquity) * 100
         : 0;
 
-      const nearestPos = closedPositions.find(
+      const nearestPos = postSnapPositions.find(
         (p) =>
           p.firstEntryTime != null &&
           p.firstEntryTime <= snap.timestamp &&
@@ -112,6 +160,45 @@ export class SnapshotTwrProvider implements EquitySourceProvider {
         underwaterPct: Math.max(-100, Math.min(0, underwaterPct)),
         underwaterDollars: equity - peakEquity,
         regime: nearestPos?.regimeAtEntry ?? null,
+      });
+    }
+
+    return series;
+  }
+
+  /**
+   * Build a position-only equity curve using the earliest snapshot's equity
+   * (or deposit-sum fallback) as the starting capital. This is what the
+   * dashboard should call when a regime/asset/strategy filter is active —
+   * snapshots aren't filterable by position attributes, so we reconstruct
+   * from the already-filtered positions instead. The curve is less accurate
+   * (no unrealized P&L, no mark-price moves, no cash-flow context) but it
+   * reflects the filter.
+   */
+  async buildFromPositions(walletAddress: string, positions: Position[]): Promise<EquityPoint[]> {
+    const closed = positions
+      .filter((p) => p.status === 'closed' && p.aggregatePnl != null && p.lastExitTime != null)
+      .sort((a, b) => a.lastExitTime!.getTime() - b.lastExitTime!.getTime());
+
+    const startingCapital = await this.getStartingCapital(walletAddress);
+    let cumPnl = 0;
+    let peak = Math.max(startingCapital, 0);
+    const series: EquityPoint[] = [];
+
+    for (const pos of closed) {
+      cumPnl += pos.aggregatePnl ?? 0;
+      const eq = startingCapital + cumPnl;
+      if (eq > peak) peak = eq;
+      const uwPct = peak > 0 ? ((eq - peak) / peak) * 100 : 0;
+
+      series.push({
+        timestamp: pos.lastExitTime!,
+        equity: eq,
+        cumulativePnl: cumPnl,
+        peakEquity: peak,
+        underwaterPct: Math.max(-100, Math.min(0, uwPct)),
+        underwaterDollars: eq - peak,
+        regime: pos.regimeAtEntry ?? null,
       });
     }
 
@@ -209,35 +296,6 @@ export class SnapshotTwrProvider implements EquitySourceProvider {
     }
 
     return returns;
-  }
-
-  private async fallbackFromPositions(
-    walletAddress: string,
-    positions: Position[],
-  ): Promise<EquityPoint[]> {
-    const startingCapital = await this.getStartingCapital(walletAddress);
-    let cumPnl = 0;
-    let peak = startingCapital;
-    const series: EquityPoint[] = [];
-
-    for (const pos of positions) {
-      cumPnl += pos.aggregatePnl ?? 0;
-      const eq = startingCapital + cumPnl;
-      if (eq > peak) peak = eq;
-      const uwPct = peak > 0 ? ((eq - peak) / peak) * 100 : 0;
-
-      series.push({
-        timestamp: pos.lastExitTime!,
-        equity: eq,
-        cumulativePnl: cumPnl,
-        peakEquity: peak,
-        underwaterPct: Math.max(-100, Math.min(0, uwPct)),
-        underwaterDollars: eq - peak,
-        regime: pos.regimeAtEntry ?? null,
-      });
-    }
-
-    return series;
   }
 
   private async fallbackDailyReturns(

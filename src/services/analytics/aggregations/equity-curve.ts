@@ -22,6 +22,7 @@ import * as ss from 'simple-statistics';
 import type { Aggregator, Position } from './base';
 import type { AggregationResult } from '../types';
 import { defaultEquityProvider, computeDrawdownSummary } from '../equity';
+import { SnapshotTwrProvider } from '../equity/snapshot-twr';
 
 export interface UnderwaterPoint {
   date: string;
@@ -147,10 +148,28 @@ function round(value: number, digits: number): number {
 export async function getEquityCurveAsync(
   walletAddress: string,
   positions: Position[],
+  options?: { forcePositionBased?: boolean },
 ): Promise<AggregationResult> {
-  const equitySeries = await defaultEquityProvider.getEquityCurve(walletAddress, positions);
+  const provider = defaultEquityProvider;
+  const isSnapshot = provider.name === 'snapshot-twr';
+  // The snapshot-twr curve is built from unfiltered equity history, so when a
+  // regime/asset/strategy filter is active the provided `positions` array has
+  // been pre-filtered and the snapshot path would ignore the filter. Force
+  // position-based reconstruction (via SnapshotTwrProvider.buildFromPositions,
+  // which uses the earliest snapshot's equity as starting capital) in that case.
+  const equitySeries =
+    options?.forcePositionBased && provider instanceof SnapshotTwrProvider
+      ? await provider.buildFromPositions(walletAddress, positions)
+      : await provider.getEquityCurve(walletAddress, positions);
+
   const drawdown = computeDrawdownSummary(equitySeries);
-  const startingCapital = await defaultEquityProvider.getStartingCapital(walletAddress);
+  const startingCapital = await provider.getStartingCapital(walletAddress);
+
+  // Chart mode tells the frontend what the Y-axis represents. Snapshot-twr
+  // plots absolute account equity (field `value`); legacy plots cumulative
+  // P&L from 0 (field `cumulativePnl`). xPnL overlay only makes sense on the
+  // pnl chart — for equity mode the dashboard stacks a separate P&L chart.
+  const chartMode: 'equity' | 'pnl' = isSnapshot ? 'equity' : 'pnl';
 
   const series = equitySeries.map((pt) => ({
     date: pt.timestamp.toISOString(),
@@ -191,6 +210,9 @@ export async function getEquityCurveAsync(
       avgRecoveryTrades: drawdown.avgRecoveryTrades,
       timeUnderwaterPct: round(drawdown.timeUnderwaterPct, 2),
       underwaterSeries,
+      chartMode,
+      provider: provider.name,
+      hasFilters: !!options?.forcePositionBased,
     },
     series,
   };
