@@ -864,18 +864,34 @@ export default function DashboardClient() {
   );
 
   // ── Client-side underwater curve ──────────────────────────────────────────
-  // Tracks *trading* P&L drawdown, not equity drawdown. Peaks and troughs
-  // come from cumulativePnl alone, so the chart's shape matches the P&L
-  // chart above it point-for-point — when cumulative P&L is at its high,
-  // underwater reads exactly 0%. Deposits and withdrawals don't perturb the
-  // curve: a mid-history deposit no longer manufactures a fake recovery,
-  // and a withdrawal no longer looks like a drawdown.
+  // Preferred path: the `reconstructed` provider emits a TWR drawdown per
+  // point (cash-flow-neutralized, institutionally correct). When the API's
+  // underwater series carries a non-null `twrDrawdownPct`, use it directly —
+  // this is the only path that survives a drawdown deeper than the first
+  // deposit without clamping to -100 forever.
   //
-  // We still want the percentage to be meaningful, though, so the
-  // denominator is cash-flow-aware: startingCapital + peakPnl (≈ the real
-  // equity at the P&L peak) rather than raw peakPnl or a constant. The
-  // $10k fallback matches the reconstructed provider's fallback.
+  // Fallback path: for providers that don't compute TWR (legacy, snapshot-twr,
+  // starting-capital) we compute a P&L drawdown client-side. Peaks and troughs
+  // come from cumulativePnl so the shape matches the P&L chart above
+  // point-for-point; the percentage denominator is `startingCapital + peakPnl`
+  // so the ratio stays economically meaningful. $10k floor matches the
+  // reconstructed provider's default.
   const clientUnderwaterSeries = useMemo<UnderwaterPoint[]>(() => {
+    const apiUnderwater = underwaterSeries;
+    const apiHasTwr =
+      apiUnderwater.length > 0 && (apiUnderwater[0] as any).twrDrawdownPct != null;
+
+    if (apiHasTwr) {
+      return apiUnderwater.map((pt) => {
+        const twr = (pt as any).twrDrawdownPct as number;
+        return {
+          date: pt.date,
+          underwater: pt.underwater,
+          underwaterPct: Math.max(-100, Math.min(0, twr)),
+        };
+      });
+    }
+
     if (equityCurve.length === 0) return [];
     const startingCapital = equityContext?.startingCapital ?? 10000;
     let peakPnl = 0;
@@ -894,7 +910,7 @@ export default function DashboardClient() {
         underwaterPct: Math.round(Math.max(-100, Math.min(0, uwPct)) * 100) / 100,
       };
     });
-  }, [equityCurve, equityContext?.startingCapital]);
+  }, [equityCurve, underwaterSeries, equityContext?.startingCapital]);
 
   // ── Onboarding import handler ───────────────────────────────────────────
   const handleImport = async () => {

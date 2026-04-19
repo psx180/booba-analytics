@@ -14,6 +14,13 @@ export interface UnderwaterPoint {
   date: string;
   underwater: number;
   underwaterPct: number;
+  /**
+   * TWR-based drawdown from the reconstructed provider. When present on the
+   * API response, `DashboardClient` substitutes it into `underwaterPct`
+   * before handing items to this component — this field stays optional
+   * here as a passthrough for any future consumer that wants both values.
+   */
+  twrDrawdownPct?: number | null;
 }
 
 interface Props {

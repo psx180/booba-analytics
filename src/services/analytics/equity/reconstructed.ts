@@ -62,6 +62,17 @@ export class ReconstructedProvider implements EquitySourceProvider {
     // ever matters, switch to a single forward pass with a cash-flow pointer.
     let cumulativePnl = 0;
     let peakEquity = 0;
+
+    // TWR (Time-Weighted Return) drawdown compounds per-period returns while
+    // subtracting out cash flows, producing an equity curve whose peaks are
+    // determined by trading alone — deposits can't manufacture a recovery,
+    // withdrawals can't manufacture a drawdown. twrEquity is a normalized
+    // index starting at 1.0. CFA GIPS uses exactly this scheme.
+    let twrEquity = 1.0;
+    let twrPeak = 1.0;
+    let prevEquity: number | null = null;
+    let prevCloseTime: Date | null = null;
+
     const series: EquityPoint[] = [];
 
     for (const p of closed) {
@@ -73,6 +84,28 @@ export class ReconstructedProvider implements EquitySourceProvider {
         .reduce((sum, cf) => sum + cf.amount, 0);
 
       const equity = netCashFlows + cumulativePnl;
+
+      if (prevEquity !== null && prevCloseTime !== null) {
+        // Only the cash flows between the previous close and this close get
+        // subtracted — earlier flows were already reflected in prevEquity.
+        const intervalCashFlows = cashFlows
+          .filter((cf) => cf.timestamp > prevCloseTime! && cf.timestamp <= closeTime)
+          .reduce((sum, cf) => sum + cf.amount, 0);
+
+        const adjustedPrev = prevEquity + intervalCashFlows;
+
+        if (adjustedPrev > 0) {
+          const periodReturn = (equity - adjustedPrev) / adjustedPrev;
+          twrEquity *= 1 + periodReturn;
+        }
+        // adjustedPrev ≤ 0 means the account was at or below zero before this
+        // period, which breaks the TWR ratio. Skip the compounding step; the
+        // twrEquity index carries forward unchanged and the DD stays pinned
+        // until equity recovers above 0.
+      }
+
+      if (twrEquity > twrPeak) twrPeak = twrEquity;
+      const twrDrawdownPctRaw = twrPeak > 0 ? ((twrEquity - twrPeak) / twrPeak) * 100 : 0;
 
       if (equity > peakEquity) peakEquity = equity;
 
@@ -90,14 +123,24 @@ export class ReconstructedProvider implements EquitySourceProvider {
         underwaterPct: Math.max(-100, Math.min(0, underwaterPct)),
         underwaterDollars: Math.min(0, underwaterDollars),
         regime: p.regimeAtEntry ?? null,
+        twrDrawdownPct: Math.max(-100, Math.min(0, twrDrawdownPctRaw)),
       });
+
+      prevEquity = equity;
+      prevCloseTime = closeTime;
     }
 
     if (series.length > 0) {
+      const lastTwr = series[series.length - 1].twrDrawdownPct;
       console.log(
         `[reconstructed] First equity: ${series[0].equity.toFixed(2)} ` +
           `Last equity: ${series[series.length - 1].equity.toFixed(2)} ` +
           `(${series.length} points)`,
+      );
+      console.log(
+        `[reconstructed] TWR equity: ${twrEquity.toFixed(4)}, ` +
+          `peak: ${twrPeak.toFixed(4)}, ` +
+          `current DD: ${lastTwr != null ? lastTwr.toFixed(2) : 'N/A'}%`,
       );
     }
 

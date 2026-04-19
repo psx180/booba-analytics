@@ -28,6 +28,11 @@ export interface UnderwaterPoint {
   date: string;
   underwater: number;
   underwaterPct: number;
+  /**
+   * TWR-based drawdown percentage in [-100, 0]. Populated by the
+   * reconstructed provider; null for providers that don't compute it.
+   */
+  twrDrawdownPct?: number | null;
 }
 
 // TODO: make the Aggregator interface async so this module can delegate
@@ -188,6 +193,11 @@ export async function getEquityCurveAsync(
     date: pt.timestamp.toISOString(),
     underwater: round(pt.underwaterDollars, 2),
     underwaterPct: round(pt.underwaterPct, 2),
+    // Providers that compute TWR drawdown (reconstructed) populate this;
+    // others leave it null so the frontend can fall back to a P&L-based
+    // computation for those providers. Explicit null — not an `??` fallback
+    // — so the frontend can tell "backend has nothing" from "backend said 0".
+    twrDrawdownPct: pt.twrDrawdownPct != null ? round(pt.twrDrawdownPct, 2) : null,
   }));
 
   const consistency = consistencyR2(series);

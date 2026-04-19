@@ -8,6 +8,13 @@ export interface EquityPoint {
   underwaterPct: number;
   underwaterDollars: number;
   regime?: string | null;
+  /**
+   * Time-Weighted Return drawdown at this point, expressed as a percentage
+   * in the range [-100, 0]. Providers that want institutionally-correct
+   * drawdown (ignoring deposit/withdrawal timing) populate this; otherwise
+   * it stays undefined and the frontend falls back to P&L-based drawdown.
+   */
+  twrDrawdownPct?: number;
 }
 
 export interface DailyReturn {
