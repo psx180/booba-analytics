@@ -19,7 +19,13 @@ export async function GET(req: NextRequest) {
   }
   if (journalRes.id) filters.journalId = journalRes.id;
 
-  const result = await service.aggregate('equity-curve', walletAddress, filters);
+  // Route to the pluggable EquitySourceProvider pipeline when the operator
+  // has opted in via EQUITY_PROVIDER_MODE. Default ('legacy' or unset) keeps
+  // the existing sync aggregator path so output is unchanged.
+  const equityMode = process.env.EQUITY_PROVIDER_MODE ?? 'legacy';
+  const result = equityMode !== 'legacy'
+    ? await service.aggregateEquityCurveAsync(walletAddress, filters)
+    : await service.aggregate('equity-curve', walletAddress, filters);
 
   // Optional xPnL overlay — opt-in via ?withXpnl=true so existing callers
   // (regime breakdown table, weekly summary jobs) don't pay the KNN cost.

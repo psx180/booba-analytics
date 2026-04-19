@@ -18,6 +18,7 @@ import WartRadar, { type WartResult } from './WartRadar';
 import DisciplineGauge from './behavior/DisciplineGauge';
 import MarkovBars from './behavior/MarkovBars';
 import SessionDecayChart from './behavior/SessionDecayChart';
+import { computeDecaySeries } from './behavior/sessionDecay';
 import SizeAfterOutcomeScatter from './behavior/SizeAfterOutcomeScatter';
 import TiltEquityCurve, { type TiltEpisode } from './behavior/TiltEquityCurve';
 import MonteCarloChart from './monte-carlo/MonteCarloChart';
@@ -1417,12 +1418,9 @@ function PsychologyTab({
   const counterfactualImprovement =
     (tiltInsight?.data?.counterfactualImprovement as number | undefined) ?? 0;
 
-  // Fatigue data (from time-of-day insight)
-  const timeInsight = insights.find((i) => i.module === 'time-of-day-edge');
-  const fatigue = timeInsight?.data?.fatigue as
-    | { estimatedSavings?: number; optimalCutoff?: number }
-    | null
-    | undefined;
+  // Fatigue data: derived from the same series the chart renders, so the
+  // headline cannot disagree with the chart caption.
+  const decay = computeDecaySeries(behaviorPositions);
 
   // ── Section 1: DISCIPLINE ────────────────────────────────────────────────
   let disciplineVerdict: string;
@@ -1491,18 +1489,20 @@ function PsychologyTab({
   }
 
   // ── Section 3: SESSION MANAGEMENT ───────────────────────────────────────
-  const cutoff = fatigue?.optimalCutoff ?? null;
-  const savings = fatigue?.estimatedSavings ?? null;
+  const cutoff = decay.isFatigueSignificant ? decay.optimalStop : null;
+  const savings = decay.isFatigueSignificant ? decay.savingsPerSession : 0;
 
   let sessionVerdict: string;
   if (cutoff != null) {
     sessionVerdict = `Performance peaks at trade #${cutoff}. After that, average P&L drops.`;
+  } else if (decay.series.length >= 2) {
+    sessionVerdict = `No significant fatigue pattern detected across ${decay.series.length} trade positions.`;
   } else {
     sessionVerdict = NO_DATA_VERDICT;
   }
 
   let sessionImplication: string;
-  if (cutoff != null && savings != null && savings > 0) {
+  if (cutoff != null && savings > 0) {
     sessionImplication = `Consider stopping after ${cutoff} trades per session — estimated savings of $${Math.round(savings).toLocaleString()} per session.`;
   } else if (cutoff != null) {
     sessionImplication = `Consider stopping after ${cutoff} trades per session.`;
