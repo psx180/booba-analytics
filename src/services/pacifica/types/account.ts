@@ -41,9 +41,17 @@ export type AccountSettings = z.infer<typeof AccountSettingsSchema>;
 
 // ─── Position (/api/v1/positions) ────────────────────────────────────────────
 
+// Pacifica's positions endpoint emits `side` in book semantics: `bid` for a
+// long position, `ask` for a short one. Normalize to long/short so the rest
+// of the codebase keeps working in directional terms.
+const PositionSideSchema = z.preprocess(
+  (v) => (v === 'bid' ? 'long' : v === 'ask' ? 'short' : v),
+  z.enum(['long', 'short']),
+);
+
 export const PositionSchema = z.object({
   symbol: z.string(),
-  side: z.enum(['long', 'short']),
+  side: PositionSideSchema,
   amount: z.string(),
   entry_price: z.string(),
   margin: z.string(),

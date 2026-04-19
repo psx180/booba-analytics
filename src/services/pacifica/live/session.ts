@@ -21,7 +21,7 @@
 import { EventEmitter } from 'events';
 import { PacificaClient, MAINNET_WS_URL } from '../index';
 import { PacificaWsClient } from '../ws/client';
-import type { WsAccountTrade, WsPositionUpdate, WsPriceUpdate } from '../types/ws';
+import type { WsAccountTrade, WsPriceUpdate } from '../types/ws';
 import type { Position as PacificaPosition } from '../types/account';
 import { handleAccountTrade, type FillEvent } from './fill-handler';
 
@@ -170,9 +170,18 @@ class LiveSession extends EventEmitter {
     this.ws.on('message', (msg) => {
       const source = (msg as any)?.source ?? (msg as any)?.channel;
       if (source === 'account_trades') {
-        this.onAccountTrade((msg as any).data as WsAccountTrade['data']);
+        const payload = (msg as any).data;
+        const fills = Array.isArray(payload) ? payload : [payload];
+        for (const raw of fills) {
+          const normalized = normalizeAccountTrade(raw);
+          if (normalized) this.onAccountTrade(normalized);
+        }
       } else if (source === 'account_positions') {
-        this.onAccountPosition((msg as any).data as WsPositionUpdate['data']);
+        // Pacifica streams full-state snapshots on this channel, so replace
+        // our map wholesale rather than diffing.
+        const payload = (msg as any).data;
+        const rows = Array.isArray(payload) ? payload : [payload];
+        this.replaceOpenPositions(rows);
       } else if (source === 'prices') {
         this.onPrices((msg as any).data as WsPriceUpdate['data']);
       }
@@ -228,21 +237,14 @@ class LiveSession extends EventEmitter {
       });
   }
 
-  private onAccountPosition(data: WsPositionUpdate['data']): void {
-    const amount = parseFloat(data.amount);
-    const side = data.side as 'long' | 'short';
-    const key = `${data.symbol}:${side}`;
-
-    if (amount === 0) {
-      this.openPositions.delete(key);
-    } else {
-      this.openPositions.set(key, {
-        symbol: data.symbol,
-        side,
-        amount,
-        entryPrice: parseFloat(data.entry_price),
-      });
+  private replaceOpenPositions(rows: unknown[]): void {
+    const next = new Map<string, LivePosition>();
+    for (const raw of rows) {
+      const pos = normalizeAccountPosition(raw);
+      if (!pos) continue;
+      next.set(`${pos.symbol}:${pos.side}`, pos);
     }
+    this.openPositions = next;
   }
 
   private onPrices(data: WsPriceUpdate['data']): void {
@@ -347,6 +349,53 @@ export function releaseSession(walletAddress: string): void {
 
 function short(addr: string): string {
   return addr.length > 10 ? `${addr.slice(0, 4)}…${addr.slice(-4)}` : addr;
+}
+
+// Pacifica's account_positions frames also use short keys and deliver rows
+// as an array. `d` is `bid` (long) or `ask` (short) — book semantics, not
+// directional. Return null on any row we can't interpret so the caller can
+// skip it without polluting the open-positions map.
+function normalizeAccountPosition(raw: any): LivePosition | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const symbolRaw = raw.s ?? raw.symbol;
+  const sideRaw = raw.d ?? raw.side;
+  const amountRaw = raw.a ?? raw.amount;
+  const entryRaw = raw.p ?? raw.entry_price;
+  if (symbolRaw == null || sideRaw == null || amountRaw == null || entryRaw == null) {
+    return null;
+  }
+  let side: 'long' | 'short';
+  if (sideRaw === 'bid' || sideRaw === 'long') side = 'long';
+  else if (sideRaw === 'ask' || sideRaw === 'short') side = 'short';
+  else return null;
+  const amount = parseFloat(String(amountRaw));
+  const entryPrice = parseFloat(String(entryRaw));
+  if (!Number.isFinite(amount) || amount === 0) return null;
+  return { symbol: String(symbolRaw), side, amount, entryPrice };
+}
+
+// Pacifica's account_trades frames use a compact single-letter schema and
+// deliver fills as an array. Map it back to the verbose shape that the fill
+// handler/ingestion mapper already consume. If the server ever reverts to the
+// verbose form, pass it through unchanged.
+function normalizeAccountTrade(raw: any): WsAccountTrade['data'] | null {
+  if (!raw || typeof raw !== 'object') return null;
+  if (raw.symbol != null && raw.side != null) return raw as WsAccountTrade['data'];
+  if (raw.h == null || raw.s == null || raw.ts == null) return null;
+  return {
+    history_id: Number(raw.h),
+    order_id: raw.i != null ? Number(raw.i) : 0,
+    client_order_id: raw.I ?? null,
+    symbol: String(raw.s),
+    amount: String(raw.a),
+    price: String(raw.p),
+    entry_price: raw.o != null ? String(raw.o) : String(raw.p),
+    fee: raw.f != null ? String(raw.f) : '0',
+    pnl: raw.n != null ? String(raw.n) : '0',
+    event_type: raw.te != null ? String(raw.te) : '',
+    side: String(raw.ts),
+    created_at: Number(raw.t),
+  };
 }
 
 export type { LiveSession };
