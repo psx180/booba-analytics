@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import EquityCurve, { EquityPoint, TradeMeta, REGIME_LABELS, type ChartMode } from './EquityCurve';
-import PnlComparison from './PnlComparison';
 import UnderwaterCurve, { UnderwaterPoint } from './UnderwaterCurve';
 import OpenPositions from './OpenPositions';
 import LiveToast, { type Toast } from './LiveToast';
@@ -863,6 +862,29 @@ export default function DashboardClient() {
     [equityCurve],
   );
 
+  // ── Client-side underwater curve ──────────────────────────────────────────
+  // Recomputed from the same position-based cumulativePnl series the P&L chart
+  // plots, so the x-axis dates and peak alignment match point-for-point.
+  // startingCapital comes from the equity provider (earliest snapshot equity
+  // or deposit sum) to give us a real % denominator; when unavailable we fall
+  // back to 1 so the curve still renders without divide-by-zero.
+  const clientUnderwaterSeries = useMemo<UnderwaterPoint[]>(() => {
+    if (equityCurve.length === 0) return [];
+    const startingCapital = equityContext?.startingCapital ?? 0;
+    let peak = Math.max(startingCapital, 0);
+    return equityCurve.map((p) => {
+      const equity = startingCapital + p.cumulativePnl;
+      if (equity > peak) peak = equity;
+      const underwater = equity - peak;
+      const uwPct = peak > 0 ? (underwater / peak) * 100 : 0;
+      return {
+        date: p.date,
+        underwater: Math.round(underwater * 100) / 100,
+        underwaterPct: Math.round(Math.max(-100, Math.min(0, uwPct)) * 100) / 100,
+      };
+    });
+  }, [equityCurve, equityContext?.startingCapital]);
+
   // ── Onboarding import handler ───────────────────────────────────────────
   const handleImport = async () => {
     setImporting(true);
@@ -1284,12 +1306,7 @@ export default function DashboardClient() {
             )}
             <div className="flex items-center justify-between mb-1">
               <div className="text-[10px] uppercase tracking-widest text-[#6e7681]">
-                {equityContext?.chartMode === 'equity' ? 'Account Equity' : 'Cumulative P&L'}
-                {equityContext?.hasFilters && (
-                  <span className="ml-2 text-[#6e7681] normal-case tracking-normal">
-                    (from filtered positions — starting at snapshot equity)
-                  </span>
-                )}
+                Actual vs Expected P&L
               </div>
             </div>
             <EquityCurve
@@ -1298,25 +1315,14 @@ export default function DashboardClient() {
               activeRegimeFilter={activeRegime}
               xpnlSeries={xpnlSummary?.cumulativeSeries}
               showXpnl={showXpnlOverlay}
-              chartMode={equityContext?.chartMode ?? 'pnl'}
+              chartMode="pnl"
             />
-            {equityContext?.chartMode === 'equity' &&
-              showXpnlOverlay &&
-              xpnlSummary?.cumulativeSeries &&
-              xpnlSummary.cumulativeSeries.length > 0 && (
-                <div className="mt-3 pt-3 border-t border-[#21262d]">
-                  <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
-                    Actual vs Expected P&L (xPnL)
-                  </div>
-                  <PnlComparison series={xpnlSummary.cumulativeSeries} />
-                </div>
-              )}
-            {underwaterSeries.length > 0 && (
+            {clientUnderwaterSeries.length > 0 && (
               <div className="mt-2 pt-2 border-t border-[#21262d]">
                 <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">
                   Underwater
                 </div>
-                <UnderwaterCurve series={underwaterSeries} />
+                <UnderwaterCurve series={clientUnderwaterSeries} />
               </div>
             )}
           </>

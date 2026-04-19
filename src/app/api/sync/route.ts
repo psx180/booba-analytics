@@ -28,6 +28,13 @@ import { prisma } from '@/lib/prisma';
 
 const groupingService = new GroupingService();
 
+// Equity snapshots and balance events update on slower cadences than fills —
+// there's no value in refetching them on every 60-second poll. Throttle to
+// once per wallet per 30 minutes; the trade-sync path stays unthrottled so
+// fills still land immediately.
+const EQUITY_SYNC_INTERVAL_MS = 30 * 60 * 1000;
+const lastEquitySyncMs = new Map<string, number>();
+
 export async function POST(req: NextRequest) {
   return withAuth(req, async (walletAddress) => {
     // 1. Find the most recent fill timestamp in the DB.
@@ -52,13 +59,19 @@ export async function POST(req: NextRequest) {
     // change with deposits, withdrawals, mark-price moves, etc. Fire them
     // off as soon as the client is built so they run on every /api/sync
     // call (including the no-new-fills fast paths below). Required by the
-    // snapshot-twr equity provider.
-    syncEquitySnapshots(walletAddress, client.account).catch((err) =>
-      console.error('[sync] syncEquitySnapshots failed', err),
-    );
-    syncBalanceEvents(walletAddress, client.account).catch((err) =>
-      console.error('[sync] syncBalanceEvents failed', err),
-    );
+    // snapshot-twr equity provider. Throttled per wallet to avoid re-fetching
+    // the full balance-event cursor chain on every 60-second poll.
+    const now = Date.now();
+    const lastSync = lastEquitySyncMs.get(walletAddress) ?? 0;
+    if (now - lastSync > EQUITY_SYNC_INTERVAL_MS) {
+      lastEquitySyncMs.set(walletAddress, now);
+      syncEquitySnapshots(walletAddress, client.account).catch((err) =>
+        console.error('[sync] syncEquitySnapshots failed', err),
+      );
+      syncBalanceEvents(walletAddress, client.account).catch((err) =>
+        console.error('[sync] syncBalanceEvents failed', err),
+      );
+    }
 
     if (lastFillMs === 0) {
       // No existing fills — nothing to sync from (user hasn't imported yet).
