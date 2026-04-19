@@ -27,7 +27,7 @@ export class SnapshotTwrProvider implements EquitySourceProvider {
     const deposits = await this.db.balanceEvent.findMany({
       where: { walletAddress, eventType: { in: ['deposit', 'DEPOSIT'] } },
     });
-    const sum = deposits.reduce((s, d) => s + d.amount, 0);
+    const sum = deposits.reduce((s, d) => s + Math.abs(d.amount), 0);
     if (sum > 0) return sum;
 
     return 10000;
@@ -42,7 +42,9 @@ export class SnapshotTwrProvider implements EquitySourceProvider {
     const cashFlowEvents = await this.db.balanceEvent.findMany({
       where: {
         walletAddress,
-        eventType: { in: ['deposit', 'withdrawal', 'DEPOSIT', 'WITHDRAWAL'] },
+        eventType: {
+        in: ['deposit', 'withdraw', 'withdrawal', 'DEPOSIT', 'WITHDRAW', 'WITHDRAWAL'],
+      },
       },
       orderBy: { timestamp: 'asc' },
     });
@@ -125,7 +127,9 @@ export class SnapshotTwrProvider implements EquitySourceProvider {
     const cashFlowEvents = await this.db.balanceEvent.findMany({
       where: {
         walletAddress,
-        eventType: { in: ['deposit', 'withdrawal', 'DEPOSIT', 'WITHDRAWAL'] },
+        eventType: {
+        in: ['deposit', 'withdraw', 'withdrawal', 'DEPOSIT', 'WITHDRAW', 'WITHDRAWAL'],
+      },
       },
       orderBy: { timestamp: 'asc' },
     });
