@@ -12,3 +12,4 @@ dev.db
 .claude/
 dev/
 memory/
+tsconfig.tsbuildinfo

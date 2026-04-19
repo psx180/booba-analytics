@@ -102,6 +102,10 @@ export default function IntroOverlay({ phase, onDismiss, onFadeComplete }: Intro
               padding: '0 24px',
               zIndex: 1,
               pointerEvents: 'auto',
+              // Counter-zoom: html has zoom: 0.9 — without this the text lands
+              // on fractional pixels and renders blurred. Matches the pattern
+              // used by .booba-tour-popover in globals.css.
+              zoom: 1.1111111,
             }}
           >
             <p

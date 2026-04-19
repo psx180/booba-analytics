@@ -65,7 +65,7 @@ export default function NavBar() {
             <div className="ml-auto flex items-center gap-2">
               <LiveIndicator />
               <SyncButton />
-              {/* NetworkSelector hidden — testnet not exposed in UI */}
+              <NetworkSelector />
               <SubAccountSelector />
               <JournalSelector />
               <WalletBadge />
@@ -73,7 +73,11 @@ export default function NavBar() {
           </div>
         </div>
       </nav>
-      {/* Testnet banner hidden — testnet not exposed in UI */}
+      {isTestnet && (
+        <div className="bg-orange-500/15 border-b border-orange-500/40 text-orange-200 text-xs px-4 py-1.5 text-center">
+          Testnet mode — trades and data are routed to your Testnet journal.
+        </div>
+      )}
     </>
   );
 }

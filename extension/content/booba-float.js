@@ -6,12 +6,12 @@
 
   const MOODS = {
     calm:      'assets/booba-calm.png',
-    alert:     'assets/booba-alert.png',
-    nervous:   'assets/booba-nervous.png',
-    panicking: 'assets/booba-panicking.png',
-    money:     'assets/booba-money.png',
-    pout:      'assets/booba-pout.png',
-    excited:   'assets/booba-alert.png',
+    alert:     'assets/alert.png',
+    nervous:   'assets/nervous.png',
+    panicking: 'assets/panicking.png',
+    money:     'assets/money-mode.png',
+    pout:      'assets/pout.png',
+    excited:   'assets/excited.png',
   };
 
   // ── Persistent state ─────────────────────────────────────────────────────────

@@ -24,8 +24,9 @@
       "Bash(xargs grep *)",
       "WebFetch(domain:docs.pacifica.fi)",
       "Bash(npx vitest *)",
-      "Bash(DATABASE_URL=\"file:./dev.db\" npx prisma migrate deploy)",
-      "Bash(DATABASE_URL=\"file:./dev.db\" npx prisma migrate status)"
+      "Bash(curl -s -L -w \"HTTP:%{http_code}\\\\n\" https://pacifica.fi/docs)",
+      "Bash(curl -s -L \"https://api.github.com/search/repositories?q=pacifica+perps\")",
+      "Bash(grep -E \"\\\\.ts$\")"
     ]
   }
 }

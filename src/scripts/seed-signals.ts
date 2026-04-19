@@ -4,12 +4,21 @@
  * Creates 4 callers with distinct track records and ~55 signals spread over
  * the last 3 months, with realistic BTC/ETH/SOL prices and mixed outcomes.
  *
+ * Most rows are pre-resolved fixtures — entry/outcome prices hardcoded so
+ * the leaderboard narrative holds (AlphaTrader ~65%, DegenKing ~53%, etc.).
+ *
+ * A slice of ~8 recent rows are left `status: 'open'` with entry/stop/target
+ * priced against *real* candles from 1–5 days ago via getCandleCache(). That
+ * way clicking "Check Outcomes" walks genuine price action forward from
+ * each signal's creation and resolves a few organically during the demo.
+ *
  * Usage:
  *   npx tsx src/scripts/seed-signals.ts <wallet_address>
  *   npx tsx src/scripts/seed-signals.ts   # uses DEV_WALLET env var
  */
 
 import { prisma } from '../lib/prisma';
+import { getCandleCache } from '../services/candles';
 
 const walletAddress = process.argv[2] || process.env.DEV_WALLET;
 if (!walletAddress) {
@@ -88,8 +97,6 @@ const SEEDS: SignalSeed[] = [
   { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'ETH', direction: 'SHORT', entryPrice: 3800,  targetPrice: 3300,  targetPrices: null, stopPrice: 4000,  status: 'hit_target', outcomePrice: 3300,  targetPricesHit: null, createdDaysAgo: 18, resolvedHours: 96 },
   { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'BTC', direction: 'LONG',  entryPrice: 80000, targetPrice: 88000, targetPrices: null, stopPrice: 76000, status: 'hit_stop',   outcomePrice: 76000, targetPricesHit: null, createdDaysAgo: 14, resolvedHours: 24 },
   { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'SOL', direction: 'LONG',  entryPrice: 128,   targetPrice: 148,   targetPrices: null, stopPrice: 118,   status: 'hit_target', outcomePrice: 148,   targetPricesHit: null, createdDaysAgo: 9,  resolvedHours: 48 },
-  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'ETH', direction: 'LONG',  entryPrice: 2750,  targetPrice: 3050,  targetPrices: null, stopPrice: 2600,  status: 'open',       outcomePrice: null,  targetPricesHit: null, createdDaysAgo: 4,  resolvedHours: 0  },
-  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'BTC', direction: 'LONG',  entryPrice: 77000, targetPrice: 85000, targetPrices: null, stopPrice: 73000, status: 'open',       outcomePrice: null,  targetPricesHit: null, createdDaysAgo: 1,  resolvedHours: 0  },
 
   // AlphaTrader — laddered calls (3 TPs each) ──────────────────────────────
   // SOL long: all 3 TPs hit — full winner
@@ -102,9 +109,6 @@ const SEEDS: SignalSeed[] = [
   { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'SOL', direction: 'LONG',  entryPrice: 115,   targetPrice: 122,   targetPrices: [122, 130, 140], stopPrice: 110,   status: 'partial_target', outcomePrice: (122 + 110 + 110) / 3, targetPricesHit: [true, false, false], createdDaysAgo: 40, resolvedHours: 36 },
   // BTC short: all 3 TPs hit — full winner
   { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'BTC', direction: 'SHORT', entryPrice: 97000, targetPrice: 92000, targetPrices: [92000, 88000, 84000], stopPrice: 100000, status: 'hit_target',   outcomePrice: 84000, targetPricesHit: [true,  true,  true ], createdDaysAgo: 30, resolvedHours: 120 },
-  // ETH long: 3-TP call still open
-  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls', asset: 'ETH', direction: 'LONG',  entryPrice: 2650,  targetPrice: 2800,  targetPrices: [2800, 2950, 3100], stopPrice: 2500,  status: 'open',          outcomePrice: null,  targetPricesHit: null,                   createdDaysAgo: 3,  resolvedHours: 0   },
-
   // ── DegenKing — 15 signals, ~53% hit rate, volatile ─────────────────────
   { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'SOL', direction: 'LONG',  entryPrice: 145,   targetPrice: 175,   targetPrices: null, stopPrice: 130,   status: 'hit_target', outcomePrice: 175,   targetPricesHit: null, createdDaysAgo: 82, resolvedHours: 36  },
   { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'BTC', direction: 'LONG',  entryPrice: 76000, targetPrice: 84000, targetPrices: null, stopPrice: 70000, status: 'hit_stop',   outcomePrice: 70000, targetPricesHit: null, createdDaysAgo: 76, resolvedHours: 18  },
@@ -119,8 +123,6 @@ const SEEDS: SignalSeed[] = [
   { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'BTC', direction: 'LONG',  entryPrice: 83000, targetPrice: 92000, targetPrices: null, stopPrice: 78000, status: 'hit_stop',   outcomePrice: 78000, targetPricesHit: null, createdDaysAgo: 25, resolvedHours: 36  },
   { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'ETH', direction: 'LONG',  entryPrice: 2950,  targetPrice: 3400,  targetPrices: null, stopPrice: 2750,  status: 'hit_target', outcomePrice: 3400,  targetPricesHit: null, createdDaysAgo: 19, resolvedHours: 72  },
   { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'SOL', direction: 'SHORT', entryPrice: 155,   targetPrice: 130,   targetPrices: null, stopPrice: 168,   status: 'expired',    outcomePrice: 148,   targetPricesHit: null, createdDaysAgo: 14, resolvedHours: 168 },
-  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'BTC', direction: 'LONG',  entryPrice: 79000, targetPrice: 87000, targetPrices: null, stopPrice: 75000, status: 'open',       outcomePrice: null,  targetPricesHit: null, createdDaysAgo: 3,  resolvedHours: 0   },
-  { callerName: 'DegenKing', source: 'twitter', channelName: '@DegenKing', asset: 'ETH', direction: 'LONG',  entryPrice: 2800,  targetPrice: 3200,  targetPrices: null, stopPrice: 2600,  status: 'open',       outcomePrice: null,  targetPricesHit: null, createdDaysAgo: 1,  resolvedHours: 0   },
 
   // ── SolanaWhale — 8 signals, ~38% hit rate, mostly SOL ──────────────────
   { callerName: 'SolanaWhale', source: 'telegram', channelName: 'sol-alpha', asset: 'SOL', direction: 'LONG',  entryPrice: 160,   targetPrice: 220,   targetPrices: null, stopPrice: 140,   status: 'hit_stop',   outcomePrice: 140,   targetPricesHit: null, createdDaysAgo: 80, resolvedHours: 24  },
@@ -130,7 +132,6 @@ const SEEDS: SignalSeed[] = [
   { callerName: 'SolanaWhale', source: 'telegram', channelName: 'sol-alpha', asset: 'BTC', direction: 'LONG',  entryPrice: 70000, targetPrice: 78000, targetPrices: null, stopPrice: 65000, status: 'hit_target', outcomePrice: 78000, targetPricesHit: null, createdDaysAgo: 40, resolvedHours: 84  },
   { callerName: 'SolanaWhale', source: 'telegram', channelName: 'sol-alpha', asset: 'SOL', direction: 'LONG',  entryPrice: 150,   targetPrice: 200,   targetPrices: null, stopPrice: 135,   status: 'hit_stop',   outcomePrice: 135,   targetPricesHit: null, createdDaysAgo: 28, resolvedHours: 36  },
   { callerName: 'SolanaWhale', source: 'telegram', channelName: 'sol-alpha', asset: 'SOL', direction: 'SHORT', entryPrice: 140,   targetPrice: 110,   targetPrices: null, stopPrice: 152,   status: 'expired',    outcomePrice: 132,   targetPricesHit: null, createdDaysAgo: 15, resolvedHours: 168 },
-  { callerName: 'SolanaWhale', source: 'telegram', channelName: 'sol-alpha', asset: 'SOL', direction: 'LONG',  entryPrice: 125,   targetPrice: 155,   targetPrices: null, stopPrice: 115,   status: 'open',       outcomePrice: null,  targetPricesHit: null, createdDaysAgo: 2,  resolvedHours: 0   },
 
   // ── ChartMaster — 12 signals, ~58% hit rate, conservative ───────────────
   { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'BTC', direction: 'LONG',  entryPrice: 78500, targetPrice: 82000, targetPrices: null, stopPrice: 76500, status: 'hit_target', outcomePrice: 82000, targetPricesHit: null, createdDaysAgo: 83, resolvedHours: 36  },
@@ -143,11 +144,97 @@ const SEEDS: SignalSeed[] = [
   { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'BTC', direction: 'LONG',  entryPrice: 80000, targetPrice: 84000, targetPrices: null, stopPrice: 78000, status: 'hit_target', outcomePrice: 84000, targetPricesHit: null, createdDaysAgo: 37, resolvedHours: 60  },
   { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'ETH', direction: 'SHORT', entryPrice: 3600,  targetPrice: 3350,  targetPrices: null, stopPrice: 3720,  status: 'hit_stop',   outcomePrice: 3720,  targetPricesHit: null, createdDaysAgo: 30, resolvedHours: 12  },
   { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'SOL', direction: 'LONG',  entryPrice: 122,   targetPrice: 135,   targetPrices: null, stopPrice: 115,   status: 'hit_target', outcomePrice: 135,   targetPricesHit: null, createdDaysAgo: 22, resolvedHours: 84  },
-  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'BTC', direction: 'LONG',  entryPrice: 76000, targetPrice: 81000, targetPrices: null, stopPrice: 74000, status: 'open',       outcomePrice: null,  targetPricesHit: null, createdDaysAgo: 5,  resolvedHours: 0   },
-  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'ETH', direction: 'LONG',  entryPrice: 2700,  targetPrice: 2950,  targetPrices: null, stopPrice: 2580,  status: 'open',       outcomePrice: null,  targetPricesHit: null, createdDaysAgo: 2,  resolvedHours: 0   },
 ];
 
+// ── Open-signal templates (priced against real candles at seed time) ─────────
+//
+// These rows resolve to `status: 'open'` in the DB. Their entry/stop/target
+// are built from the actual candle close at `createdDaysAgo` so clicking
+// "Check Outcomes" walks genuine price action forward and plausibly
+// resolves some during a demo. Percentages below mirror the ratios of the
+// previously-hardcoded open rows so each caller's R:R profile stays intact.
+
+interface OpenTemplate {
+  callerName: string;
+  source: string;
+  channelName: string;
+  asset: 'BTC' | 'ETH' | 'SOL';
+  direction: 'LONG' | 'SHORT';
+  stopPct: number;      // fraction of entry (e.g. 0.05 = 5%)
+  tpPcts: number[];     // fractions from entry (single-element = single TP)
+  createdDaysAgo: number;
+}
+
+const OPEN_TEMPLATES: OpenTemplate[] = [
+  // AlphaTrader: two single-TP longs + one laddered long
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls',  asset: 'ETH', direction: 'LONG',  stopPct: 0.055, tpPcts: [0.109],                createdDaysAgo: 4 },
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls',  asset: 'BTC', direction: 'LONG',  stopPct: 0.052, tpPcts: [0.104],                createdDaysAgo: 1 },
+  { callerName: 'AlphaTrader', source: 'discord',  channelName: 'alpha-calls',  asset: 'ETH', direction: 'LONG',  stopPct: 0.057, tpPcts: [0.057, 0.113, 0.170],  createdDaysAgo: 3 },
+  // DegenKing: two aggressive longs
+  { callerName: 'DegenKing',   source: 'twitter',  channelName: '@DegenKing',   asset: 'BTC', direction: 'LONG',  stopPct: 0.051, tpPcts: [0.101],                createdDaysAgo: 3 },
+  { callerName: 'DegenKing',   source: 'twitter',  channelName: '@DegenKing',   asset: 'ETH', direction: 'LONG',  stopPct: 0.071, tpPcts: [0.143],                createdDaysAgo: 1 },
+  // SolanaWhale: one big-R SOL long
+  { callerName: 'SolanaWhale', source: 'telegram', channelName: 'sol-alpha',    asset: 'SOL', direction: 'LONG',  stopPct: 0.080, tpPcts: [0.240],                createdDaysAgo: 2 },
+  // ChartMaster: two conservative longs
+  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'BTC', direction: 'LONG',  stopPct: 0.026, tpPcts: [0.066],                createdDaysAgo: 5 },
+  { callerName: 'ChartMaster', source: 'discord',  channelName: 'chart-setups', asset: 'ETH', direction: 'LONG',  stopPct: 0.044, tpPcts: [0.093],                createdDaysAgo: 2 },
+];
+
+// Fallback prices if the candle cache returns nothing (offline / no network).
+// Rounded to keep numbers readable in the UI.
+const FALLBACK_PRICE: Record<OpenTemplate['asset'], number> = {
+  BTC: 80000,
+  ETH: 3000,
+  SOL: 140,
+};
+
+function roundForAsset(asset: OpenTemplate['asset'], value: number): number {
+  const decimals = asset === 'SOL' ? 2 : 0;
+  const pow = 10 ** decimals;
+  return Math.round(value * pow) / pow;
+}
+
 // ── Insert ───────────────────────────────────────────────────────────────────
+
+/**
+ * Fetch a recent candle window per asset and return a helper that picks the
+ * close price nearest a given historical timestamp. One query per asset
+ * covers every open-template lookup.
+ */
+async function buildPriceLookup(
+  assets: OpenTemplate['asset'][],
+  oldestDaysAgo: number,
+): Promise<(asset: OpenTemplate['asset'], at: Date) => number | null> {
+  const cache = getCandleCache();
+  const end = new Date();
+  const start = daysAgo(oldestDaysAgo + 1); // small buffer so the oldest signal has headroom
+
+  const perAsset = new Map<OpenTemplate['asset'], { ts: number; close: number }[]>();
+  for (const asset of assets) {
+    try {
+      const candles = await cache.getCandles(asset, '1h', start, end);
+      if (candles.length > 0) {
+        perAsset.set(asset, candles.map((c) => ({ ts: c.timestamp.getTime(), close: c.close })));
+      }
+    } catch (err) {
+      console.warn(`  candle fetch for ${asset} failed: ${(err as Error).message}`);
+    }
+  }
+
+  return (asset, at) => {
+    const series = perAsset.get(asset);
+    if (!series || series.length === 0) return null;
+    // Binary-search-lite: series is chronological, so linear is fine for ≤200 rows.
+    const target = at.getTime();
+    let best = series[0];
+    let bestGap = Math.abs(best.ts - target);
+    for (const row of series) {
+      const gap = Math.abs(row.ts - target);
+      if (gap < bestGap) { best = row; bestGap = gap; }
+    }
+    return best.close;
+  };
+}
 
 async function run() {
   // Check for existing seed to avoid duplicates
@@ -201,17 +288,74 @@ async function run() {
     inserted++;
   }
 
-  console.log(`Seeded ${inserted} signals for wallet ${walletAddress}`);
+  // ── Open signals priced against live candles ─────────────────────────────
+  const openAssets = [...new Set(OPEN_TEMPLATES.map((t) => t.asset))];
+  const oldestDays = Math.max(...OPEN_TEMPLATES.map((t) => t.createdDaysAgo));
+  console.log(`Fetching recent candles for ${openAssets.join('/')} to price ${OPEN_TEMPLATES.length} open signals…`);
+  const priceAt = await buildPriceLookup(openAssets, oldestDays);
 
-  // Print summary per caller
-  const callers = [...new Set(SEEDS.map((s) => s.callerName))];
-  for (const caller of callers) {
+  let openInserted = 0;
+  let fallbackUsed = 0;
+  for (const t of OPEN_TEMPLATES) {
+    const createdAt = daysAgo(t.createdDaysAgo);
+    const livePrice = priceAt(t.asset, createdAt);
+    const rawEntry = livePrice ?? FALLBACK_PRICE[t.asset];
+    if (livePrice == null) fallbackUsed++;
+
+    // Small jitter (~±0.3%) so the entry doesn't land exactly on a candle close.
+    const jitter = 1 + (Math.random() - 0.5) * 0.006;
+    const entry = roundForAsset(t.asset, rawEntry * jitter);
+
+    const sideSign = t.direction === 'LONG' ? 1 : -1;
+    const stop = roundForAsset(t.asset, entry * (1 - sideSign * t.stopPct));
+    const targets = t.tpPcts.map((p) =>
+      roundForAsset(t.asset, entry * (1 + sideSign * p)),
+    );
+
+    await prisma.signal.create({
+      data: {
+        walletAddress: walletAddress!,
+        callerName: t.callerName,
+        source: t.source,
+        channelName: t.channelName,
+        asset: t.asset,
+        direction: t.direction,
+        entryPrice: entry,
+        targetPrice: targets[0],
+        targetPrices: JSON.stringify(targets),
+        stopPrice: stop,
+        status: 'open',
+        outcomePrice: null,
+        outcomePnlPct: null,
+        outcomeRMultiple: null,
+        targetPricesHit: null,
+        resolvedAt: null,
+        createdAt,
+        updatedAt: createdAt,
+      },
+    });
+    openInserted++;
+  }
+  console.log(
+    `Seeded ${openInserted} open signal(s) priced against live candles`
+    + (fallbackUsed > 0 ? ` (${fallbackUsed} used fallback price — check network/candle availability)` : ''),
+  );
+
+  console.log(`Seeded ${inserted + openInserted} signals for wallet ${walletAddress}`);
+
+  // Print summary per caller. Counts both pre-resolved SEEDS and the
+  // live-priced OPEN_TEMPLATES so totals line up with what's in the DB.
+  const allCallerNames = [...new Set([
+    ...SEEDS.map((s) => s.callerName),
+    ...OPEN_TEMPLATES.map((t) => t.callerName),
+  ])];
+  for (const caller of allCallerNames) {
     const callerSeeds = SEEDS.filter((s) => s.callerName === caller);
+    const callerOpens = OPEN_TEMPLATES.filter((t) => t.callerName === caller).length;
     const hits     = callerSeeds.filter((s) => s.status === 'hit_target').length;
     const partials = callerSeeds.filter((s) => s.status === 'partial_target').length;
     const stops    = callerSeeds.filter((s) => s.status === 'hit_stop').length;
     const expired  = callerSeeds.filter((s) => s.status === 'expired').length;
-    const open     = callerSeeds.filter((s) => s.status === 'open').length;
     const resolved = hits + partials + stops + expired;
     const hitPoints = callerSeeds.reduce((sum, s) => {
       if (s.status === 'hit_target') return sum + 1;
@@ -222,7 +366,8 @@ async function run() {
       return sum;
     }, 0);
     const hitRate = resolved > 0 ? ((hitPoints / resolved) * 100).toFixed(0) : '—';
-    console.log(`  ${caller}: ${callerSeeds.length} signals, ${hitRate}% hit rate (${hits} target / ${partials} partial / ${stops} stop / ${expired} expired / ${open} open)`);
+    const total = callerSeeds.length + callerOpens;
+    console.log(`  ${caller}: ${total} signals, ${hitRate}% hit rate (${hits} target / ${partials} partial / ${stops} stop / ${expired} expired / ${callerOpens} open)`);
   }
 }
 
