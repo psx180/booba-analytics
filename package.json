@@ -4,7 +4,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "prisma generate && prisma migrate deploy && next build",
     "start": "next start",
     "import": "tsx src/scripts/import.ts",
     "regimes": "tsx src/scripts/compute-regimes.ts",

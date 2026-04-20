@@ -125,6 +125,12 @@ async function main() {
     balanceResult.errors.slice(0, 5).forEach((e) => console.log(`    ${e}`));
   }
 
+  console.log('\nRunning analytics computation (this may take a minute)...');
+  const { runCompute } = await import('../services/compute-policy');
+  const computeResult = await runCompute(walletAddress, 'import');
+  console.log('  Ran tiers:', computeResult.ran.join(', ') || 'none');
+  console.log('  Skipped:', computeResult.skipped.join(', ') || 'none');
+
   console.log('\nDone.\n');
 }
 

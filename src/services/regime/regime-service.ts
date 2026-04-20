@@ -88,16 +88,64 @@ export class RegimeService {
    * Returns the number of trades tagged.
    */
   async tagTrades(): Promise<number> {
+    // Diagnostic: how many snapshots exist and under which assets?
+    const snapshotAssets = await prisma.regimeSnapshot.groupBy({
+      by: ['asset'],
+      _count: { _all: true },
+    });
+    const totalSnapshots = snapshotAssets.reduce((sum, row) => sum + row._count._all, 0);
+    console.log(
+      '[regime-service.tagTrades] snapshots:',
+      totalSnapshots,
+      'by asset:',
+      snapshotAssets.map((r) => `${r.asset}=${r._count._all}`).join(', '),
+    );
+
+    // Diagnostic: how many trades exist, and how many are already tagged?
+    const totalTrades = await prisma.trade.count();
+    const taggedCount = await prisma.trade.count({ where: { NOT: { regimeAtEntry: null } } });
+    const untaggedCount = await prisma.trade.count({ where: { regimeAtEntry: null } });
+    console.log(
+      '[regime-service.tagTrades] trades total:',
+      totalTrades,
+      'regimeAtEntry non-null:',
+      taggedCount,
+      'null:',
+      untaggedCount,
+    );
+
     const untagged = await prisma.trade.findMany({
       where: { regimeAtEntry: null },
       select: { id: true, asset: true, entryTime: true },
     });
 
+    // Diagnostic: what assets do the untagged trades have? The matching logic
+    // below looks up RegimeSnapshot by method + timestamp only — asset is NOT
+    // part of the where clause. So mismatches like snapshots under 'BTCUSDT'
+    // vs trades under 'BTC' will not cause lookup failures here, but it's
+    // useful to see the asset distribution regardless.
+    const untaggedAssets = new Map<string, number>();
+    for (const t of untagged) {
+      untaggedAssets.set(t.asset, (untaggedAssets.get(t.asset) ?? 0) + 1);
+    }
+    console.log(
+      '[regime-service.tagTrades] untagged trade assets:',
+      Array.from(untaggedAssets.entries()).map(([a, n]) => `${a}=${n}`).join(', '),
+      '| matching by method:',
+      this.detector.name,
+    );
+
     let tagged = 0;
+    let skippedNoEntry = 0;
+    let skippedNoSnapshot = 0;
+    let errored = 0;
 
     for (const trade of untagged) {
       try {
-        if (!trade.entryTime || trade.entryTime.getTime() === 0) continue;
+        if (!trade.entryTime || trade.entryTime.getTime() === 0) {
+          skippedNoEntry++;
+          continue;
+        }
 
         // Find the most recent snapshot at or before entry time
         const snapshot = await prisma.regimeSnapshot.findFirst({
@@ -108,7 +156,10 @@ export class RegimeService {
           orderBy: { timestamp: 'desc' },
         });
 
-        if (!snapshot?.regimeClassification) continue;
+        if (!snapshot?.regimeClassification) {
+          skippedNoSnapshot++;
+          continue;
+        }
 
         await prisma.trade.update({
           where: { id: trade.id },
@@ -119,9 +170,21 @@ export class RegimeService {
         });
         tagged++;
       } catch {
+        errored++;
         // Non-standard asset or unexpected value type — skip this trade
       }
     }
+
+    console.log(
+      '[regime-service.tagTrades] done — updated:',
+      tagged,
+      'skipped (no entryTime):',
+      skippedNoEntry,
+      'skipped (no snapshot):',
+      skippedNoSnapshot,
+      'errored:',
+      errored,
+    );
 
     return tagged;
   }

@@ -65,10 +65,16 @@ export async function runCompute(
       const end = new Date();
       const start = new Date(end.getTime() - 365 * 86_400_000);
       await regimeService.computeRegimes('BTCUSDT', '1d', start, end);
-      await regimeService.tagTrades();
+      try {
+        await regimeService.tagTrades();
+        console.log('[compute-policy] tagTrades completed');
+      } catch (err) {
+        console.error('[compute-policy] tagTrades failed:', err);
+      }
     } catch (err) {
       console.error('[compute-policy] Regime computation failed:', err);
     }
+    console.log('[compute-policy] Regime detection and tagging complete');
     ran.push('slow');
   } else {
     skipped.push('slow');
