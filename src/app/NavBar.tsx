@@ -65,7 +65,7 @@ export default function NavBar() {
             <div className="ml-auto flex items-center gap-2">
               <LiveIndicator />
               <SyncButton />
-              <NetworkSelector />
+             
               <SubAccountSelector />
               <JournalSelector />
               <WalletBadge />

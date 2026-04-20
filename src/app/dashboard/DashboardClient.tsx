@@ -1100,8 +1100,8 @@ export default function DashboardClient() {
           />
         </div>
 
-        {/* Row 2 — three smaller cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {/* Row 2 — smaller cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           {/* Expectancy */}
           <StatCard
             label="Expectancy"
@@ -1124,6 +1124,21 @@ export default function DashboardClient() {
                 <span className="text-[#6e7681]">—</span>
               )
             }
+          />
+          {/* Payoff */}
+          <StatCard
+            label="Payoff"
+            value={
+              payoffRatio != null ? (
+                <span className={payoffColor(payoffRatio)}>
+                  {payoffRatio.toFixed(1)}:1
+                </span>
+              ) : (
+                <span className="text-[#6e7681]">—</span>
+              )
+            }
+            sub="avg win vs avg loss"
+            tooltip="Average win size vs average loss size. Above 2.0 is excellent."
           />
           {/* Current Drawdown */}
           <StatCard

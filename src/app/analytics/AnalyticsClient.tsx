@@ -1906,9 +1906,6 @@ function RiskTab({
   sharpeRatio,
   sortinoRatio,
   calmarRatio,
-  payoffRatio,
-  recoveryFactor,
-  avgRMultiple,
   riskTradeCount,
   drawdownAnalysis,
   feeAttribution,
@@ -1919,9 +1916,6 @@ function RiskTab({
   sharpeRatio: number | null;
   sortinoRatio: number | null;
   calmarRatio: number | null;
-  payoffRatio: number | null;
-  recoveryFactor: number | null;
-  avgRMultiple: number | null;
   riskTradeCount: number;
   drawdownAnalysis: DrawdownAnalysis | null;
   feeAttribution: FeeAttribution | null;
@@ -1945,10 +1939,7 @@ function RiskTab({
   const hasRatios =
     sharpeRatio != null ||
     sortinoRatio != null ||
-    calmarRatio != null ||
-    payoffRatio != null ||
-    recoveryFactor != null ||
-    avgRMultiple != null;
+    calmarRatio != null;
   const hasDrawdown = drawdownAnalysis != null && drawdownAnalysis.maxDrawdown < 0;
   const fmtRatio = (v: number | null) =>
     v != null && Number.isFinite(v) ? v.toFixed(2) : 'N/A';
@@ -2090,46 +2081,6 @@ function RiskTab({
                   <div className="text-[10px] text-[#4a5568] mt-0.5">
                     Annualized return / max drawdown
                   </div>
-                </div>
-              </div>
-
-              {/* Row 2: Profitability / quality metrics — payoff, recovery, R */}
-              <div className="grid grid-cols-3 gap-4 pt-4 border-t border-[#21262d]">
-                <div>
-                  <div className="text-xs text-[#6e7681] mb-1">Payoff Ratio</div>
-                  <div className={`text-lg font-bold tabular-nums ${
-                    payoffRatio == null ? 'text-[#4a5568]'
-                      : payoffRatio >= 1.5 ? 'text-green-400'
-                      : payoffRatio >= 1 ? 'text-amber-400'
-                      : 'text-red-400'
-                  }`}>
-                    {fmtRatio(payoffRatio)}
-                  </div>
-                  <div className="text-[10px] text-[#4a5568] mt-0.5">Avg winner / avg loser</div>
-                </div>
-                <div>
-                  <div className="text-xs text-[#6e7681] mb-1">Recovery Factor</div>
-                  <div className={`text-lg font-bold tabular-nums ${
-                    recoveryFactor == null ? 'text-[#4a5568]'
-                      : recoveryFactor >= 2 ? 'text-green-400'
-                      : recoveryFactor >= 1 ? 'text-amber-400'
-                      : 'text-red-400'
-                  }`}>
-                    {fmtRatio(recoveryFactor)}
-                  </div>
-                  <div className="text-[10px] text-[#4a5568] mt-0.5">Net P&L / max drawdown</div>
-                </div>
-                <div>
-                  <div className="text-xs text-[#6e7681] mb-1">Avg R-Multiple</div>
-                  <div className={`text-lg font-bold tabular-nums ${
-                    avgRMultiple == null ? 'text-[#4a5568]'
-                      : avgRMultiple >= 0.5 ? 'text-green-400'
-                      : avgRMultiple >= 0 ? 'text-amber-400'
-                      : 'text-red-400'
-                  }`}>
-                    {fmtRatio(avgRMultiple)}
-                  </div>
-                  <div className="text-[10px] text-[#4a5568] mt-0.5">Avg P&L / risk per trade</div>
                 </div>
               </div>
             </div>
@@ -2445,9 +2396,6 @@ export default function AnalyticsClient() {
   const [sharpeRatio, setSharpeRatio] = useState<number | null>(null);
   const [sortinoRatio, setSortinoRatio] = useState<number | null>(null);
   const [calmarRatio, setCalmarRatio] = useState<number | null>(null);
-  const [payoffRatio, setPayoffRatio] = useState<number | null>(null);
-  const [recoveryFactor, setRecoveryFactor] = useState<number | null>(null);
-  const [avgRMultiple, setAvgRMultiple] = useState<number | null>(null);
   const [riskTradeCount, setRiskTradeCount] = useState<number>(0);
   const [drawdownAnalysis, setDrawdownAnalysis] = useState<DrawdownAnalysis | null>(null);
   const [feeAttribution, setFeeAttribution] = useState<FeeAttribution | null>(null);
@@ -2523,9 +2471,6 @@ export default function AnalyticsClient() {
         setSharpeRatio(d.sharpeRatio ?? null);
         setSortinoRatio(d.sortinoRatio ?? null);
         setCalmarRatio(d.calmarRatio ?? null);
-        setPayoffRatio(d.payoffRatio ?? null);
-        setRecoveryFactor(d.recoveryFactor ?? null);
-        setAvgRMultiple(d.avgRMultiple ?? null);
         setRiskTradeCount(d.riskTradeCount ?? 0);
         setDrawdownAnalysis(d.drawdownAnalysis ?? null);
         setFeeAttribution(d.feeAttribution ?? null);
@@ -2754,9 +2699,6 @@ export default function AnalyticsClient() {
             sharpeRatio={sharpeRatio}
             sortinoRatio={sortinoRatio}
             calmarRatio={calmarRatio}
-            payoffRatio={payoffRatio}
-            recoveryFactor={recoveryFactor}
-            avgRMultiple={avgRMultiple}
             riskTradeCount={riskTradeCount}
             drawdownAnalysis={drawdownAnalysis}
             feeAttribution={feeAttribution}
