@@ -186,7 +186,45 @@ export class RegimeService {
       errored,
     );
 
-    return tagged;
+    // Propagate regime from fills (Trade) to positions (Position). Grouping
+    // happens at import time, before regime tagging runs, so positions stay
+    // null even when their constituent fills have been tagged. Relation path
+    // is Position → OrderGroup → Trade (no direct Trade.positionId).
+    const untaggedPositions = await prisma.position.findMany({
+      where: { regimeAtEntry: null },
+      select: { id: true },
+    });
+
+    let positionsUpdated = 0;
+    for (const pos of untaggedPositions) {
+      const earliestTaggedFill = await prisma.trade.findFirst({
+        where: {
+          orderGroup: { positionId: pos.id },
+          regimeAtEntry: { not: null },
+          entryTime: { not: null },
+        },
+        orderBy: { entryTime: 'asc' },
+        select: { regimeAtEntry: true },
+      });
+
+      if (earliestTaggedFill?.regimeAtEntry) {
+        await prisma.position.update({
+          where: { id: pos.id },
+          data: { regimeAtEntry: earliestTaggedFill.regimeAtEntry },
+        });
+        positionsUpdated++;
+      }
+    }
+
+    console.log(
+      '[regime-service.tagTrades] propagated regime to',
+      positionsUpdated,
+      'positions (of',
+      untaggedPositions.length,
+      'untagged)',
+    );
+
+    return tagged + positionsUpdated;
   }
 
   /**
