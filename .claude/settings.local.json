@@ -26,7 +26,9 @@
       "Bash(npx vitest *)",
       "Bash(curl -s -L -w \"HTTP:%{http_code}\\\\n\" https://pacifica.fi/docs)",
       "Bash(curl -s -L \"https://api.github.com/search/repositories?q=pacifica+perps\")",
-      "Bash(grep -E \"\\\\.ts$\")"
+      "Bash(grep -E \"\\\\.ts$\")",
+      "Bash(git -C \"D:/IdeaProjects/pacibooba\" log --oneline -10 -- src/app/analytics/AnalyticsClient.tsx)",
+      "Bash(git -C \"D:/IdeaProjects/pacibooba\" show --stat 6f78d54)"
     ]
   }
 }

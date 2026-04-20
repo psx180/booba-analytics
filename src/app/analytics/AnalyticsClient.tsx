@@ -280,6 +280,7 @@ interface SavedTradesFilterEntry {
     regimes?: string[];
     tradeTypes?: string[];
     assets?: string[];
+    builderCodes?: string[];
     [key: string]: unknown;
   };
 }
@@ -288,7 +289,13 @@ function savedFiltersKey(wallet: string) {
   return `savedTradesFilters:${wallet}`;
 }
 
-function LoadFilterDropdown({ onLoad }: { onLoad: (patch: Partial<AnalyticsFilters>) => void }) {
+function LoadFilterDropdown({
+  selectedName,
+  onLoad,
+}: {
+  selectedName: string | null;
+  onLoad: (name: string, patch: Partial<AnalyticsFilters>) => void;
+}) {
   const { walletAddress } = useJournal();
   const [open, setOpen] = useState(false);
   const [saved, setSaved] = useState<SavedTradesFilterEntry[]>([]);
@@ -319,10 +326,11 @@ function LoadFilterDropdown({ onLoad }: { onLoad: (patch: Partial<AnalyticsFilte
 
   const apply = (sf: SavedTradesFilterEntry) => {
     const f = sf.filter;
-    onLoad({
+    onLoad(sf.name, {
       regime: f.regimes?.[0] ?? '',
       tradeType: f.tradeTypes?.[0] ?? '',
       asset: f.assets?.[0] ?? '',
+      builderCode: f.builderCodes?.[0] ?? '',
     });
     setOpen(false);
   };
@@ -334,7 +342,7 @@ function LoadFilterDropdown({ onLoad }: { onLoad: (patch: Partial<AnalyticsFilte
         onClick={() => setOpen((o) => !o)}
         className="bg-[#21262d] border border-[#30363d] text-sm text-[#e6edf3] rounded px-2 py-1.5 flex items-center gap-1.5 hover:border-[#4a5568] transition-colors whitespace-nowrap"
       >
-        Saved filters ▾
+        {selectedName ?? 'Saved filters'} ▾
       </button>
       {open && (
         <div className="absolute top-full left-0 mt-1 z-20 bg-[#161b22] border border-[#30363d] rounded-lg shadow-xl min-w-[200px] max-h-[240px] overflow-y-auto">
@@ -2425,6 +2433,7 @@ export default function AnalyticsClient() {
   }, [searchParams]);
 
   const [filters, setFilters] = useState<AnalyticsFilters>(EMPTY_FILTERS);
+  const [loadedFilterName, setLoadedFilterName] = useState<string | null>(null);
   const [assetOptions, setAssetOptions] = useState<string[]>([]);
   const [builderCodeOptions, setBuilderCodeOptions] = useState<string[]>([]);
   const [insights, setInsights] = useState<Insight[]>([]);
@@ -2666,11 +2675,18 @@ export default function AnalyticsClient() {
             </div>
           )}
           <LoadFilterDropdown
-            onLoad={(patch) => setFilters((f) => ({ ...f, ...patch }))}
+            selectedName={loadedFilterName}
+            onLoad={(name, patch) => {
+              setFilters((f) => ({ ...f, ...patch }));
+              setLoadedFilterName(name);
+            }}
           />
           {hasFilters && (
             <button
-              onClick={() => setFilters(EMPTY_FILTERS)}
+              onClick={() => {
+                setFilters(EMPTY_FILTERS);
+                setLoadedFilterName(null);
+              }}
               className="text-xs text-[#6e7681] hover:text-white bg-[#21262d] border border-[#30363d] rounded px-3 py-1.5 transition-colors self-end"
             >
               Clear filters
