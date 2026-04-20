@@ -267,10 +267,16 @@ function FilterSelect({
 }
 
 // ── Load Filter Dropdown ──────────────────────────────────────────────────────
+//
+// Reads the same saved-filters store as the Trades page so a user who saves a
+// named filter there can apply it here without re-entering it. Key + shape are
+// owned by TradesClient (`savedTradesFilters:{wallet}`, entries are `{ name,
+// filter: TradesFilter }`); the Analytics page only consumes the three fields
+// it supports (regimes, tradeTypes, assets) and ignores the rest.
 
-interface SavedTradeFilter {
+interface SavedTradesFilterEntry {
   name: string;
-  filters: {
+  filter: {
     regimes?: string[];
     tradeTypes?: string[];
     assets?: string[];
@@ -278,20 +284,29 @@ interface SavedTradeFilter {
   };
 }
 
+function savedFiltersKey(wallet: string) {
+  return `savedTradesFilters:${wallet}`;
+}
+
 function LoadFilterDropdown({ onLoad }: { onLoad: (patch: Partial<AnalyticsFilters>) => void }) {
+  const { walletAddress } = useJournal();
   const [open, setOpen] = useState(false);
-  const [saved, setSaved] = useState<SavedTradeFilter[]>([]);
+  const [saved, setSaved] = useState<SavedTradesFilterEntry[]>([]);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
+    if (!walletAddress) {
+      setSaved([]);
+      return;
+    }
     try {
-      const raw = localStorage.getItem('savedTradeFilters');
-      setSaved(raw ? (JSON.parse(raw) as SavedTradeFilter[]) : []);
+      const raw = localStorage.getItem(savedFiltersKey(walletAddress));
+      setSaved(raw ? (JSON.parse(raw) as SavedTradesFilterEntry[]) : []);
     } catch {
       setSaved([]);
     }
-  }, [open]);
+  }, [open, walletAddress]);
 
   useEffect(() => {
     if (!open) return;
@@ -302,8 +317,8 @@ function LoadFilterDropdown({ onLoad }: { onLoad: (patch: Partial<AnalyticsFilte
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
-  const apply = (sf: SavedTradeFilter) => {
-    const f = sf.filters;
+  const apply = (sf: SavedTradesFilterEntry) => {
+    const f = sf.filter;
     onLoad({
       regime: f.regimes?.[0] ?? '',
       tradeType: f.tradeTypes?.[0] ?? '',
@@ -1640,6 +1655,10 @@ function StrategyTab({
     expectancyTrend?: 'improving' | 'declining' | 'stable';
     winRateTrend?: 'improving' | 'declining' | 'stable';
     edgePersistent?: boolean;
+    degradationDetected?: boolean;
+    firstAvg?: number;
+    lastAvg?: number;
+    summary?: string;
     windows?: { expectancy: number; winRate: number }[];
   } | null>(null);
   const [wfLoading, setWfLoading] = useState(true);
@@ -1692,6 +1711,12 @@ function StrategyTab({
   }
 
   // ── Section 2: IS YOUR EDGE PERSISTENT? ──────────────────────────────────
+  // Verdict copy is taken verbatim from the backend `summary`, which is the
+  // sole computation of firstAvg / lastAvg / degradation / improving-but-
+  // still-losing. Implication advice branches on the same (trend, lastAvg,
+  // degradationDetected) triple so the tone matches the verdict — previously
+  // the frontend hand-rolled its own first/last from raw windows and ended up
+  // saying "improving" while losses were deepening.
   let wfVerdict: string;
   let wfImplication: string;
 
@@ -1702,35 +1727,28 @@ function StrategyTab({
     wfVerdict = NO_DATA_VERDICT;
     wfImplication = 'Not enough trades yet for Edge Persistence analysis.';
   } else {
-    const trend = wf.expectancyTrend ?? (wf.edgePersistent ? 'stable' : 'stable');
-    const trendWord =
-      trend === 'improving' ? 'improving' : trend === 'declining' ? 'declining' : 'stable';
+    wfVerdict = wf.summary ?? NO_DATA_VERDICT;
 
-    // Expectancy delta across windows if available
-    let changePhrase = '';
+    const trend = wf.expectancyTrend;
+    const lastAvg = wf.lastAvg ?? 0;
     const wins = wf.windows;
-    if (wins && wins.length >= 2) {
-      const first = wins[0].expectancy;
-      const last = wins[wins.length - 1].expectancy;
-      if (first !== 0) {
-        const fmt = (v: number) => v >= 0 ? `+$${v.toFixed(2)}` : `-$${Math.abs(v).toFixed(2)}`;
-        const dir = last > first ? 'improved' : 'dropped';
-        changePhrase = ` Early trades averaged ${fmt(first)} per trade; recent trades average ${fmt(last)} — expectancy ${dir}.`;
-      }
-    }
-
-    wfVerdict = `Your performance is ${trendWord}.${changePhrase}`;
     const wfConfidence = wins && wins.length >= 5
       ? ' Strong evidence across multiple time windows.'
       : wins && wins.length >= 3
         ? ' Observed pattern — needs more windows for certainty.'
         : '';
-    wfImplication =
-      trend === 'improving'
-        ? `Your skills are developing. Study what changed in your recent trades.${wfConfidence}`
-        : trend === 'declining'
-          ? `Your edge may be decaying. Review whether market conditions have shifted.${wfConfidence}`
-          : `Consistent performance — your approach is robust across time.${wfConfidence}`;
+
+    if (wf.degradationDetected) {
+      wfImplication = `Your edge may be decaying. Review whether market conditions have shifted.${wfConfidence}`;
+    } else if (trend === 'improving' && lastAvg > 0) {
+      wfImplication = `Your skills are developing. Study what changed in your recent trades.${wfConfidence}`;
+    } else if (trend === 'improving' && lastAvg <= 0) {
+      wfImplication = `Losses are shrinking — keep iterating on what's working before sizing up.${wfConfidence}`;
+    } else if (trend === 'declining') {
+      wfImplication = `Your edge may be decaying. Review whether market conditions have shifted.${wfConfidence}`;
+    } else {
+      wfImplication = `Consistent performance — your approach is robust across time.${wfConfidence}`;
+    }
   }
 
   // ── Section 3: MARKET CONDITIONS ─────────────────────────────────────────
