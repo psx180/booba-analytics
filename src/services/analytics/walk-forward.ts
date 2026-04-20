@@ -43,6 +43,13 @@ export interface WalkForwardResult {
   winRateSlope: number;
   expectancySlope: number;
 
+  // First-N / last-N slice averages used to decide degradation / persistence /
+  // the summary paragraph. Exposed so the frontend renders headline copy from
+  // the same numbers the paragraph does, instead of re-deriving from
+  // windows[0] / windows[last] and ending up with a different split.
+  firstAvg: number;
+  lastAvg: number;
+
   summary: string;
 }
 
@@ -303,6 +310,8 @@ export async function computeWalkForward(
     worstWindow: { index: worstIdx, label: worstLabel, expectancy: windows[worstIdx].expectancy },
     winRateSlope:    r2(winRateSlope),
     expectancySlope: r2(expectancySlope),
+    firstAvg: r2(firstAvg),
+    lastAvg:  r2(lastAvg),
     summary,
   };
 }
