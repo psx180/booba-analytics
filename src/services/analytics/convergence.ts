@@ -125,10 +125,12 @@ export async function detectConvergentThemes(
 
   const biggestLeak = negatives[0] ?? null;
   const biggestStrength = positives[0] ?? null;
+  // Focus = next most-actionable negative *other than* the leak, so the three
+  // headline slots show three distinct findings rather than restating the leak.
   const weeklyFocus =
-    [...negatives].sort(
-      (a, b) => ACTIONABILITY[b.theme] - ACTIONABILITY[a.theme],
-    )[0] ?? null;
+    negatives
+      .filter((t) => t !== biggestLeak)
+      .sort((a, b) => ACTIONABILITY[b.theme] - ACTIONABILITY[a.theme])[0] ?? null;
 
   return {
     themes,
