@@ -4,7 +4,7 @@ import Providers from './providers';
 import AppShell from './AppShell';
 
 export const metadata: Metadata = {
-  title: 'Booba — Trade Journal',
+  title: 'BOOBAnalytics — Trade Journal',
   description: 'Pacifica trading journal & analytics',
 };
 

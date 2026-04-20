@@ -1018,7 +1018,7 @@ export default function DashboardClient() {
   if (!hasData && !importDone) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
-        <h1 className="text-3xl font-bold text-white tracking-wider mb-2">Welcome to Booba!</h1>
+        <h1 className="text-3xl font-bold text-white tracking-wider mb-2">Welcome to BOOBAnalytics!</h1>
         <p className="text-sm text-[#8b949e] max-w-md mb-8">
           Let's import your Pacifica trading history. We'll fetch your fills, group them into positions, and tag market regimes automatically.
         </p>
