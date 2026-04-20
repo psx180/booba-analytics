@@ -90,6 +90,12 @@ function stddev(values: number[]): number {
   return Math.sqrt(variance);
 }
 
+/** Mean of absolute values — used for scaling the expectancy trend threshold. */
+function meanAbs(values: number[]): number {
+  if (values.length === 0) return 0;
+  return values.reduce((s, v) => s + Math.abs(v), 0) / values.length;
+}
+
 function downsideDeviation(values: number[]): number {
   const n = values.length;
   if (n < 2) return 0;
@@ -201,26 +207,49 @@ export async function computeWalkForward(
   }
 
   // ── Trend analysis ────────────────────────────────────────────────────────
+  // Thresholds are kept in their native units: the expectancy threshold
+  // scales with the typical window expectancy so a $50-per-trade account and
+  // a $0.50-per-trade account don't share a trivially-crossed $0.02 floor,
+  // while win-rate (a 0–1 fraction) gets a fraction-scale threshold tied to
+  // its own variance so stable win rates don't flip between labels on noise.
 
-  const winRateSlope    = linearSlope(windows.map((w) => w.winRate));
-  const expectancySlope = linearSlope(windows.map((w) => w.expectancy));
+  const winRates       = windows.map((w) => w.winRate);
+  const expectancies   = windows.map((w) => w.expectancy);
+  const winRateSlope    = linearSlope(winRates);
+  const expectancySlope = linearSlope(expectancies);
+
+  const meanAbsExpectancy = meanAbs(expectancies);
+  const expectancyThreshold = Math.max(0.02, meanAbsExpectancy * 0.1);
+
+  const winRateStd = stddev(winRates);
+  const winRateThreshold = Math.max(0.01, winRateStd * 0.3);
 
   const winRateTrend: WalkForwardResult['winRateTrend'] =
-    winRateSlope > 0.02 ? 'improving' : winRateSlope < -0.02 ? 'declining' : 'stable';
+    winRateSlope >  winRateThreshold ? 'improving'
+      : winRateSlope < -winRateThreshold ? 'declining'
+      : 'stable';
   const expectancyTrend: WalkForwardResult['expectancyTrend'] =
-    expectancySlope > 0.02 ? 'improving' : expectancySlope < -0.02 ? 'declining' : 'stable';
+    expectancySlope >  expectancyThreshold ? 'improving'
+      : expectancySlope < -expectancyThreshold ? 'declining'
+      : 'stable';
 
   // ── Edge persistence ──────────────────────────────────────────────────────
 
-  // Compare last N windows vs first N windows (N = 2 when ≥4 windows, else 1)
+  // Compare last N windows vs first N windows (N = 2 when ≥4 windows, else 1).
+  // The persistence / degradation checks below previously used a signed
+  // ratio against firstAvg, which inverts when firstAvg is negative (a
+  // losing trader getting worse still looked "persistent"). The new
+  // conditions anchor on absolute sign: degradation fires only when the
+  // account has drifted below zero, and persistence requires the edge to
+  // stay positive.
   const compareN  = numWindows >= 4 ? 2 : 1;
   const firstSlice = windows.slice(0, compareN);
   const lastSlice  = windows.slice(-compareN);
   const firstAvg   = firstSlice.reduce((a, w) => a + w.expectancy, 0) / compareN;
   const lastAvg    = lastSlice.reduce((a, w)  => a + w.expectancy, 0) / compareN;
 
-  const degradationDetected = lastAvg < firstAvg * 0.5;
-  const edgePersistent      = lastAvg > firstAvg * 0.8;
+  const degradationDetected = lastAvg < firstAvg && lastAvg < 0;
+  const edgePersistent      = lastAvg > 0 && firstAvg > 0 && lastAvg > firstAvg * 0.8;
 
   // ── Best / worst windows ──────────────────────────────────────────────────
 
@@ -242,7 +271,7 @@ export async function computeWalkForward(
       `Your strategy performance has declined. Windows 1–${compareN} averaged ` +
       `$${r2(firstAvg)} expectancy, but windows ${numWindows - compareN + 1}–${numWindows} ` +
       `averaged $${r2(lastAvg)}. Your edge may be eroding — consider reviewing your approach.`;
-  } else if (expectancyTrend === 'improving') {
+  } else if (expectancyTrend === 'improving' && lastAvg > 0) {
     const improvePct =
       firstAvg !== 0
         ? Math.round(((lastAvg - firstAvg) / Math.abs(firstAvg)) * 100)
@@ -251,6 +280,14 @@ export async function computeWalkForward(
     summary =
       `Your performance is improving. Recent trades show ${improveStr} higher expectancy ` +
       `than your early trades. Your skills are developing.`;
+  } else if (expectancyTrend === 'improving' && lastAvg <= 0) {
+    // Still unprofitable, but losses are shrinking — don't celebrate the
+    // slope while every window is still negative. Frames the trajectory
+    // honestly: direction is right, result isn't there yet.
+    summary =
+      `Your losses are decreasing — expectancy improved from $${r2(firstAvg)} to ` +
+      `$${r2(lastAvg)} per trade, but remains negative. Continued improvement ` +
+      `needed to reach profitability.`;
   } else {
     summary =
       `Your performance is consistent across time periods. Your edge appears durable.`;

@@ -34,6 +34,7 @@ import { computeEntropyResult, type EntropyResult } from './insights/entropy-ins
 import { computeRiskMetrics, type RiskMetrics } from './metrics/risk-metrics';
 import { performanceAggregator } from './aggregations/performance';
 import { equityCurveAggregator, getEquityCurveAsync } from './aggregations/equity-curve';
+import { defaultEquityProvider } from './equity';
 
 export interface MetricComputeSummary {
   computed: number;
@@ -317,7 +318,12 @@ export class AnalyticsService {
     const eloResult = computeEloResult(positions);
     const entropyResult = computeEntropyResult(positions);
     const xpnl = computeXpnlResult(positions);
-    const riskMetrics = computeRiskMetrics(positions);
+    // Risk metrics now express returns as a % of equity-at-entry. The
+    // starting capital anchor comes from the active equity provider so it
+    // reflects the same deposit/history model the equity chart uses — not a
+    // hard-coded $10k — keeping Sharpe comparable across accounts.
+    const startingCapital = await defaultEquityProvider.getStartingCapital(walletAddress);
+    const riskMetrics = computeRiskMetrics(positions, startingCapital);
 
     // WART consumes the existing computed dependencies plus the drawdown
     // fields from the equity curve aggregator. Pass them through so the

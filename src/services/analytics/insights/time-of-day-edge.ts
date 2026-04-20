@@ -21,7 +21,7 @@
 
 import type { InsightDetector, Insight, Position } from './base';
 import { sampleSizeConfidence } from './base';
-import { welchTTest, computeImpactScore } from '../statistics';
+import { welchTTest, pearsonCorrelation, computeImpactScore } from '../statistics';
 import type { StatisticalTest } from '../types';
 
 const MIN_POSITIONS = 50;
@@ -138,16 +138,24 @@ export const timeOfDayEdgeDetector: InsightDetector = {
     // ─── Decision-fatigue regression ─────────────────────────────────────
     const fatigue = computeFatigueAnalysis(qualified);
     let fatigueDescription = '';
-    if (fatigue) {
+    if (fatigue && fatigue.isSignificant) {
       fatigueDescription =
         ` Within each session, your performance declines after trade ${fatigue.optimalCutoff}. ` +
         `Trades 1-${fatigue.optimalCutoff} average $${fatigue.earlyAvg.toFixed(2)}, ` +
         `trades ${fatigue.optimalCutoff + 1}+ average $${fatigue.lateAvg.toFixed(2)} (${fatigue.test.description}). ` +
         `Daily trade limit suggestion: ${fatigue.optimalCutoff} trades. ` +
         `Estimated savings from stopping earlier: $${Math.round(fatigue.estimatedSavings).toLocaleString()}.`;
+    } else if (fatigue) {
+      fatigueDescription =
+        ` Within-session performance showed no statistically significant fatigue pattern ` +
+        `(${fatigue.slopeTest.description}).`;
     }
 
-    const finalStatistics = fatigue ? [...rawTests, fatigue.test] : rawTests;
+    // BH correction considers the slopeTest too — it's the gate that controls
+    // whether the fatigue narrative above is claimed, and is what consumers
+    // downstream key off via fatigue.isSignificant.
+    const fatigueStats = fatigue ? [fatigue.test, fatigue.slopeTest] : [];
+    const finalStatistics = [...rawTests, ...fatigueStats];
 
     return [{
       module: 'time-of-day-edge',
@@ -173,6 +181,11 @@ export const timeOfDayEdgeDetector: InsightDetector = {
               fatigueSlope:     Math.round(fatigue.slope * 1000) / 1000,
               estimatedSavings: Math.round(fatigue.estimatedSavings * 100) / 100,
               maxTradesPerDay:  fatigue.maxTradesPerDay,
+              // Consumers (convergence card, psychology tab, live toast) gate
+              // their "fatigue detected" copy on this flag. Rows persisted
+              // before this field existed will read as undefined, which the
+              // consumers treat as not significant.
+              isSignificant:    fatigue.isSignificant,
             }
           : null,
       },
@@ -188,12 +201,14 @@ export const timeOfDayEdgeDetector: InsightDetector = {
 // ─── Decision fatigue helpers ─────────────────────────────────────────────
 
 interface FatigueResult {
-  slope: number;            // OLS slope of pnl ~ tradeNumberInSession
-  test: StatisticalTest;    // Welch on early (1..N) vs late (N+1..)
+  slope: number;             // OLS slope of pnl ~ tradeNumberInSession
+  slopeTest: StatisticalTest; // Pearson r (== slope t-test) — gates the narrative
+  isSignificant: boolean;    // shortcut for slopeTest.isSignificant
+  test: StatisticalTest;     // Welch on early (1..N) vs late (N+1..)
   optimalCutoff: number;
   earlyAvg: number;
   lateAvg: number;
-  estimatedSavings: number; // sum of pnl for trades past the optimal cutoff
+  estimatedSavings: number;  // sum of pnl for trades past the optimal cutoff
   maxTradesPerDay: number;
 }
 
@@ -226,10 +241,14 @@ function computeFatigueAnalysis(qualified: QualifiedTrade[]): FatigueResult | nu
 
   const maxTradesPerDay = numbered.reduce((m, n) => Math.max(m, n.numberInSession), 0);
 
-  // OLS slope of pnl ~ tradeNumberInSession.
+  // OLS slope of pnl ~ tradeNumberInSession, plus its significance test.
+  // The t-stat of Pearson r equals the t-stat of the OLS slope, so we use
+  // pearsonCorrelation as the regression-significance gate (|t| ≥ 2.0 ⇔
+  // p < 0.05 at the sample sizes we care about).
   const xs = numbered.map((n) => n.numberInSession);
   const ys = numbered.map((n) => n.trade.aggregatePnl);
   const slope = simpleSlope(xs, ys);
+  const slopeTest = pearsonCorrelation(xs, ys);
 
   // Try every cutoff N in [1, maxTradesPerDay-1] and pick the one that
   // maximises the average P&L of trades 1..N. The maximising N becomes the
@@ -261,6 +280,8 @@ function computeFatigueAnalysis(qualified: QualifiedTrade[]): FatigueResult | nu
 
   return {
     slope,
+    slopeTest,
+    isSignificant: slopeTest.isSignificant,
     test,
     optimalCutoff: bestN,
     earlyAvg,

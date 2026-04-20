@@ -18,7 +18,6 @@ import WartRadar, { type WartResult } from './WartRadar';
 import DisciplineGauge from './behavior/DisciplineGauge';
 import MarkovBars from './behavior/MarkovBars';
 import SessionDecayChart from './behavior/SessionDecayChart';
-import { computeDecaySeries } from './behavior/sessionDecay';
 import SizeAfterOutcomeScatter from './behavior/SizeAfterOutcomeScatter';
 import TiltEquityCurve, { type TiltEpisode } from './behavior/TiltEquityCurve';
 import MonteCarloChart from './monte-carlo/MonteCarloChart';
@@ -418,8 +417,11 @@ function deriveImpactHeadline(insight: Insight): string {
       return 'Your trade frequency has no impact on P&L';
     }
     case 'time-of-day-edge': {
-      const fatigue = d.fatigue as { estimatedSavings?: number } | null | undefined;
-      if (fatigue?.estimatedSavings && fatigue.estimatedSavings > 0) {
+      const fatigue = d.fatigue as {
+        estimatedSavings?: number;
+        isSignificant?: boolean;
+      } | null | undefined;
+      if (fatigue?.isSignificant === true && fatigue.estimatedSavings && fatigue.estimatedSavings > 0) {
         return `Session fatigue costs ${formatDollar(fatigue.estimatedSavings)}`;
       }
       const bestHour = num(d.bestHour);
@@ -918,10 +920,14 @@ function PsychologyVerdict({ insights }: { insights: Insight[] }) {
       }.`
     : 'No tilt episodes detected.';
 
-  const fatigue = tof?.data?.fatigue as { optimalCutoff?: number } | null | undefined;
-  const fatigueStatement = fatigue?.optimalCutoff != null
-    ? `Performance drops after trade #${fatigue.optimalCutoff}.`
-    : null;
+  const fatigue = tof?.data?.fatigue as
+    | { optimalCutoff?: number; isSignificant?: boolean }
+    | null
+    | undefined;
+  const fatigueStatement =
+    fatigue?.isSignificant === true && fatigue.optimalCutoff != null
+      ? `Performance drops after trade #${fatigue.optimalCutoff}.`
+      : null;
 
   const markov = mlm?.data?.markov as
     | { transitionProbabilities: { winAfterWin: number; winAfterLoss: number } }
@@ -941,7 +947,10 @@ function PsychologyVerdict({ insights }: { insights: Insight[] }) {
 
   const parts = [tiltStatement, fatigueStatement, postLossPhrase].filter(Boolean);
   const text = parts.join(' ');
-  const tone: VerdictTone = tiltEpisodes > 0 || fatigue?.optimalCutoff != null ? 'negative' : 'neutral';
+  const tone: VerdictTone =
+    tiltEpisodes > 0 || (fatigue?.isSignificant === true && fatigue.optimalCutoff != null)
+      ? 'negative'
+      : 'neutral';
 
   return <Verdict tone={tone} text={text || 'Psychology verdict will appear once behavioral analytics are computed.'} />;
 }
@@ -1118,6 +1127,7 @@ function OverviewTab({
   wartResult,
   eloResult,
   sharpeRatio,
+  riskTradeCount,
   insights,
   convergence,
   onSwitchTab,
@@ -1125,6 +1135,7 @@ function OverviewTab({
   wartResult: WartResult | null;
   eloResult: EloResult | null;
   sharpeRatio: number | null;
+  riskTradeCount: number;
   insights: Insight[];
   convergence: ConvergenceResult | null;
   onSwitchTab: (tab: TabId) => void;
@@ -1170,9 +1181,10 @@ function OverviewTab({
             </span>
           )}
           {sharpeRatio != null && (
-            <span>
+            <span title="Annualized based on trading frequency">
               <span className="text-[10px] uppercase tracking-widest text-[#6e7681] mr-1.5">Sharpe</span>
               <span className="text-white">{sharpeRatio.toFixed(2)}</span>
+              <span className="text-[#6e7681] ml-1">({riskTradeCount}t)</span>
             </span>
           )}
         </div>
@@ -1315,9 +1327,10 @@ function ExecutionTab({
     ? (timeInsight.data.bestHour as number)
     : null;
   const fatigue = timeInsight?.data?.fatigue as
-    | { estimatedSavings?: number; optimalCutoff?: number }
+    | { estimatedSavings?: number; optimalCutoff?: number; isSignificant?: boolean }
     | null
     | undefined;
+  const fatigueSignificant = fatigue?.isSignificant === true;
 
   // Exit quality verdict & implication — derived from exitSummary (same data as ExitAnalysis summary paragraph)
   let exitVerdict: string;
@@ -1349,7 +1362,7 @@ function ExecutionTab({
   }
 
   let timingImplication: string;
-  if (fatigue?.estimatedSavings && fatigue.estimatedSavings > 0) {
+  if (fatigueSignificant && fatigue?.estimatedSavings && fatigue.estimatedSavings > 0) {
     timingImplication = `Session fatigue is costing you $${Math.round(fatigue.estimatedSavings).toLocaleString()}. Consider stopping earlier in your sessions.`;
   } else if (bestHour != null) {
     timingImplication = 'Your performance is consistent across trading hours — no timing edge detected.';
@@ -1418,9 +1431,16 @@ function PsychologyTab({
   const counterfactualImprovement =
     (tiltInsight?.data?.counterfactualImprovement as number | undefined) ?? 0;
 
-  // Fatigue data: derived from the same series the chart renders, so the
-  // headline cannot disagree with the chart caption.
-  const decay = computeDecaySeries(behaviorPositions);
+  // Fatigue data (from time-of-day insight). `isSignificant` gates every
+  // consumer that would otherwise claim a specific fatigue pattern; rows
+  // persisted before this flag existed read as undefined and are treated as
+  // not significant.
+  const timeInsight = insights.find((i) => i.module === 'time-of-day-edge');
+  const fatigue = timeInsight?.data?.fatigue as
+    | { estimatedSavings?: number; optimalCutoff?: number; isSignificant?: boolean }
+    | null
+    | undefined;
+  const fatigueSignificant = fatigue?.isSignificant === true;
 
   // ── Section 1: DISCIPLINE ────────────────────────────────────────────────
   let disciplineVerdict: string;
@@ -1489,26 +1509,27 @@ function PsychologyTab({
   }
 
   // ── Section 3: SESSION MANAGEMENT ───────────────────────────────────────
-  const cutoff = decay.isFatigueSignificant ? decay.optimalStop : null;
-  const savings = decay.isFatigueSignificant ? decay.savingsPerSession : 0;
+  // Only claim a fatigue cutoff when the regression passed the slope
+  // significance test on the backend. Otherwise fall back to the "no
+  // significant pattern" copy so we don't parrot a noisy peak.
+  const cutoff = fatigueSignificant ? (fatigue?.optimalCutoff ?? null) : null;
+  const savings = fatigueSignificant ? (fatigue?.estimatedSavings ?? null) : null;
 
   let sessionVerdict: string;
   if (cutoff != null) {
     sessionVerdict = `Performance peaks at trade #${cutoff}. After that, average P&L drops.`;
-  } else if (decay.series.length >= 2) {
-    sessionVerdict = `No significant fatigue pattern detected across ${decay.series.length} trade positions.`;
   } else {
     sessionVerdict = NO_DATA_VERDICT;
   }
 
   let sessionImplication: string;
-  if (cutoff != null && savings > 0) {
+  if (cutoff != null && savings != null && savings > 0) {
     sessionImplication = `Consider stopping after ${cutoff} trades per session — estimated savings of $${Math.round(savings).toLocaleString()} per session.`;
   } else if (cutoff != null) {
     sessionImplication = `Consider stopping after ${cutoff} trades per session.`;
   } else {
     sessionImplication =
-      'No session fatigue detected. Your performance is consistent throughout trading sessions.';
+      'No significant session fatigue detected. Your performance is consistent throughout trading sessions.';
   }
 
   return (
@@ -1858,7 +1879,11 @@ function RiskTab({
   chartProps,
   sharpeRatio,
   sortinoRatio,
+  calmarRatio,
   payoffRatio,
+  recoveryFactor,
+  avgRMultiple,
+  riskTradeCount,
   drawdownAnalysis,
   feeAttribution,
   liquidationCount,
@@ -1867,7 +1892,11 @@ function RiskTab({
   chartProps: any;
   sharpeRatio: number | null;
   sortinoRatio: number | null;
+  calmarRatio: number | null;
   payoffRatio: number | null;
+  recoveryFactor: number | null;
+  avgRMultiple: number | null;
+  riskTradeCount: number;
   drawdownAnalysis: DrawdownAnalysis | null;
   feeAttribution: FeeAttribution | null;
   liquidationCount: number;
@@ -1887,8 +1916,16 @@ function RiskTab({
       .finally(() => setMcLoading(false));
   }, [chartProps.journalId, authFetch]);
 
-  const hasRatios = sharpeRatio != null || sortinoRatio != null || payoffRatio != null;
+  const hasRatios =
+    sharpeRatio != null ||
+    sortinoRatio != null ||
+    calmarRatio != null ||
+    payoffRatio != null ||
+    recoveryFactor != null ||
+    avgRMultiple != null;
   const hasDrawdown = drawdownAnalysis != null && drawdownAnalysis.maxDrawdown < 0;
+  const fmtRatio = (v: number | null) =>
+    v != null && Number.isFinite(v) ? v.toFixed(2) : 'N/A';
 
   // ── Section 1: RISK-ADJUSTED PERFORMANCE ────────────────────────────────
   let riskAdjVerdict: string;
@@ -1964,43 +2001,109 @@ function RiskTab({
         verdict={riskAdjVerdict}
         evidence={
           hasRatios ? (
-            <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4">
+            <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4 space-y-4">
+              {/* Row 1: Risk-adjusted return ratios, all annualized */}
               <div className="grid grid-cols-3 gap-4">
                 <div>
-                  <div className="text-xs text-[#6e7681] mb-1">Sharpe Ratio</div>
-                  <div className={`text-lg font-bold tabular-nums ${
-                    sharpeRatio == null ? 'text-[#4a5568]'
-                    : sharpeRatio >= 1 ? 'text-green-400'
-                    : sharpeRatio >= 0.5 ? 'text-amber-400'
-                    : 'text-red-400'
-                  }`}>
-                    {sharpeRatio != null ? sharpeRatio.toFixed(2) : '—'}
+                  <div className="flex items-baseline gap-2 mb-1">
+                    <span className="text-xs text-[#6e7681]">Sharpe Ratio</span>
+                    <span className="text-[10px] text-[#4a5568]">
+                      ({riskTradeCount} trade{riskTradeCount === 1 ? '' : 's'})
+                    </span>
                   </div>
-                  <div className="text-[10px] text-[#4a5568] mt-0.5">Returns per unit of volatility</div>
+                  <div
+                    className={`text-lg font-bold tabular-nums ${
+                      sharpeRatio == null ? 'text-[#4a5568]'
+                        : sharpeRatio >= 1 ? 'text-green-400'
+                        : sharpeRatio >= 0.5 ? 'text-amber-400'
+                        : 'text-red-400'
+                    }`}
+                    title="Annualized based on trading frequency"
+                  >
+                    {fmtRatio(sharpeRatio)}
+                  </div>
+                  <div className="text-[10px] text-[#4a5568] mt-0.5">
+                    Annualized returns per unit of volatility
+                  </div>
                 </div>
                 <div>
-                  <div className="text-xs text-[#6e7681] mb-1">Sortino Ratio</div>
-                  <div className={`text-lg font-bold tabular-nums ${
-                    sortinoRatio == null ? 'text-[#4a5568]'
-                    : sortinoRatio >= 1 ? 'text-green-400'
-                    : sortinoRatio >= 0.5 ? 'text-amber-400'
-                    : 'text-red-400'
-                  }`}>
-                    {sortinoRatio != null ? sortinoRatio.toFixed(2) : '—'}
+                  <div className="flex items-baseline gap-2 mb-1">
+                    <span className="text-xs text-[#6e7681]">Sortino Ratio</span>
+                    <span className="text-[10px] text-[#4a5568]">
+                      ({riskTradeCount} trade{riskTradeCount === 1 ? '' : 's'})
+                    </span>
                   </div>
-                  <div className="text-[10px] text-[#4a5568] mt-0.5">Returns per unit of downside risk</div>
+                  <div
+                    className={`text-lg font-bold tabular-nums ${
+                      sortinoRatio == null ? 'text-[#4a5568]'
+                        : sortinoRatio >= 1 ? 'text-green-400'
+                        : sortinoRatio >= 0.5 ? 'text-amber-400'
+                        : 'text-red-400'
+                    }`}
+                    title="Annualized based on trading frequency"
+                  >
+                    {fmtRatio(sortinoRatio)}
+                  </div>
+                  <div className="text-[10px] text-[#4a5568] mt-0.5">
+                    Annualized returns per unit of downside risk
+                  </div>
                 </div>
+                <div>
+                  <div className="text-xs text-[#6e7681] mb-1">Calmar Ratio</div>
+                  <div
+                    className={`text-lg font-bold tabular-nums ${
+                      calmarRatio == null ? 'text-[#4a5568]'
+                        : calmarRatio >= 1 ? 'text-green-400'
+                        : calmarRatio >= 0.5 ? 'text-amber-400'
+                        : 'text-red-400'
+                    }`}
+                    title="Annualized return / max drawdown %"
+                  >
+                    {fmtRatio(calmarRatio)}
+                  </div>
+                  <div className="text-[10px] text-[#4a5568] mt-0.5">
+                    Annualized return / max drawdown
+                  </div>
+                </div>
+              </div>
+
+              {/* Row 2: Profitability / quality metrics — payoff, recovery, R */}
+              <div className="grid grid-cols-3 gap-4 pt-4 border-t border-[#21262d]">
                 <div>
                   <div className="text-xs text-[#6e7681] mb-1">Payoff Ratio</div>
                   <div className={`text-lg font-bold tabular-nums ${
                     payoffRatio == null ? 'text-[#4a5568]'
-                    : payoffRatio >= 1.5 ? 'text-green-400'
-                    : payoffRatio >= 1 ? 'text-amber-400'
-                    : 'text-red-400'
+                      : payoffRatio >= 1.5 ? 'text-green-400'
+                      : payoffRatio >= 1 ? 'text-amber-400'
+                      : 'text-red-400'
                   }`}>
-                    {payoffRatio != null ? payoffRatio.toFixed(2) : '—'}
+                    {fmtRatio(payoffRatio)}
                   </div>
                   <div className="text-[10px] text-[#4a5568] mt-0.5">Avg winner / avg loser</div>
+                </div>
+                <div>
+                  <div className="text-xs text-[#6e7681] mb-1">Recovery Factor</div>
+                  <div className={`text-lg font-bold tabular-nums ${
+                    recoveryFactor == null ? 'text-[#4a5568]'
+                      : recoveryFactor >= 2 ? 'text-green-400'
+                      : recoveryFactor >= 1 ? 'text-amber-400'
+                      : 'text-red-400'
+                  }`}>
+                    {fmtRatio(recoveryFactor)}
+                  </div>
+                  <div className="text-[10px] text-[#4a5568] mt-0.5">Net P&L / max drawdown</div>
+                </div>
+                <div>
+                  <div className="text-xs text-[#6e7681] mb-1">Avg R-Multiple</div>
+                  <div className={`text-lg font-bold tabular-nums ${
+                    avgRMultiple == null ? 'text-[#4a5568]'
+                      : avgRMultiple >= 0.5 ? 'text-green-400'
+                      : avgRMultiple >= 0 ? 'text-amber-400'
+                      : 'text-red-400'
+                  }`}>
+                    {fmtRatio(avgRMultiple)}
+                  </div>
+                  <div className="text-[10px] text-[#4a5568] mt-0.5">Avg P&L / risk per trade</div>
                 </div>
               </div>
             </div>
@@ -2314,7 +2417,11 @@ export default function AnalyticsClient() {
   const [runningDeepAnalysis, setRunningDeepAnalysis] = useState(false);
   const [sharpeRatio, setSharpeRatio] = useState<number | null>(null);
   const [sortinoRatio, setSortinoRatio] = useState<number | null>(null);
+  const [calmarRatio, setCalmarRatio] = useState<number | null>(null);
   const [payoffRatio, setPayoffRatio] = useState<number | null>(null);
+  const [recoveryFactor, setRecoveryFactor] = useState<number | null>(null);
+  const [avgRMultiple, setAvgRMultiple] = useState<number | null>(null);
+  const [riskTradeCount, setRiskTradeCount] = useState<number>(0);
   const [drawdownAnalysis, setDrawdownAnalysis] = useState<DrawdownAnalysis | null>(null);
   const [feeAttribution, setFeeAttribution] = useState<FeeAttribution | null>(null);
   const [liquidationCount, setLiquidationCount] = useState(0);
@@ -2388,7 +2495,11 @@ export default function AnalyticsClient() {
         setMissingExitMetricsCount(d.missingExitMetricsCount ?? 0);
         setSharpeRatio(d.sharpeRatio ?? null);
         setSortinoRatio(d.sortinoRatio ?? null);
+        setCalmarRatio(d.calmarRatio ?? null);
         setPayoffRatio(d.payoffRatio ?? null);
+        setRecoveryFactor(d.recoveryFactor ?? null);
+        setAvgRMultiple(d.avgRMultiple ?? null);
+        setRiskTradeCount(d.riskTradeCount ?? 0);
         setDrawdownAnalysis(d.drawdownAnalysis ?? null);
         setFeeAttribution(d.feeAttribution ?? null);
         setLiquidationCount(d.liquidationCount ?? 0);
@@ -2576,6 +2687,7 @@ export default function AnalyticsClient() {
             wartResult={wartResult}
             eloResult={eloResult}
             sharpeRatio={sharpeRatio}
+            riskTradeCount={riskTradeCount}
             insights={insightsForCards}
             convergence={convergence}
             onSwitchTab={setActiveTab}
@@ -2607,7 +2719,11 @@ export default function AnalyticsClient() {
             chartProps={chartProps}
             sharpeRatio={sharpeRatio}
             sortinoRatio={sortinoRatio}
+            calmarRatio={calmarRatio}
             payoffRatio={payoffRatio}
+            recoveryFactor={recoveryFactor}
+            avgRMultiple={avgRMultiple}
+            riskTradeCount={riskTradeCount}
             drawdownAnalysis={drawdownAnalysis}
             feeAttribution={feeAttribution}
             liquidationCount={liquidationCount}

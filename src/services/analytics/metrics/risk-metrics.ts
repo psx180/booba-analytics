@@ -41,12 +41,15 @@ export interface RMultipleDistribution {
 export interface RiskMetrics {
   sharpeRatio: number | null;
   sortinoRatio: number | null;
+  calmarRatio: number | null;
   payoffRatio: number | null;
   recoveryFactor: number | null;
   drawdownAnalysis: DrawdownAnalysis;
   feeAttribution: FeeAttribution;
   avgRMultiple: number | null;
   rMultipleDistribution: RMultipleDistribution | null;
+  /** Number of closed positions the ratios are computed from. */
+  tradeCount: number;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -84,25 +87,72 @@ function downsideDeviation(values: number[]): number {
 // ── Main computation ───────────────────────────────────────────────────────────
 
 const MIN_TRADES_FOR_RATIOS = 10;
+const FALLBACK_STARTING_CAPITAL = 10000;
 
-export function computeRiskMetrics(positions: Position[]): RiskMetrics {
+/**
+ * Build per-trade percent returns using the account's starting equity as the
+ * denominator rather than position notional. Pacifica runs on cross margin —
+ * the entire account backs every open position — so equity is the correct
+ * denominator for "how much of my capital did this trade swing." Notional
+ * (entryPrice × size) compresses returns by the leverage factor and makes
+ * Sharpe look artificially near-zero on leveraged accounts.
+ *
+ * Equity at entry is approximated as startingCapital plus cumulative realized
+ * P&L up to (but not including) this trade's close. We don't thread deposits
+ * and withdrawals through here — an async BalanceEvent lookup isn't in scope
+ * for this pure helper; the reconstructed provider supplies the starting
+ * capital that anchors the series.
+ */
+function computeReturnsWithEquityDenominator(
+  sorted: Position[],
+  startingCapital: number,
+): number[] {
+  const returns: number[] = [];
+  let cumulativePnl = 0;
+
+  for (const p of sorted) {
+    const equityAtEntry = startingCapital + cumulativePnl;
+    const pnl = p.aggregatePnl ?? 0;
+    cumulativePnl += pnl;
+
+    if (equityAtEntry > 0) {
+      returns.push((pnl / equityAtEntry) * 100); // percent of equity at risk
+    }
+    // Equity ≤ 0 means the account was wiped out before this trade — skip
+    // rather than divide by zero or a negative.
+  }
+
+  return returns;
+}
+
+export function computeRiskMetrics(
+  positions: Position[],
+  startingCapital: number = FALLBACK_STARTING_CAPITAL,
+): RiskMetrics {
   const closed = positions
     .filter((p) => p.status === 'closed' && p.aggregatePnl != null && p.lastExitTime != null)
     .sort((a, b) => a.lastExitTime!.getTime() - b.lastExitTime!.getTime());
 
   const n = closed.length;
 
-  // ── Per-trade returns for Sharpe / Sortino ─────────────────────────────────
-  // Use % return = pnl / (entryPrice * size) when both are available.
-  // Positions without entry price fall back to raw P&L as the return value.
-  // Both cases are valid for relative comparison; the key is consistency.
-  const returns: number[] = closed.map((p) => {
-    const notional = (p.averageEntryPrice ?? 0) * (p.totalSize ?? 0);
-    if (notional > 0) {
-      return (p.aggregatePnl! / notional) * 100; // % return
-    }
-    return p.aggregatePnl!; // fallback: dollar return
-  });
+  // ── Per-trade returns: pnl / equity-at-entry, expressed as percent ─────────
+  const returns = computeReturnsWithEquityDenominator(closed, startingCapital);
+
+  // ── Annualization factor ───────────────────────────────────────────────────
+  // Per-trade Sharpe with no annualization is hard to compare against TradFi
+  // benchmarks. Scale by √(trades per year) using the actual calendar span
+  // between the first entry and the last exit. A daily trader (≈250 trades
+  // over 250 days) lands at √365 ≈ 19×; a once-a-week trader lands at √52 ≈
+  // 7×. Infrequent traders get a smaller factor, which correctly reflects
+  // fewer compounding opportunities.
+  let annualization = 1;
+  if (n >= 2 && closed[0].firstEntryTime && closed[n - 1].lastExitTime) {
+    const firstMs = closed[0].firstEntryTime!.getTime();
+    const lastMs  = closed[n - 1].lastExitTime!.getTime();
+    const days = Math.max(1, (lastMs - firstMs) / (1000 * 60 * 60 * 24));
+    const tradesPerYear = (n / days) * 365;
+    annualization = Math.sqrt(tradesPerYear);
+  }
 
   // ── Sharpe ratio ───────────────────────────────────────────────────────────
   let sharpeRatio: number | null = null;
@@ -110,7 +160,7 @@ export function computeRiskMetrics(positions: Position[]): RiskMetrics {
     const m = mean(returns);
     const sd = stddev(returns);
     if (sd > 0) {
-      sharpeRatio = r4(m / sd);
+      sharpeRatio = r4((m / sd) * annualization);
     }
   }
 
@@ -120,7 +170,7 @@ export function computeRiskMetrics(positions: Position[]): RiskMetrics {
     const m = mean(returns);
     const dd = downsideDeviation(returns);
     if (dd > 0) {
-      sortinoRatio = r4(m / dd);
+      sortinoRatio = r4((m / dd) * annualization);
     }
   }
 
@@ -145,6 +195,26 @@ export function computeRiskMetrics(positions: Position[]): RiskMetrics {
     recoveryFactor = r2(totalPnl / Math.abs(drawdownAnalysis.maxDrawdown));
   }
 
+  // ── Calmar ratio ───────────────────────────────────────────────────────────
+  // Annualized total return (as % of equity) divided by the max drawdown %.
+  // Summing the per-trade percent returns gives a simple (non-compounded)
+  // approximation of the cumulative return over the measurement window; we
+  // scale it up to a year using the same calendar span as Sharpe.
+  let calmarRatio: number | null = null;
+  if (
+    n >= MIN_TRADES_FOR_RATIOS &&
+    drawdownAnalysis.maxDrawdownPercent > 0 &&
+    closed[0].firstEntryTime &&
+    closed[n - 1].lastExitTime
+  ) {
+    const totalReturnPct = returns.reduce((s, r) => s + r, 0);
+    const firstMs = closed[0].firstEntryTime!.getTime();
+    const lastMs  = closed[n - 1].lastExitTime!.getTime();
+    const days = Math.max(1, (lastMs - firstMs) / (1000 * 60 * 60 * 24));
+    const annualizedReturnPct = (totalReturnPct / days) * 365;
+    calmarRatio = r4(annualizedReturnPct / drawdownAnalysis.maxDrawdownPercent);
+  }
+
   // ── Fee attribution ────────────────────────────────────────────────────────
   const feeAttribution = computeFeeAttribution(closed, totalPnl);
 
@@ -167,15 +237,23 @@ export function computeRiskMetrics(positions: Position[]): RiskMetrics {
     }
   }
 
+  console.log(
+    `[risk] Sharpe: ${sharpeRatio} Sortino: ${sortinoRatio} Calmar: ${calmarRatio} ` +
+      `trades: ${n} annualization: ${annualization.toFixed(2)} ` +
+      `startingCapital: ${startingCapital}`,
+  );
+
   return {
     sharpeRatio,
     sortinoRatio,
+    calmarRatio,
     payoffRatio,
     recoveryFactor,
     drawdownAnalysis,
     feeAttribution,
     avgRMultiple,
     rMultipleDistribution,
+    tradeCount: n,
   };
 }
 

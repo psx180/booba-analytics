@@ -61,12 +61,14 @@ export async function GET(req: NextRequest) {
     liquidationCost:  Math.round(((liquidationAgg._sum.aggregatePnl as number) ?? 0) * 100) / 100,
     sharpeRatio:             rm.sharpeRatio,
     sortinoRatio:            rm.sortinoRatio,
+    calmarRatio:             rm.calmarRatio,
     payoffRatio:             rm.payoffRatio,
     recoveryFactor:          rm.recoveryFactor,
     drawdownAnalysis:        rm.drawdownAnalysis,
     feeAttribution:          rm.feeAttribution,
     avgRMultiple:            rm.avgRMultiple,
     rMultipleDistribution:   rm.rMultipleDistribution,
+    riskTradeCount:          rm.tradeCount,
   });
   });
 }
