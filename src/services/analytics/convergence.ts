@@ -251,11 +251,18 @@ function detectSessionFatigue(insights: Insight[]): ConvergentTheme | null {
         earlyAvg: number;
         lateAvg: number;
         estimatedSavings: number;
+        isSignificant?: boolean;
       }
     | null
     | undefined;
 
-  const hasFatigue = fatigue != null && typeof fatigue.estimatedSavings === 'number';
+  // Older stored observations predate the `isSignificant` flag; treat missing
+  // as not significant so stale fatigue cards stop surfacing until detectors
+  // rerun and overwrite the row.
+  const hasFatigue =
+    fatigue != null &&
+    typeof fatigue.estimatedSavings === 'number' &&
+    fatigue.isSignificant === true;
   const fatigueCost = hasFatigue ? Math.max(0, fatigue!.estimatedSavings) : 0;
   const hasFatigueHighImpact = hasFatigue && fatigueCost > 100;
 

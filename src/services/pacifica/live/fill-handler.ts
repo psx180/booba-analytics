@@ -68,7 +68,14 @@ const DEFAULT_OPTIMAL_TRADES = 20;
 const ONE_HOUR_MS = 60 * 60 * 1_000;
 const MIN_REGIME_SAMPLE = 5;
 
-/** Fetch the user's decision-fatigue optimal trade cutoff from the stored insight. */
+/**
+ * Fetch the user's decision-fatigue optimal trade cutoff from the stored
+ * insight. Only returns a specific cutoff when the backend flagged the
+ * regression slope as statistically significant — otherwise falls back to
+ * the default so live "session warning" toasts don't fire off a noisy peak.
+ * Stored rows written before the isSignificant flag existed read as
+ * undefined and are treated as not significant.
+ */
 async function fetchOptimalTradeCount(walletAddress: string): Promise<number> {
   try {
     const obs = await prisma.boobaObservation.findFirst({
@@ -78,15 +85,24 @@ async function fetchOptimalTradeCount(walletAddress: string): Promise<number> {
     });
     if (!obs) return DEFAULT_OPTIMAL_TRADES;
     const insight = JSON.parse(obs.observationText) as {
-      data?: { fatigue?: { optimalCutoff?: number; lateAvg?: number } };
+      data?: {
+        fatigue?: { optimalCutoff?: number; lateAvg?: number; isSignificant?: boolean };
+      };
     };
-    return insight?.data?.fatigue?.optimalCutoff ?? DEFAULT_OPTIMAL_TRADES;
+    const fatigue = insight?.data?.fatigue;
+    if (fatigue?.isSignificant !== true) return DEFAULT_OPTIMAL_TRADES;
+    return fatigue.optimalCutoff ?? DEFAULT_OPTIMAL_TRADES;
   } catch {
     return DEFAULT_OPTIMAL_TRADES;
   }
 }
 
-/** Look up the avg P&L after the optimal cutoff from the stored insight. */
+/**
+ * Look up the avg P&L after the optimal cutoff from the stored insight.
+ * Same significance gate as fetchOptimalTradeCount — returns 0 when the
+ * regression isn't significant so the toast's dollar figure doesn't
+ * quote a non-meaningful average.
+ */
 async function fetchLateAvgPnl(walletAddress: string): Promise<number> {
   try {
     const obs = await prisma.boobaObservation.findFirst({
@@ -96,9 +112,11 @@ async function fetchLateAvgPnl(walletAddress: string): Promise<number> {
     });
     if (!obs) return 0;
     const insight = JSON.parse(obs.observationText) as {
-      data?: { fatigue?: { lateAvg?: number } };
+      data?: { fatigue?: { lateAvg?: number; isSignificant?: boolean } };
     };
-    return insight?.data?.fatigue?.lateAvg ?? 0;
+    const fatigue = insight?.data?.fatigue;
+    if (fatigue?.isSignificant !== true) return 0;
+    return fatigue.lateAvg ?? 0;
   } catch {
     return 0;
   }
