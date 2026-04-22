@@ -923,6 +923,15 @@ export default function DashboardClient() {
     // the same flag on its end within milliseconds; the next poll confirms.
     setAnalyticsStatus?.('importing');
 
+    // Cross-tab bridge: cookies are shared across same-origin tabs, so any
+    // other tab the user opens can read this synchronously on mount and
+    // lock its own nav / show its own blue banner before its poller ticks.
+    // max-age=600 is a 10-minute safety net — the AppShell poller clears
+    // this cookie once it observes the server transition past 'importing',
+    // but if that never happens (crashed process, killed tab), the cookie
+    // self-expires so users aren't permanently locked out.
+    document.cookie = 'analytics-importing=1; path=/; max-age=600';
+
     setImporting(true);
     setImportProgress('Fetching trades from Pacifica... (0 fills loaded)');
     setImportDone(false);

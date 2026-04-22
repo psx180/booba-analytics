@@ -335,7 +335,8 @@ function ShellSpinner({ label }: { label: string }) {
 //
 // Lifecycle the UI cares about:
 //   null        → wallet has no Journal rows (pre-import) or hasn't been
-//                 polled yet. Poll cheaply.
+//                 polled yet. Poll at active cadence — user is likely
+//                 about to import.
 //   'importing' → /api/import handler is pulling trades from Pacifica.
 //                 NavBar is locked, non-dashboard routes redirect home.
 //   'computing' → fast tier is done, slow tier (MFE/MAE + regime tagging)
@@ -343,13 +344,24 @@ function ShellSpinner({ label }: { label: string }) {
 //   'ready'     → everything populated; steady state.
 //
 // The poller talks to /api/analytics/status. Cadence is adaptive so active
-// states refresh quickly but idle ones don't hammer the server. The
-// optimistic setter exists so the Import button can flip local state to
-// 'importing' at click-time, closing the race where the next server-side
-// poll might be 30 s away.
+// states refresh quickly and only the steady 'ready' state backs off to a
+// slower cadence.
+//
+// Two cross-tab bridges close races the per-tab state alone can't cover:
+//   1. Optimistic setter — called by the Import button on click, flips the
+//      local state to 'importing' before the server has even received the
+//      POST. Only affects the clicking tab.
+//   2. analytics-importing=1 cookie — set by the Import button at the same
+//      moment. Cookies are shared across same-origin tabs, so any other
+//      tab the user opens reads it synchronously on mount and can render
+//      the locked/banner state before its own first poll completes.
+//      The poller clears this cookie once the server lifecycle has moved
+//      past 'importing' (i.e. returned 'computing' or 'ready').
 
 const POLL_INTERVAL_ACTIVE_MS = 5_000;
 const POLL_INTERVAL_IDLE_MS = 30_000;
+const IMPORT_COOKIE_PATTERN = /(^|;\s*)analytics-importing=1(;|$)/;
+const IMPORT_COOKIE_CLEAR = 'analytics-importing=; path=/; max-age=0';
 
 interface AnalyticsStatusContextValue {
   setOptimisticStatus: (next: string) => void;
@@ -390,16 +402,41 @@ function useAnalyticsStatusState(): {
 
         // Reload when we observe the computing → ready transition so
         // downstream pages pick up the newly-available slow-tier data.
+        // Uses the raw server `next` rather than the cookie-derived
+        // `effectiveNext` below — we only want genuine server-side
+        // transitions to trigger a reload, not a local cookie read.
         if (prevStatusRef.current === 'computing' && next === 'ready') {
           window.location.reload();
           return;
         }
-        prevStatusRef.current = next;
-        setStatus(next);
 
-        const delay = (next === 'importing' || next === 'computing')
-          ? POLL_INTERVAL_ACTIVE_MS
-          : POLL_INTERVAL_IDLE_MS;
+        // Cross-tab bridge — only consulted when the server hasn't yet
+        // reported an active state. If another tab just clicked Import
+        // but the server hasn't flipped the DB flag yet (race: POST in
+        // flight, or Journal row being created), the cookie lets us
+        // render the locked UI immediately.
+        let effectiveNext = next;
+        if (next === null && IMPORT_COOKIE_PATTERN.test(document.cookie)) {
+          effectiveNext = 'importing';
+        }
+
+        // Once the server lifecycle has moved past 'importing' (either
+        // to 'computing' or 'ready'), the cookie is no longer needed and
+        // would only wedge other tabs into a false-positive import lock.
+        // Clear it proactively so all same-origin tabs converge.
+        if (next === 'computing' || next === 'ready') {
+          document.cookie = IMPORT_COOKIE_CLEAR;
+        }
+
+        prevStatusRef.current = effectiveNext;
+        setStatus(effectiveNext);
+
+        // Only the steady 'ready' state polls at the idle cadence.
+        // Everything else — active lifecycle *and* the pre-import null —
+        // polls fast so transitions are picked up quickly.
+        const delay = effectiveNext === 'ready'
+          ? POLL_INTERVAL_IDLE_MS
+          : POLL_INTERVAL_ACTIVE_MS;
         timer = setTimeout(tick, delay);
       } catch {
         // Network blip / 5xx — keep polling at the idle cadence so we
