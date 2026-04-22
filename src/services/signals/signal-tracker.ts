@@ -28,7 +28,7 @@ export interface SignalUpdate {
   outcomeRMultiple: number | null;
 }
 
-const EXPIRY_DAYS = 7;
+const EXPIRY_DAYS = 30;
 
 function computePnlPct(entryPrice: number, outcomePrice: number, direction: string): number {
   if (direction === 'LONG') {

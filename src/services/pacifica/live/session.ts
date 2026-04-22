@@ -325,7 +325,22 @@ class LiveSession extends EventEmitter {
 
 const sessions = new Map<string, LiveSession>();
 
+// Grace period before actually tearing down a session after its last SSE
+// subscriber disconnects. Chrome throttles background tabs and can briefly
+// drop an EventSource; without this window the upstream Pacifica WS gets
+// torn down and reopened every time, losing fills that arrive during the
+// gap. 45s is long enough to survive typical tab-switch flapping while
+// still releasing idle sessions on real close.
+const TEARDOWN_GRACE_MS = 45_000;
+const teardownTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
 export async function acquireSession(walletAddress: string): Promise<LiveSession> {
+  const pending = teardownTimers.get(walletAddress);
+  if (pending) {
+    clearTimeout(pending);
+    teardownTimers.delete(walletAddress);
+    console.log(`[live ${short(walletAddress)}] teardown cancelled — subscriber returned during grace`);
+  }
   let s = sessions.get(walletAddress);
   if (!s) {
     s = new LiveSession(walletAddress);
@@ -340,11 +355,20 @@ export function releaseSession(walletAddress: string): void {
   const s = sessions.get(walletAddress);
   if (!s) return;
   const empty = s.removeSubscriber();
-  if (empty) {
-    s.stop();
+  if (!empty) return;
+
+  console.log(`[live ${short(walletAddress)}] last subscriber left — holding open for ${TEARDOWN_GRACE_MS / 1000}s`);
+  const timer = setTimeout(() => {
+    // If the timer fires, acquireSession didn't cancel it, so no subscriber
+    // returned. Safe to tear down now.
+    teardownTimers.delete(walletAddress);
+    const current = sessions.get(walletAddress);
+    if (!current || current !== s) return;
+    current.stop();
     sessions.delete(walletAddress);
-    console.log(`[live ${short(walletAddress)}] session torn down`);
-  }
+    console.log(`[live ${short(walletAddress)}] session torn down (after grace)`);
+  }, TEARDOWN_GRACE_MS);
+  teardownTimers.set(walletAddress, timer);
 }
 
 function short(addr: string): string {

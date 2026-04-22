@@ -3,8 +3,14 @@ import { resolveJournalFilterId } from '@/lib/journals';
 import { withAuth } from '@/lib/api-auth';
 import { prisma } from '@/lib/prisma';
 import { runMonteCarloSimulation } from '@/services/analytics/monte-carlo';
+import { defaultEquityProvider } from '@/services/analytics/equity';
 
-const MAX_RETURN_PCT = 200; // sanity cap — no single trade should move ±200% of notional
+// Sanity cap on any single trade's equity-based return. With leverage a
+// trade can in principle lose more than equity, but values beyond this
+// range are almost always bad data (e.g. a position whose entry falls
+// before the starting-capital anchor, producing an inflated percentage).
+// Clamping keeps Monte Carlo draws from being dominated by one outlier.
+const MAX_RETURN_PCT = 200;
 
 export async function GET(req: NextRequest) {
   return withAuth(req, async (walletAddress) => {
@@ -20,36 +26,62 @@ export async function GET(req: NextRequest) {
 
     const positions = await (prisma as any).position.findMany({
       where,
-      select: { aggregatePnl: true, totalSize: true, averageEntryPrice: true },
+      select: {
+        aggregatePnl: true,
+        totalSize: true,
+        averageEntryPrice: true,
+        lastExitTime: true,
+        firstEntryTime: true,
+      },
       take: 5000,
     });
 
-    // Compute percentage return per trade: pnlPct = aggregatePnl / (averageEntryPrice * totalSize) * 100
-    // This gives P&L as a % of the position's USD notional value.
-    // e.g. $32 profit on 0.001 BTC at $79,000 → $32 / ($79,000 × 0.001) × 100 = 40.5%
-    //
-    // Skip positions where notional can't be computed (missing price or size data).
+    // Equity-based per-trade returns: pnlPct = aggregatePnl / equityAtEntry * 100,
+    // where equityAtEntry is startingCapital + cumulative P&L of all prior
+    // (chronologically earlier) closed trades. This is the same basis used
+    // by Sharpe/Sortino in src/services/analytics/equity/reconstructed.ts —
+    // on leveraged perps, notional-based returns compress wildly toward
+    // zero (e.g. a $500 loss on $50k notional reads as -1%) and make the
+    // Monte Carlo unable to produce realistic drawdowns. Equity-based
+    // returns reflect actual capital impact: that same $500 loss against
+    // $5k equity is a -10% draw.
+    const startingCapital = await defaultEquityProvider.getStartingCapital(walletAddress);
+
+    // Chronological sort so cumulative P&L is built in trade order. Prefer
+    // lastExitTime (when the position realized its P&L) with firstEntryTime
+    // as a defensive fallback for legacy rows missing an exit timestamp.
+    const sorted = [...positions].sort((a: any, b: any) => {
+      const ta = a.lastExitTime ?? a.firstEntryTime ?? 0;
+      const tb = b.lastExitTime ?? b.firstEntryTime ?? 0;
+      return new Date(ta).getTime() - new Date(tb).getTime();
+    });
+
     const winReturnPcts: number[] = [];
     const lossReturnPcts: number[] = [];
     let grossWins  = 0;
     let grossLosses = 0;
     let validCount = 0;
     let clampedCount = 0;
+    let cumulativePnl = 0;
 
-    for (const p of positions) {
-      const pnl:        number = p.aggregatePnl        ?? 0;
-      const size:       number = p.totalSize           ?? 0;
-      const entryPrice: number = p.averageEntryPrice   ?? 0;
+    for (const p of sorted) {
+      const pnl: number = p.aggregatePnl ?? 0;
+      const equityAtEntry = startingCapital + cumulativePnl;
+      // Update cumulative P&L *after* capturing equity-at-entry so this
+      // trade's own P&L isn't counted in its own denominator.
+      cumulativePnl += pnl;
 
-      if (size <= 0 || entryPrice <= 0) continue;
+      // Skip when equity is zero/negative — would yield divide-by-zero or
+      // sign-flipped returns. In practice this only fires if the wallet's
+      // starting-capital anchor is wrong or the account went bust.
+      if (equityAtEntry <= 0) continue;
 
-      const notional = entryPrice * size;
-      let pnlPct = (pnl / notional) * 100;
+      let pnlPct = (pnl / equityAtEntry) * 100;
 
       if (Math.abs(pnlPct) > MAX_RETURN_PCT) {
         console.warn(
           `[monte-carlo] Clamping extreme return ${pnlPct.toFixed(1)}% to ±${MAX_RETURN_PCT}% ` +
-          `(pnl=${pnl}, notional=${notional.toFixed(2)})`,
+          `(pnl=${pnl}, equityAtEntry=${equityAtEntry.toFixed(2)})`,
         );
         pnlPct = Math.sign(pnlPct) * MAX_RETURN_PCT;
         clampedCount++;
