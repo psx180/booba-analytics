@@ -38,6 +38,12 @@ model Journal {
   startingCapital        Float?
   startingCapitalSource  String?
 
+  // Slow-tier analytics state — 'computing' while MFE/MAE + regime tagging
+  // is running after an import, 'ready' once done. Null for wallets that
+  // haven't imported yet. Drives the dashboard's "deep analytics computing"
+  // banner. Wallet-level status (all journals for a wallet share a value).
+  analyticsStatus        String?
+
   positions     Position[]
 
   @@index([walletAddress])

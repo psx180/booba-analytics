@@ -13,9 +13,9 @@
  * This is the HTTP equivalent of `src/scripts/import.ts` — the onboarding
  * "Import Trades" button calls this endpoint.
  *
- * The import is synchronous: for a typical wallet with <500 fills the
- * entire pipeline completes in under 30 seconds. If it becomes a problem
- * at scale, we can add job-id polling later.
+ * The import is synchronous and can take several minutes for accounts
+ * with large trade histories. If it becomes a problem at scale, we can
+ * add job-id polling later.
  *
  * Body (optional):
  *   { regimes?: boolean }   — whether to compute regime tags (default: true)
@@ -138,18 +138,63 @@ export async function POST(req: NextRequest) {
       steps.journalAssignment = { targetJournalId };
     }
 
-    // 7. Full analytics compute (fast + slow) — awaited since user is already waiting
+    // 7. Split analytics compute so the user isn't blocked on the slow tier.
+    //    - Fast tier (Elo, xPnL, insights, tilt) is awaited — user needs it
+    //      before landing on the dashboard.
+    //    - Slow tier (MFE/MAE candle fetch, regime detection + tagging) runs
+    //      fire-and-forget; the dashboard banner polls `analyticsStatus` and
+    //      clears itself once the background compute sets status='ready'.
+    //    - Status is flipped to 'computing' BEFORE the slow tier kicks off
+    //      so the banner appears as soon as the user lands on the dashboard.
+    //    - Both success and failure paths reset status to 'ready' so the
+    //      banner never gets stuck. (A dedicated 'failed' state would be
+    //      nicer but for a single-user hackathon 'ready' is sufficient.)
+    const { prisma: statusDb } = await import('@/lib/prisma');
     setProgress(walletAddress, { stage: 'computing', message: 'Computing analytics…', fillsFetched: fills.length });
     try {
       const { runCompute } = await import('@/services/compute-policy');
-      const computeResult = await runCompute(walletAddress, 'import', journal.id);
-      steps.compute = computeResult;
-    } catch {
+
+      // Fast tier — awaited.
+      const fastResult = await runCompute(walletAddress, 'mutation', journal.id);
+
+      // Mark slow tier in-flight before we release the response.
+      await statusDb.journal.updateMany({
+        where: { walletAddress },
+        data: { analyticsStatus: 'computing' },
+      });
+
+      // Slow tier — fire and forget. Not awaited. Status reset to 'ready' in
+      // both .then and .catch so the banner always clears eventually.
+      runCompute(walletAddress, 'staleData', journal.id)
+        .catch((err) => console.error('[import] slow-tier compute failed:', err))
+        .finally(async () => {
+          try {
+            await statusDb.journal.updateMany({
+              where: { walletAddress },
+              data: { analyticsStatus: 'ready' },
+            });
+          } catch (err) {
+            console.error('[import] failed to reset analyticsStatus:', err);
+          }
+        });
+
+      steps.compute = { ran: fastResult.ran, slowTier: 'dispatched' };
+    } catch (err) {
+      console.error('[import] Fast analytics compute failed:', err);
       steps.compute = { error: 'Analytics compute failed — skipped' };
+      // If fast tier threw we never flipped status to 'computing', so nothing
+      // to reset. Just make sure we don't leave a stale 'computing' from a
+      // prior run wedged on the record.
+      await statusDb.journal.updateMany({
+        where: { walletAddress },
+        data: { analyticsStatus: 'ready' },
+      }).catch(() => {});
     }
 
-    // 8. Regime tagging — now redundant for BTC proxy (runCompute slow tier handles it),
-    // but kept as optional override so the route stays backwards-compatible.
+    // 8. Regime tagging opt-in — runCompute's slow tier now handles BTC proxy
+    // regime computation + trade tagging, so this block is redundant in the
+    // default import path. Still honoured when explicitly requested so the
+    // route stays backwards-compatible with scripts that pass { regimes: true }.
     if (withRegimes) {
       setProgress(walletAddress, { stage: 'regimes', message: 'Detecting market regimes…', fillsFetched: fills.length });
       try {

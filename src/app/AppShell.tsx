@@ -31,7 +31,7 @@
  */
 
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { usePrivy } from '@privy-io/react-auth';
 import { JournalProvider } from './JournalContext';
 import { LiveProvider } from './LiveContext';
@@ -173,6 +173,7 @@ function AuthedShell({
   // Classic flow only uses 'intro' / 'idle' — no companion handoff.
   const [introPhase, setIntroPhase] = useState<IntroPhase | 'idle'>('idle');
   const [showTour, setShowTour] = useState(false);
+  const analyticsStatus = useAnalyticsStatusPoller();
 
   useEffect(() => {
     if (!localStorage.getItem('hasSeenAppIntro')) {
@@ -188,6 +189,7 @@ function AuthedShell({
             <BoobaProvider>
               <GroupingProgressProvider>
                 <NavBar />
+                {analyticsStatus === 'computing' && <SlowAnalyticsBanner />}
                 <main className="max-w-[1400px] mx-auto px-4 py-4">{children}</main>
                 <footer className="text-center text-[10px] text-[#484f58] py-4 font-mono">
                   Built on Pacifica                </footer>
@@ -296,5 +298,91 @@ function ShellSpinner({ label }: { label: string }) {
         </div>
       </main>
     </>
+  );
+}
+
+// ── Slow-analytics status poller ────────────────────────────────────────────
+//
+// Polls /api/analytics/status and surfaces the current state to the caller.
+// Cadence is adaptive: 5s while a slow compute is in flight, 30s otherwise —
+// the slower cadence keeps the poll alive cheaply so a re-import triggered
+// from within the dashboard (which flips status back to 'computing' on the
+// server) is picked up without us having to rewire the effect.
+//
+// When status transitions computing → ready, we do a hard page reload so
+// the many client-side fetch hooks that populate the regime / MFE-MAE /
+// execution views all re-run from scratch. This is blunt but bulletproof
+// for demo purposes; a future refactor could propagate a refresh counter
+// through a context instead.
+
+const POLL_INTERVAL_COMPUTING_MS = 5_000;
+const POLL_INTERVAL_READY_MS = 30_000;
+
+function useAnalyticsStatusPoller(): string | null {
+  const [status, setStatus] = useState<string | null>(null);
+  const prevStatusRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+
+    const tick = async () => {
+      try {
+        const res = await fetch('/api/analytics/status', { cache: 'no-store' });
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        const data: { status?: string | null } = await res.json();
+        const next = data?.status ?? null;
+
+        if (cancelled) return;
+
+        // Reload when we observe the computing → ready transition so
+        // downstream pages pick up the newly-available slow-tier data.
+        if (prevStatusRef.current === 'computing' && next === 'ready') {
+          window.location.reload();
+          return;
+        }
+        prevStatusRef.current = next;
+        setStatus(next);
+
+        const delay = next === 'computing'
+          ? POLL_INTERVAL_COMPUTING_MS
+          : POLL_INTERVAL_READY_MS;
+        timer = setTimeout(tick, delay);
+      } catch {
+        // Network blip / 5xx — keep polling at the ready cadence so we
+        // recover without spinning. Never throw out of the poller.
+        if (!cancelled) timer = setTimeout(tick, POLL_INTERVAL_READY_MS);
+      }
+    };
+
+    tick();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
+
+  return status;
+}
+
+function SlowAnalyticsBanner() {
+  return (
+    <div className="bg-amber-600 text-white text-sm font-medium px-4 py-3 text-center sticky top-12 z-40 shadow-md">
+      <div className="max-w-[1400px] mx-auto flex items-center justify-center gap-3">
+        <svg
+          className="animate-spin h-4 w-4 flex-shrink-0"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+        </svg>
+        <span>
+          Deep analytics computing — regime detection, exit quality analysis, and risk metrics.
+          This takes a few minutes. You can explore, but some features will populate as computation completes.
+        </span>
+      </div>
+    </div>
   );
 }

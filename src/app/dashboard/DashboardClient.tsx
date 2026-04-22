@@ -1040,7 +1040,7 @@ export default function DashboardClient() {
         )}
 
         <p className="text-xs text-[#6e7681] mt-6 max-w-xs">
-          This may take up to 30 seconds depending on your trade history. Read-only — Booba only reads your public trade data.
+          This may take several minutes for accounts with large trade histories. Please be patient. Read-only — Booba only reads your public trade data.
         </p>
       </div>
     );
