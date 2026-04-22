@@ -68,7 +68,8 @@ export default function NavBar({ navDisabled = false }: { navDisabled?: boolean 
               <SyncButton />
              
               <SubAccountSelector />
-              <JournalSelector />
+              {/* Hidden — single journal for now, testnet disabled */}
+              {/* <JournalSelector /> */}
               <WalletBadge />
             </div>
           </div>

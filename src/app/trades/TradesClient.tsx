@@ -479,9 +479,8 @@ function FloatingToolbar({
         </>
       )}
 
-      {/* Move-to-Journal applies to single + multi selection alike, so it
-          lives outside the count===1 branch. Hidden when there's only one
-          journal in the wallet (nothing to move into). */}
+      {/* Hidden — single journal for now, testnet disabled */}
+      {/*
       {canMoveJournal && (
         <div className="relative" ref={journalRef}>
           <button
@@ -516,6 +515,7 @@ function FloatingToolbar({
           )}
         </div>
       )}
+      */}
     </div>
   );
 }
@@ -620,6 +620,8 @@ function ThreeDotMenu({
               >
                 Reclassify
               </button>
+              {/* Hidden — single journal for now, testnet disabled */}
+              {/*
               {canMoveJournal && (
                 <div
                   className="relative"
@@ -659,6 +661,7 @@ function ThreeDotMenu({
                   )}
                 </div>
               )}
+              */}
               <div className="my-0.5 h-px bg-[#30363d]" />
               <button
                 onClick={() => { close(); onDelete(); }}
