@@ -59,13 +59,35 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   // — kept distinct from `null` ("checked, no cookie") so the first render
   // (which is identical on server and client) shows a neutral spinner and
   // avoids the hydration mismatch we'd get from reading `document.cookie`
-  // during render. The effect then resolves us to a wallet or null, and the
-  // next render branches accordingly.
+  // during render. The effect then resolves us to a wallet or null.
+  //
+  // The `[pathname]` dep re-runs the effect on every route change so a
+  // cookie set on /connect is picked up when we navigate to /dashboard
+  // (AppShell doesn't unmount across route changes, so an empty dep array
+  // would strand us with the stale null read from the /connect mount).
+  //
+  // The synchronous reset block below handles the race with
+  // PrivyGatedShell: on the first render after navigation the effect
+  // hasn't fired yet, so `manualWallet` still holds its stale value. If
+  // that value is null we'd briefly render PrivyGatedShell, whose own
+  // effect fires `router.replace(CONNECT_PATH)` before our effect can
+  // correct the state. Resetting to `undefined` when leaving /connect
+  // forces the spinner branch instead, keeping PrivyGatedShell from
+  // mounting during the transition. We only reset on /connect → X
+  // transitions (not every navigation) so Privy users don't see a
+  // spinner flash on every page change.
   const [manualWallet, setManualWallet] = useState<string | null | undefined>(undefined);
+  const [prevPathname, setPrevPathname] = useState<string>(pathname);
+  if (prevPathname !== pathname) {
+    if (prevPathname === CONNECT_PATH) {
+      setManualWallet(undefined);
+    }
+    setPrevPathname(pathname);
+  }
   useEffect(() => {
     const match = document.cookie.match(/manual-wallet=([A-Za-z0-9]{32,88})/);
     setManualWallet(match?.[1] ?? null);
-  }, []);
+  }, [pathname]);
 
   // Connect page is rendered raw (no nav, no journal context, no auth gate)
   // so the login button can fire freely.
