@@ -55,6 +55,18 @@ const CONNECT_PATH = '/connect';
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
+  // Manual-wallet cookie detection. `undefined` means "haven't checked yet"
+  // — kept distinct from `null` ("checked, no cookie") so the first render
+  // (which is identical on server and client) shows a neutral spinner and
+  // avoids the hydration mismatch we'd get from reading `document.cookie`
+  // during render. The effect then resolves us to a wallet or null, and the
+  // next render branches accordingly.
+  const [manualWallet, setManualWallet] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    const match = document.cookie.match(/manual-wallet=([A-Za-z0-9]{32,88})/);
+    setManualWallet(match?.[1] ?? null);
+  }, []);
+
   // Connect page is rendered raw (no nav, no journal context, no auth gate)
   // so the login button can fire freely.
   if (pathname === CONNECT_PATH) {
@@ -64,6 +76,20 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   if (isDevBypass()) {
     // Skip Privy entirely; the dev wallet is the authenticated wallet.
     return <AuthedShell walletAddress={DEV_WALLET!}>{children}</AuthedShell>;
+  }
+
+  // Still determining whether a manual-wallet cookie is present. This
+  // only lasts from initial render → first effect tick, and matches the
+  // spinner the Privy gate would show anyway, so no visible regression.
+  if (manualWallet === undefined) {
+    return <ShellSpinner label="Loading…" />;
+  }
+
+  // Manual wallet takes precedence over the Privy gate — mirrors the
+  // precedence in auth.ts where the cookie is checked before the Privy
+  // bearer token. Privy-authenticated users won't have this cookie set.
+  if (manualWallet) {
+    return <AuthedShell walletAddress={manualWallet}>{children}</AuthedShell>;
   }
 
   return <PrivyGatedShell>{children}</PrivyGatedShell>;

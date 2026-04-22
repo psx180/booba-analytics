@@ -83,6 +83,20 @@ export async function getAuthenticatedWallet(request: Request): Promise<string |
     }
   }
 
+  // Manual wallet entry — user pasted their address on the connect page.
+  // Cookie-based, no cryptographic verification. Suitable for read-only
+  // exploration of public on-chain data. Production would require wallet
+  // signing for write operations.
+  try {
+    const cookieHeader = request.headers.get('cookie') ?? '';
+    const match = cookieHeader.match(/manual-wallet=([A-Za-z0-9]{32,88})/);
+    if (match) {
+      return match[1];
+    }
+  } catch {
+    // Malformed cookie — fall through to Privy
+  }
+
   const authHeader = request.headers.get('authorization');
   if (!authHeader?.startsWith('Bearer ')) return null;
   const token = authHeader.slice('Bearer '.length).trim();
