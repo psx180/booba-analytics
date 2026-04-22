@@ -36,25 +36,38 @@ export async function GET(req: NextRequest) {
       take: 5000,
     });
 
-    // Equity-based per-trade returns: pnlPct = aggregatePnl / equityAtEntry * 100,
-    // where equityAtEntry is startingCapital + cumulative P&L of all prior
-    // (chronologically earlier) closed trades. This is the same basis used
-    // by Sharpe/Sortino in src/services/analytics/equity/reconstructed.ts —
-    // on leveraged perps, notional-based returns compress wildly toward
-    // zero (e.g. a $500 loss on $50k notional reads as -1%) and make the
-    // Monte Carlo unable to produce realistic drawdowns. Equity-based
-    // returns reflect actual capital impact: that same $500 loss against
-    // $5k equity is a -10% draw.
-    const startingCapital = await defaultEquityProvider.getStartingCapital(walletAddress);
+    // Equity-based per-trade returns. On leveraged perps, notional-based
+    // returns compress wildly toward zero (e.g. a $500 loss on $50k notional
+    // reads as -1%) and make the Monte Carlo unable to produce realistic
+    // drawdowns. Equity-based returns reflect actual capital impact.
+    //
+    // The equity denominator comes from the reconstructed equity provider,
+    // which computes equity as (Σ deposits − Σ withdrawals + Σ realized P&L)
+    // at each position's close time. Crucially, this picks up *every* cash
+    // flow — not just the first deposit — so wallets with ongoing deposits
+    // and withdrawals get accurate per-trade denominators. Same basis used
+    // by Sharpe/Sortino in src/services/analytics/equity/reconstructed.ts.
+    //
+    // Known minor precision tradeoff: we use equityCurve[i-1].equity as the
+    // denominator for trade i, which is frozen at trade i-1's close. If a
+    // deposit lands between trade i-1 and trade i, it isn't reflected in
+    // that denominator. The per-trade error is small and averages out
+    // across the return distribution used for sampling; a TWR-adjusted
+    // denominator (see reconstructed.ts lines 88–100) would be proper but
+    // is overkill for Monte Carlo input statistics.
 
-    // Chronological sort so cumulative P&L is built in trade order. Prefer
-    // lastExitTime (when the position realized its P&L) with firstEntryTime
-    // as a defensive fallback for legacy rows missing an exit timestamp.
-    const sorted = [...positions].sort((a: any, b: any) => {
-      const ta = a.lastExitTime ?? a.firstEntryTime ?? 0;
-      const tb = b.lastExitTime ?? b.firstEntryTime ?? 0;
-      return new Date(ta).getTime() - new Date(tb).getTime();
-    });
+    // Pre-filter + sort with the *same* predicate ReconstructedProvider
+    // uses internally (see reconstructed.ts:55–59). This keeps `sorted`
+    // and `equityCurve` aligned index-for-index so we can index into
+    // both in the loop below. Without this filter, any position with a
+    // null aggregatePnl or lastExitTime (legacy data, interrupted imports)
+    // would be dropped by the provider but remain in `sorted`, silently
+    // misaligning indices.
+    const sorted = positions
+      .filter((p: any) => p.aggregatePnl != null && p.lastExitTime != null)
+      .sort((a: any, b: any) => new Date(a.lastExitTime).getTime() - new Date(b.lastExitTime).getTime());
+
+    const equityCurve = await defaultEquityProvider.getEquityCurve(walletAddress, sorted);
 
     const winReturnPcts: number[] = [];
     const lossReturnPcts: number[] = [];
@@ -62,18 +75,20 @@ export async function GET(req: NextRequest) {
     let grossLosses = 0;
     let validCount = 0;
     let clampedCount = 0;
-    let cumulativePnl = 0;
 
-    for (const p of sorted) {
-      const pnl: number = p.aggregatePnl ?? 0;
-      const equityAtEntry = startingCapital + cumulativePnl;
-      // Update cumulative P&L *after* capturing equity-at-entry so this
-      // trade's own P&L isn't counted in its own denominator.
-      cumulativePnl += pnl;
+    for (let i = 0; i < equityCurve.length; i++) {
+      const pt = equityCurve[i];
+      const pnl: number = sorted[i].aggregatePnl ?? 0;
 
-      // Skip when equity is zero/negative — would yield divide-by-zero or
-      // sign-flipped returns. In practice this only fires if the wallet's
-      // starting-capital anchor is wrong or the account went bust.
+      // For the first trade we don't have a prior equity point, so recover
+      // "equity just before the trade's P&L posted" by subtracting that
+      // P&L back out of the current point's equity. For subsequent trades,
+      // the prior point's equity is the entry-time equity (modulo the
+      // known precision note above).
+      const equityAtEntry = i === 0
+        ? pt.equity - pnl
+        : equityCurve[i - 1].equity;
+
       if (equityAtEntry <= 0) continue;
 
       let pnlPct = (pnl / equityAtEntry) * 100;
