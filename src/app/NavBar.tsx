@@ -26,7 +26,7 @@ function truncate(addr: string): string {
   return `${addr.slice(0, 4)}…${addr.slice(-4)}`;
 }
 
-export default function NavBar() {
+export default function NavBar({ navDisabled = false }: { navDisabled?: boolean }) {
   const pathname = usePathname();
   const { network } = useAccount();
   const isTestnet = network === 'testnet';
@@ -38,11 +38,12 @@ export default function NavBar() {
           <div className="flex items-center gap-1 h-12">
             <span className="text-sm font-bold text-white mr-4 tracking-wider">BOOBAnalytics</span>
             {tabs.map((tab) => {
-              const isActive = !tab.disabled && pathname.startsWith(tab.href);
-              return tab.disabled ? (
+              const isActive = !tab.disabled && !navDisabled && pathname.startsWith(tab.href);
+              const isLocked = tab.disabled || navDisabled;
+              return isLocked ? (
                 <span
                   key={tab.label}
-                  className="px-4 py-2 text-sm text-[#6e7681] cursor-not-allowed select-none"
+                  className="px-4 py-2 text-sm text-[#6e7681] cursor-not-allowed select-none opacity-40"
                 >
                   {tab.label}
                 </span>

@@ -48,6 +48,26 @@ export async function POST(req: NextRequest) {
     const journal = await ensureDefaultJournal(walletAddress);
     steps.journal = { id: journal.id, name: journal.name };
 
+    // Mark analyticsStatus as 'importing' before any network I/O so the
+    // dashboard's poller sees the lock state the next time it ticks. The
+    // full lifecycle is: 'importing' → 'computing' → 'ready'. Kept
+    // wallet-wide (updateMany) because analyticsStatus is shared across
+    // all journals for a wallet.
+    //
+    // Production TODO: if the server process is killed mid-import, this
+    // value stays wedged at 'importing' and new sessions are locked out
+    // of the app. A cleanup step on server startup (reset any lingering
+    // 'importing'/'computing' rows to 'ready') would address this. For
+    // the hackathon we accept the edge case — a manual `prisma studio`
+    // toggle or a re-run of import unblocks the wallet.
+    {
+      const { prisma: db } = await import('@/lib/prisma');
+      await db.journal.updateMany({
+        where: { walletAddress },
+        data: { analyticsStatus: 'importing' },
+      });
+    }
+
     // Record the start time so we can target only newly-created positions
     // when re-assigning to a non-default journal.
     const importStartedAt = new Date();

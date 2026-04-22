@@ -8,6 +8,7 @@ import OpenPositions from './OpenPositions';
 import LiveToast, { type Toast } from './LiveToast';
 import { useJournal } from '../JournalContext';
 import { useLive } from '../LiveContext';
+import { useAnalyticsStatusSetter } from '../AppShell';
 import { useAuthFetch } from '@/lib/api-client';
 import { computeHealthScore } from '@/app/components/booba/computeHealthScore';
 import { getContextualMessage } from '@/app/components/booba/getContextualMessage';
@@ -385,6 +386,7 @@ export default function DashboardClient() {
   const authFetch = useAuthFetch();
   const router = useRouter();
   const { setBoobaState } = useBooba();
+  const setAnalyticsStatus = useAnalyticsStatusSetter();
   const [convergence, setConvergence] = useState<ConvergenceResult | null>(null);
   const [performance, setPerformance] = useState<PerformanceData | null>(null);
   const [equityCurve, setEquityCurve] = useState<EquityPoint[]>([]);
@@ -914,6 +916,13 @@ export default function DashboardClient() {
 
   // ── Onboarding import handler ───────────────────────────────────────────
   const handleImport = async () => {
+    // Optimistically flip global analyticsStatus to 'importing' at click
+    // time so the NavBar locks and the blue banner appears immediately —
+    // otherwise the AppShell poller might not tick for up to 30 s, leaving
+    // a window where the user could navigate away. The server will flip
+    // the same flag on its end within milliseconds; the next poll confirms.
+    setAnalyticsStatus?.('importing');
+
     setImporting(true);
     setImportProgress('Fetching trades from Pacifica... (0 fills loaded)');
     setImportDone(false);

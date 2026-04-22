@@ -31,7 +31,7 @@
  */
 
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { usePrivy } from '@privy-io/react-auth';
 import { JournalProvider } from './JournalContext';
 import { LiveProvider } from './LiveContext';
@@ -173,7 +173,32 @@ function AuthedShell({
   // Classic flow only uses 'intro' / 'idle' — no companion handoff.
   const [introPhase, setIntroPhase] = useState<IntroPhase | 'idle'>('idle');
   const [showTour, setShowTour] = useState(false);
-  const analyticsStatus = useAnalyticsStatusPoller();
+
+  // Analytics lifecycle state + poller. Hoisted here (rather than inside a
+  // hook) so we can expose an optimistic setter via context: the Import
+  // button on the dashboard calls it the instant it fires POST /api/import,
+  // so the nav-lock + banner engage immediately instead of waiting up to
+  // 30 s for the next poll tick to observe the server-side flip.
+  const analyticsPoller = useAnalyticsStatusState();
+  const { status: analyticsStatus, setOptimisticStatus } = analyticsPoller;
+
+  const pathname = usePathname();
+  const router = useRouter();
+
+  // Lock the user onto /dashboard while an import is running. /import is
+  // allow-listed as a forward-compat guard in case onboarding ever splits
+  // into its own route — today no such route exists, but keeping the check
+  // means we don't have to remember to add it later.
+  useEffect(() => {
+    if (
+      analyticsStatus === 'importing'
+      && pathname
+      && !pathname.startsWith('/dashboard')
+      && !pathname.startsWith('/import')
+    ) {
+      router.replace('/dashboard');
+    }
+  }, [analyticsStatus, pathname, router]);
 
   useEffect(() => {
     if (!localStorage.getItem('hasSeenAppIntro')) {
@@ -181,14 +206,18 @@ function AuthedShell({
     }
   }, []);
 
+  const navDisabled = analyticsStatus === 'importing';
+
   return (
+    <AnalyticsStatusContext.Provider value={{ setOptimisticStatus }}>
     <AccountProvider walletAddress={walletAddress}>
       <JournalProvider walletAddress={walletAddress}>
         <LiveProvider>
           <SyncProvider>
             <BoobaProvider>
               <GroupingProgressProvider>
-                <NavBar />
+                <NavBar navDisabled={navDisabled} />
+                {analyticsStatus === 'importing' && <ImportingBanner />}
                 {analyticsStatus === 'computing' && <SlowAnalyticsBanner />}
                 <main className="max-w-[1400px] mx-auto px-4 py-4">{children}</main>
                 <footer className="text-center text-[10px] text-[#484f58] py-4 font-mono">
@@ -233,6 +262,7 @@ function AuthedShell({
         </LiveProvider>
       </JournalProvider>
     </AccountProvider>
+    </AnalyticsStatusContext.Provider>
   );
 }
 
@@ -301,24 +331,47 @@ function ShellSpinner({ label }: { label: string }) {
   );
 }
 
-// ── Slow-analytics status poller ────────────────────────────────────────────
+// ── Analytics status poller + optimistic-update context ────────────────────
 //
-// Polls /api/analytics/status and surfaces the current state to the caller.
-// Cadence is adaptive: 5s while a slow compute is in flight, 30s otherwise —
-// the slower cadence keeps the poll alive cheaply so a re-import triggered
-// from within the dashboard (which flips status back to 'computing' on the
-// server) is picked up without us having to rewire the effect.
+// Lifecycle the UI cares about:
+//   null        → wallet has no Journal rows (pre-import) or hasn't been
+//                 polled yet. Poll cheaply.
+//   'importing' → /api/import handler is pulling trades from Pacifica.
+//                 NavBar is locked, non-dashboard routes redirect home.
+//   'computing' → fast tier is done, slow tier (MFE/MAE + regime tagging)
+//                 is running in the background.
+//   'ready'     → everything populated; steady state.
 //
-// When status transitions computing → ready, we do a hard page reload so
-// the many client-side fetch hooks that populate the regime / MFE-MAE /
-// execution views all re-run from scratch. This is blunt but bulletproof
-// for demo purposes; a future refactor could propagate a refresh counter
-// through a context instead.
+// The poller talks to /api/analytics/status. Cadence is adaptive so active
+// states refresh quickly but idle ones don't hammer the server. The
+// optimistic setter exists so the Import button can flip local state to
+// 'importing' at click-time, closing the race where the next server-side
+// poll might be 30 s away.
 
-const POLL_INTERVAL_COMPUTING_MS = 5_000;
-const POLL_INTERVAL_READY_MS = 30_000;
+const POLL_INTERVAL_ACTIVE_MS = 5_000;
+const POLL_INTERVAL_IDLE_MS = 30_000;
 
-function useAnalyticsStatusPoller(): string | null {
+interface AnalyticsStatusContextValue {
+  setOptimisticStatus: (next: string) => void;
+}
+
+const AnalyticsStatusContext = createContext<AnalyticsStatusContextValue | null>(null);
+
+/**
+ * Optimistic-update hook used by callers that kick off state transitions
+ * (currently: the dashboard's Import button). Returns null when rendered
+ * outside the AuthedShell tree so the connect page can import it without
+ * crashing.
+ */
+export function useAnalyticsStatusSetter(): ((next: string) => void) | null {
+  const ctx = useContext(AnalyticsStatusContext);
+  return ctx?.setOptimisticStatus ?? null;
+}
+
+function useAnalyticsStatusState(): {
+  status: string | null;
+  setOptimisticStatus: (next: string) => void;
+} {
   const [status, setStatus] = useState<string | null>(null);
   const prevStatusRef = useRef<string | null>(null);
 
@@ -344,14 +397,14 @@ function useAnalyticsStatusPoller(): string | null {
         prevStatusRef.current = next;
         setStatus(next);
 
-        const delay = next === 'computing'
-          ? POLL_INTERVAL_COMPUTING_MS
-          : POLL_INTERVAL_READY_MS;
+        const delay = (next === 'importing' || next === 'computing')
+          ? POLL_INTERVAL_ACTIVE_MS
+          : POLL_INTERVAL_IDLE_MS;
         timer = setTimeout(tick, delay);
       } catch {
-        // Network blip / 5xx — keep polling at the ready cadence so we
+        // Network blip / 5xx — keep polling at the idle cadence so we
         // recover without spinning. Never throw out of the poller.
-        if (!cancelled) timer = setTimeout(tick, POLL_INTERVAL_READY_MS);
+        if (!cancelled) timer = setTimeout(tick, POLL_INTERVAL_IDLE_MS);
       }
     };
 
@@ -363,7 +416,15 @@ function useAnalyticsStatusPoller(): string | null {
     };
   }, []);
 
-  return status;
+  // Optimistic setter — bumps local state without waiting for a poll
+  // round-trip. prevStatusRef is updated too so we don't mis-detect a
+  // computing→ready transition as a result of the optimistic bump.
+  const setOptimisticStatus = useCallback((next: string) => {
+    prevStatusRef.current = next;
+    setStatus(next);
+  }, []);
+
+  return { status, setOptimisticStatus };
 }
 
 function SlowAnalyticsBanner() {
@@ -381,6 +442,26 @@ function SlowAnalyticsBanner() {
         <span>
           Deep analytics computing — regime detection, exit quality analysis, and risk metrics.
           This takes a few minutes. You can explore, but some features will populate as computation completes.
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function ImportingBanner() {
+  return (
+    <div className="bg-blue-600 text-white text-sm font-medium px-4 py-3 text-center sticky top-12 z-40 shadow-md">
+      <div className="max-w-[1400px] mx-auto flex items-center justify-center gap-3">
+        <svg
+          className="animate-spin h-4 w-4 flex-shrink-0"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+        </svg>
+        <span>
+          Importing your trade history from Pacifica. This may take several minutes. Please don&apos;t close this tab.
         </span>
       </div>
     </div>
