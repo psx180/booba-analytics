@@ -27,11 +27,18 @@ export async function GET(req: NextRequest) {
     const positions = await (prisma as any).position.findMany({
       where,
       select: {
+        // `status` is required: ReconstructedProvider.getEquityCurve filters
+        // on `p.status === 'closed'` internally. The Prisma `where` clause
+        // already restricts to closed positions at the row level, but
+        // without `status` in the projection the returned objects have no
+        // status field, so the provider's filter drops every row and the
+        // equity curve comes back empty (→ Monte Carlo "not enough trades").
         aggregatePnl: true,
         totalSize: true,
         averageEntryPrice: true,
         lastExitTime: true,
         firstEntryTime: true,
+        status: true,
       },
       take: 5000,
     });

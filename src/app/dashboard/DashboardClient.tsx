@@ -8,7 +8,7 @@ import OpenPositions from './OpenPositions';
 import LiveToast, { type Toast } from './LiveToast';
 import { useJournal } from '../JournalContext';
 import { useLive } from '../LiveContext';
-import { useAnalyticsStatusSetter } from '../AppShell';
+import { useAnalyticsStatus, useAnalyticsStatusSetter } from '../AppShell';
 import { useAuthFetch } from '@/lib/api-client';
 import { computeHealthScore } from '@/app/components/booba/computeHealthScore';
 import { getContextualMessage } from '@/app/components/booba/getContextualMessage';
@@ -387,6 +387,7 @@ export default function DashboardClient() {
   const router = useRouter();
   const { setBoobaState } = useBooba();
   const setAnalyticsStatus = useAnalyticsStatusSetter();
+  const analyticsStatus = useAnalyticsStatus();
   const [convergence, setConvergence] = useState<ConvergenceResult | null>(null);
   const [performance, setPerformance] = useState<PerformanceData | null>(null);
   const [equityCurve, setEquityCurve] = useState<EquityPoint[]>([]);
@@ -940,6 +941,7 @@ export default function DashboardClient() {
     const stageLabel = (stage: string, fillsFetched: number) => {
       switch (stage) {
         case 'fetching':  return `Fetching trades from Pacifica... (${fillsFetched} fills loaded)`;
+        case 'syncing':   return 'Syncing account history...';
         case 'grouping':  return 'Grouping trades into positions...';
         case 'regimes':   return 'Detecting market regimes...';
         case 'computing': return 'Computing analytics...';
@@ -1034,6 +1036,17 @@ export default function DashboardClient() {
 
   // ── Onboarding screen (first-time user, no data) ──────────────────────
   if (!hasData && !importDone) {
+    // Another tab (or this tab on a prior mount) may be mid-import. The
+    // global analyticsStatus context reflects the most recent poll; the
+    // analytics-importing cookie covers the ~500 ms window between tab
+    // mount and the poller's first tick, where status is still null but
+    // an import is actually in flight. typeof-document guard is defensive
+    // against any server render (DashboardClient runs client-only in
+    // practice, but the guard is cheap and removes the concern entirely).
+    const cookieImporting = typeof document !== 'undefined'
+      && document.cookie.includes('analytics-importing=1');
+    const isGlobalImporting = analyticsStatus === 'importing' || cookieImporting;
+
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
         <h1 className="text-3xl font-bold text-white tracking-wider mb-2">Welcome to BOOBAnalytics!</h1>
@@ -1041,14 +1054,14 @@ export default function DashboardClient() {
           Let's import your Pacifica trading history. We'll fetch your fills, group them into positions, and tag market regimes automatically.
         </p>
 
-        {importProgress && (
+        {(importProgress || isGlobalImporting) && (
           <div className="mb-6 flex items-center gap-3 text-sm text-[#8b949e]">
             <span className="inline-block w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-            {importProgress}
+            {importProgress ?? 'Import in progress — please wait. Your trades are being fetched from Pacifica.'}
           </div>
         )}
 
-        {!importing && (
+        {!importing && !isGlobalImporting && (
           <button
             onClick={handleImport}
             className="px-6 py-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium text-sm transition-colors"

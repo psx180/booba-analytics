@@ -209,7 +209,7 @@ function AuthedShell({
   const navDisabled = analyticsStatus === 'importing';
 
   return (
-    <AnalyticsStatusContext.Provider value={{ setOptimisticStatus }}>
+    <AnalyticsStatusContext.Provider value={{ status: analyticsStatus, setOptimisticStatus }}>
     <AccountProvider walletAddress={walletAddress}>
       <JournalProvider walletAddress={walletAddress}>
         <LiveProvider>
@@ -364,6 +364,7 @@ const IMPORT_COOKIE_PATTERN = /(^|;\s*)analytics-importing=1(;|$)/;
 const IMPORT_COOKIE_CLEAR = 'analytics-importing=; path=/; max-age=0';
 
 interface AnalyticsStatusContextValue {
+  status: string | null;
   setOptimisticStatus: (next: string) => void;
 }
 
@@ -378,6 +379,18 @@ const AnalyticsStatusContext = createContext<AnalyticsStatusContextValue | null>
 export function useAnalyticsStatusSetter(): ((next: string) => void) | null {
   const ctx = useContext(AnalyticsStatusContext);
   return ctx?.setOptimisticStatus ?? null;
+}
+
+/**
+ * Read-side hook for the current analytics lifecycle state. Returns null
+ * for callers rendered outside the AuthedShell tree, matching the setter
+ * hook's defensive pattern. Consumers typically compare against
+ * 'importing' / 'computing' / 'ready' to render lifecycle-dependent UI
+ * (e.g. the dashboard gates its Import button on 'importing').
+ */
+export function useAnalyticsStatus(): string | null {
+  const ctx = useContext(AnalyticsStatusContext);
+  return ctx?.status ?? null;
 }
 
 function useAnalyticsStatusState(): {

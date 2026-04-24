@@ -13,3 +13,5 @@ dev.db
 dev/
 memory/
 tsconfig.tsbuildinfo
+dev.db-shm
+dev.db-wal

@@ -137,6 +137,30 @@ export async function POST(req: NextRequest) {
       steps.funding = { error: 'Funding history fetch failed — skipped' };
     }
 
+    // 5b. Sync equity snapshots & balance events. The reconstructed equity
+    //     provider (src/services/analytics/equity/reconstructed.ts) reads
+    //     BalanceEvent rows to compute netCashFlows; without this sync it
+    //     sees zero deposits, which makes equity go negative on the first
+    //     loss and breaks Monte Carlo, Sharpe/Sortino, and the underwater
+    //     curve. The CLI `src/scripts/import.ts` already does this — this
+    //     block brings the HTTP import route into parity.
+    //
+    //     Kept non-fatal: if Pacifica rate-limits or the endpoints are
+    //     temporarily down, the import still finishes with trades + funding
+    //     intact. Analytics will run with degraded accuracy until the next
+    //     successful sync (either a re-import or the /api/sync poller).
+    setProgress(walletAddress, { stage: 'syncing', message: 'Syncing account history…', fillsFetched: fills.length });
+    try {
+      const { syncEquitySnapshots, syncBalanceEvents } = await import('@/services/ingestion');
+      const equityResult  = await syncEquitySnapshots(walletAddress, client.account);
+      const balanceResult = await syncBalanceEvents(walletAddress, client.account);
+      steps.equitySnapshots = { fetched: equityResult.fetched,  upserted: equityResult.upserted };
+      steps.balanceEvents   = { fetched: balanceResult.fetched, upserted: balanceResult.upserted };
+    } catch (err) {
+      console.error('[import] equity/balance sync failed:', err);
+      steps.equitySnapshots = { error: 'Equity/balance sync failed — skipped' };
+    }
+
     // 6. Run grouping pipeline
     setProgress(walletAddress, { stage: 'grouping', message: 'Grouping fills into positions…', fillsFetched: fills.length });
     const groupingService = new GroupingService();
