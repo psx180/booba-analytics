@@ -15,3 +15,7 @@ memory/
 tsconfig.tsbuildinfo
 dev.db-shm
 dev.db-wal
+
+src/scripts/seed-signals-cutoff-tight.ts
+src/scripts/seed-signals-cutoff.ts
+

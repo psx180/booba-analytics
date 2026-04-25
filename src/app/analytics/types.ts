@@ -111,6 +111,11 @@ export interface PerformanceStats {
   totalPnl: number;
   totalFees: number;
   totalFunding: number;
+  /** Slice-vs-complement significance fields, present on breakdown rows. */
+  pnlPValue?: number | null;
+  winRatePValue?: number | null;
+  isSignificant?: boolean;
+  sampleSize?: number;
 }
 
 export interface PositionData {

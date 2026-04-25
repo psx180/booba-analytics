@@ -15,6 +15,7 @@
 import type { Aggregator, Position } from './base';
 import { computePerformanceStats } from './base';
 import type { AggregationResult } from '../types';
+import { computeSliceSignificance } from '../slice-significance';
 
 export type BreakdownDimension =
   | 'regime'
@@ -44,9 +45,23 @@ export const breakdownAggregator = {
       (buckets[key] ??= []).push(p);
     }
 
+    // Cache P&L arrays per bucket so we build each slice's complement by
+    // concatenating every other bucket's cached array instead of re-walking
+    // the full position list.
+    const pnlByKey: Record<string, number[]> = {};
+    for (const [key, bucket] of Object.entries(buckets)) {
+      pnlByKey[key] = bucket.map((p) => p.aggregatePnl ?? 0);
+    }
+
     const breakdown: Record<string, Record<string, any>> = {};
     for (const [key, bucket] of Object.entries(buckets)) {
-      breakdown[key] = computePerformanceStats(bucket) as unknown as Record<string, any>;
+      const stats = computePerformanceStats(bucket) as unknown as Record<string, any>;
+      const complementPnls: number[] = [];
+      for (const [k, arr] of Object.entries(pnlByKey)) {
+        if (k !== key) complementPnls.push(...arr);
+      }
+      const sig = computeSliceSignificance(pnlByKey[key], complementPnls);
+      breakdown[key] = { ...stats, ...sig };
     }
 
     return {

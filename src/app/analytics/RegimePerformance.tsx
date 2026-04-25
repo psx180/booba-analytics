@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import type { AnalyticsChartProps, PerformanceStats } from './types';
 import { buildParams, REGIME_LABELS, REGIME_BADGE } from './types';
 import { useAuthFetch } from '@/lib/api-client';
+import SignificanceBadge, { SIGNIFICANCE_FOOTNOTE } from './SignificanceBadge';
 
 type RegimeBreakdown = Record<string, PerformanceStats>;
 
@@ -52,7 +53,8 @@ export default function RegimePerformance({ filters, journalId }: AnalyticsChart
               <th className="pb-2 pr-4">Total P&L</th>
               <th className="pb-2 pr-4">Win Rate</th>
               <th className="pb-2 pr-4">Expectancy</th>
-              <th className="pb-2">Profit Factor</th>
+              <th className="pb-2 pr-4">Profit Factor</th>
+              <th className="pb-2">Significance</th>
             </tr>
           </thead>
           <tbody>
@@ -84,14 +86,20 @@ export default function RegimePerformance({ filters, journalId }: AnalyticsChart
                     <td className={`py-2.5 pr-4 ${stats.expectancy >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                       {stats.expectancy >= 0 ? '+' : ''}${stats.expectancy.toFixed(2)}
                     </td>
-                    <td className={`py-2.5 ${stats.profitFactor >= 1 ? 'text-green-400' : 'text-red-400'}`}>
+                    <td className={`py-2.5 pr-4 ${stats.profitFactor >= 1 ? 'text-green-400' : 'text-red-400'}`}>
                       {stats.profitFactor === 999 ? '∞' : stats.profitFactor.toFixed(2)}
+                    </td>
+                    <td className="py-2.5">
+                      <SignificanceBadge stats={stats} />
                     </td>
                   </tr>
                 );
               })}
           </tbody>
         </table>
+        <p className="text-[10px] text-[#6e7681] mt-2">
+          {SIGNIFICANCE_FOOTNOTE}
+        </p>
     </div>
   );
 }

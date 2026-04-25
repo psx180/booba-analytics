@@ -4,6 +4,8 @@ import { useState, useEffect, useMemo } from 'react';
 import type { AnalyticsChartProps, PositionData } from './types';
 import { buildParams, ALL_REGIMES, REGIME_LABELS, REGIME_COLORS, computeStats } from './types';
 import { useAuthFetch } from '@/lib/api-client';
+import { computeSliceSignificance } from '@/services/analytics/slice-significance';
+import SignificanceBadge, { SIGNIFICANCE_FOOTNOTE } from './SignificanceBadge';
 
 function fmtHoldTime(s: number): string {
   if (s < 60) return `${s}s`;
@@ -68,6 +70,10 @@ export default function StrategyBreakdown({ filters, journalId }: AnalyticsChart
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(p);
     }
+    const pnlByKey = new Map<string, number[]>();
+    for (const [key, ps] of map.entries()) {
+      pnlByKey.set(key, ps.map((p) => p.aggregatePnl ?? 0));
+    }
     return Array.from(map.entries())
       .map(([type, ps]) => {
         const stats = computeStats(ps);
@@ -79,7 +85,13 @@ export default function StrategyBreakdown({ filters, journalId }: AnalyticsChart
         const avgEff = withEff.length > 0
           ? withEff.reduce((s, p) => s + (p.exitEfficiency ?? 0), 0) / withEff.length
           : null;
-        return { type, ps, stats, avgHold, avgEff };
+        const slicePnls = pnlByKey.get(type) ?? [];
+        const complementPnls: number[] = [];
+        for (const [k, arr] of pnlByKey.entries()) {
+          if (k !== type) complementPnls.push(...arr);
+        }
+        const sig = computeSliceSignificance(slicePnls, complementPnls);
+        return { type, ps, stats: { ...stats, ...sig }, avgHold, avgEff };
       })
       .sort((a, b) => b.stats.totalPnl - a.stats.totalPnl);
   }, [positions]);
@@ -113,7 +125,8 @@ export default function StrategyBreakdown({ filters, journalId }: AnalyticsChart
             <th className="pb-2 pr-4">Profit Factor</th>
             <th className="pb-2 pr-4">Avg Hold</th>
             <th className="pb-2 pr-4">Exit Eff.</th>
-            <th className="pb-2">Regime Dist.</th>
+            <th className="pb-2 pr-4">Regime Dist.</th>
+            <th className="pb-2">Significance</th>
           </tr>
         </thead>
         <tbody>
@@ -147,8 +160,11 @@ export default function StrategyBreakdown({ filters, journalId }: AnalyticsChart
                   isGood={avgEff != null && avgEff >= 0.5}
                   neutral={avgEff == null}
                 />
-                <td className="py-2.5">
+                <td className="py-2.5 pr-4">
                   <RegimeMiniBar tradePositions={ps} />
+                </td>
+                <td className="py-2.5">
+                  <SignificanceBadge stats={stats} />
                 </td>
               </tr>
             );
@@ -158,6 +174,9 @@ export default function StrategyBreakdown({ filters, journalId }: AnalyticsChart
       <p className="text-[10px] text-[#6e7681] mt-3">
         Regime mini-bars show win rate per regime (height = win rate). Hover a bar for details.
         Overall win rate: {(overall.winRate * 100).toFixed(1)}% — win rate colored green if above average.
+      </p>
+      <p className="text-[10px] text-[#6e7681] mt-2">
+        {SIGNIFICANCE_FOOTNOTE}
       </p>
     </div>
   );
