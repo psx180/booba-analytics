@@ -250,6 +250,16 @@ export class OrderToPositionLevel implements GroupingLevel<OrderGroupData, Posit
     const regimeAtEntry = sorted[0].fills[0]?.regimeAtEntry ?? null;
     const sentimentAtEntry = sorted[0].fills[0]?.sentimentAtEntry ?? null;
 
+    // Take the first non-null builder code we see, ordered by entry time.
+    // Most positions are uniform (every fill carries the same builder, or
+    // none). Mixed cases are vanishingly rare; first-fill semantics match
+    // how regimeAtEntry is captured.
+    const firstBuilder = allFills
+      .slice()
+      .sort((a, b) => (a.entryTime?.getTime() ?? 0) - (b.entryTime?.getTime() ?? 0))
+      .find((f) => f.builderCode);
+    const builderCode = firstBuilder?.builderCode ?? null;
+
     return {
       id: `pos_${sorted[0].id}`,
       asset,
@@ -270,6 +280,7 @@ export class OrderToPositionLevel implements GroupingLevel<OrderGroupData, Posit
       regimeAtEntry,
       sentimentAtEntry,
       linkedStrategyId: null,
+      builderCode,
     };
   }
 

@@ -23,6 +23,7 @@ export type BreakdownDimension =
   | 'strategy'
   | 'source'
   | 'tradeType'
+  | 'builderCode'
   | 'entryHour'
   | 'entryDayOfWeek'
   | 'entrySession'
@@ -79,6 +80,7 @@ function getDimensionValue(p: Position, dim: BreakdownDimension): string {
     case 'strategy':        return p.strategyId ?? 'none';
     case 'source':          return readSource(p);
     case 'tradeType':       return (p.manualTradeType ?? p.tradeType) ?? 'unknown';
+    case 'builderCode':     return p.builderCode ?? 'manual';
     case 'entryHour':       return p.entryHour != null ? String(p.entryHour) : 'unknown';
     case 'entryDayOfWeek':  return p.entryDayOfWeek != null ? String(p.entryDayOfWeek) : 'unknown';
     case 'entrySession':    return p.entrySession ?? 'unknown';

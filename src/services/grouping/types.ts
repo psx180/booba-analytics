@@ -104,6 +104,8 @@ export interface PositionData extends TradeUnit {
   totalSize: number;
   holdTimeSeconds: number | null;
   linkedStrategyId: string | null;
+  /** Denormalized from the position's first builder-coded fill (null = manual). */
+  builderCode: string | null;
 }
 
 // ─── Linked Strategy (Level 3 output) ──────────────────────────────────────

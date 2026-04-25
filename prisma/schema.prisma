@@ -161,6 +161,11 @@ model Position {
   socialMentions     Int?             // mention count at time of entry
   socialMindshare    Float?           // % of total discussion at time of entry
 
+  // Builder code denormalized from the position's first fill. NULL means
+  // manual (no builder), which is also how the "Manual only" filter is
+  // expressed (builderCode IS NULL). Kept in sync by the grouping pipeline.
+  builderCode         String?
+
   screenshot          String?         // base64 data URL of chart at entry time
   customData          String?         // JSON
   linkedStrategyId    String?
@@ -178,6 +183,7 @@ model Position {
   orderGroups         OrderGroup[]
 
   @@index([journalId])
+  @@index([walletAddress, builderCode])
 }
 
 // ─── Order Groups (fills grouped by order) ────────────────────────────────────

@@ -35,6 +35,22 @@ export interface Filters {
   builderCode?: string;
   builderCodeExclude?: boolean;
   /**
+   * Three-state builder filter:
+   *   - manualOnly = true     → only positions with builderCode IS NULL
+   *                              (overrides builderCode/builderCodeExclude)
+   *   - builderCode set       → restrict to that single code; flip via
+   *                              builderCodeExclude to exclude it instead
+   *   - neither set           → no builder filtering
+   */
+  manualOnly?: boolean;
+  /**
+   * Default-hidden noise list. Excluded after the manualOnly /
+   * builderCode filters are evaluated. Use for "Hide market-making
+   * activity" toggles where the user (or app config) lists known-noisy
+   * builders that should be filtered out by default.
+   */
+  excludeBuilderCodes?: string[];
+  /**
    * Journal scope. When set, the analytics service only loads positions
    * whose journalId matches. Routes resolve this to the wallet's default
    * journal id when the client omits it, so analytics are never computed

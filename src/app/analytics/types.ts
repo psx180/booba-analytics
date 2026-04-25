@@ -1,13 +1,25 @@
 // Shared types, constants, and helpers for the Analytics page components.
 
+/**
+ * Builder filter mode — three mutually-exclusive states the user can pick:
+ *   - 'all'      → no builder filtering
+ *   - 'manual'   → only positions with no builder code (Position.builderCode IS NULL)
+ *   - 'specific' → restrict to a single builderCode value, optionally inverted
+ *                  via builderCodeExclude
+ */
+export type BuilderMode = 'all' | 'manual' | 'specific';
+
 export interface AnalyticsFilters {
   regime: string;
   tradeType: string;
   asset: string;
   strategy: string;
   source: string;
+  builderMode: BuilderMode;
   builderCode: string;
   builderCodeExclude: boolean;
+  /** "Hide market-making activity" — codes excluded after the mode filter. */
+  hideNoise: boolean;
 }
 
 export const EMPTY_FILTERS: AnalyticsFilters = {
@@ -16,9 +28,18 @@ export const EMPTY_FILTERS: AnalyticsFilters = {
   asset: '',
   strategy: '',
   source: '',
+  builderMode: 'all',
   builderCode: '',
   builderCodeExclude: false,
+  hideNoise: false,
 };
+
+/**
+ * Default-hidden builder codes when AnalyticsFilters.hideNoise is true.
+ * Empty for now — populate after running scripts/builder-code-distribution.ts
+ * and deciding which codes are clearly market-making / arbitrage noise.
+ */
+export const DEFAULT_NOISE_BUILDER_CODES: string[] = [];
 
 export interface AnalyticsChartProps {
   filters: AnalyticsFilters;
@@ -41,9 +62,14 @@ export function buildParams(
   if (filters.asset) p.set('asset', filters.asset);
   if (filters.strategy) p.set('strategy', filters.strategy);
   if (filters.source) p.set('source', filters.source);
-  if (filters.builderCode) {
+  if (filters.builderMode === 'manual') {
+    p.set('manualOnly', 'true');
+  } else if (filters.builderMode === 'specific' && filters.builderCode) {
     p.set('builderCode', filters.builderCode);
     if (filters.builderCodeExclude) p.set('builderCodeExclude', 'true');
+  }
+  if (filters.hideNoise && DEFAULT_NOISE_BUILDER_CODES.length > 0) {
+    p.set('excludeBuilderCodes', DEFAULT_NOISE_BUILDER_CODES.join(','));
   }
   return p;
 }

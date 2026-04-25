@@ -930,7 +930,7 @@ function isFilterTypeActive(type: FilterType, f: TradesFilter): boolean {
     case 'playbook': return f.playbookId !== '';
     case 'pnl': return f.pnlFilter !== '';
     case 'signal': return f.signalSource !== '';
-    case 'builderCode': return f.builderCodes.length > 0;
+    case 'builderCode': return f.builderCodes.length > 0 || f.manualOnly;
   }
 }
 
@@ -946,7 +946,7 @@ function clearFilterType(type: FilterType, f: TradesFilter): TradesFilter {
     case 'playbook': return { ...f, playbookId: '', playbookAdherence: '' };
     case 'pnl': return { ...f, pnlFilter: '', pnlMin: '', pnlMax: '' };
     case 'signal': return { ...f, signalSource: '', signalCaller: '' };
-    case 'builderCode': return { ...f, builderCodes: [], builderCodeExclude: false };
+    case 'builderCode': return { ...f, builderCodes: [], builderCodeExclude: false, manualOnly: false };
   }
 }
 
@@ -991,6 +991,7 @@ function getChipLabel(
       if (f.signalCaller) return f.signalCaller;
       return f.signalSource === 'has_signal' ? 'Has Signal' : 'No Signal';
     case 'builderCode': {
+      if (f.manualOnly) return 'Manual only';
       const prefix = f.builderCodeExclude ? 'Excl. ' : '';
       if (f.builderCodes.length === 1) return `${prefix}${f.builderCodes[0]}`;
       return `${prefix}Builder (${f.builderCodes.length})`;
@@ -1213,7 +1214,23 @@ function FilterEditor({
     case 'builderCode':
       return (
         <div className="p-2 w-52 space-y-1.5">
-          <div className="flex gap-1 pb-1 border-b border-[#30363d]">
+          <label className="flex items-center gap-2 px-2 py-1.5 text-sm text-[#e6edf3] hover:bg-[#21262d] cursor-pointer rounded border border-[#30363d]">
+            <input
+              type="checkbox"
+              className="accent-blue-500 w-3.5 h-3.5"
+              checked={filter.manualOnly}
+              onChange={(e) => setFilter({
+                ...filter,
+                manualOnly: e.target.checked,
+                // Manual-only is mutually exclusive with the per-code list,
+                // so clear it when turning the toggle on.
+                builderCodes: e.target.checked ? [] : filter.builderCodes,
+                builderCodeExclude: e.target.checked ? false : filter.builderCodeExclude,
+              })}
+            />
+            Manual only
+          </label>
+          <div className={`flex gap-1 pb-1 border-b border-[#30363d] ${filter.manualOnly ? 'opacity-40 pointer-events-none' : ''}`}>
             <button
               className={`flex-1 py-1 text-xs rounded transition-colors ${!filter.builderCodeExclude ? 'bg-blue-700 text-white' : 'text-[#8b949e] hover:bg-[#21262d]'}`}
               onClick={() => setFilter({ ...filter, builderCodeExclude: false })}
@@ -1230,7 +1247,7 @@ function FilterEditor({
           {builderCodeOptions.length === 0 ? (
             <p className="px-2 py-2 text-xs text-[#6e7681]">No builder codes in your trades</p>
           ) : (
-            <div className="max-h-48 overflow-y-auto space-y-0.5">
+            <div className={`max-h-48 overflow-y-auto space-y-0.5 ${filter.manualOnly ? 'opacity-40 pointer-events-none' : ''}`}>
               {builderCodeOptions.map((code) => (
                 <label key={code} className="flex items-center gap-2 px-2 py-1.5 text-sm text-[#e6edf3] hover:bg-[#21262d] cursor-pointer rounded">
                   <input
@@ -1854,8 +1871,13 @@ function applyTradesFilter(units: TradeUnit[], f: TradesFilter): TradeUnit[] {
     if (f.signalSource === 'has_signal' && !u.sourceTag) return false;
     if (f.signalSource === 'no_signal' && u.sourceTag) return false;
     if (f.signalSource === 'has_signal' && f.signalCaller && u.sourceTag !== f.signalCaller) return false;
-    // Builder code (positions where any fill has this builder code)
-    if (f.builderCodes.length > 0) {
+    // Manual-only mode trumps the per-code list — keep rows whose fills have
+    // no builder code at all. The trade-units API already aggregates each
+    // unit's builder codes into u.builderCodes, so emptiness is the test.
+    if (f.manualOnly) {
+      if ((u.builderCodes ?? []).length > 0) return false;
+    } else if (f.builderCodes.length > 0) {
+      // Builder code (positions where any fill has this builder code)
       const unitCodes = u.builderCodes ?? [];
       const hasMatch = f.builderCodes.some((bc) => unitCodes.includes(bc));
       if (f.builderCodeExclude ? hasMatch : !hasMatch) return false;

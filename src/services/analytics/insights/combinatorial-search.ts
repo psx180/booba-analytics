@@ -67,6 +67,10 @@ const DIMENSIONS: DimensionDef[] = [
   { name: 'holdTimeCategory', accessor: (p) => p.holdTimeCategory },
   { name: 'direction',        accessor: (p) => p.direction },
   { name: 'timeOfDayBucket',  accessor: (p) => timeOfDayBucket(p.entryHour) },
+  // Manual trades surface as the 'manual' bucket so the search can flag
+  // specific builder codes (e.g., a market-maker) as significantly worse
+  // than manual trading.
+  { name: 'builderCode',      accessor: (p) => p.builderCode ?? 'manual' },
 ];
 
 // ─── Named dimension refs for pre-registered hypotheses ───────────────────

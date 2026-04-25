@@ -271,6 +271,7 @@ export class GroupingService {
           tradeType: position.tradeType,
           regimeAtEntry: position.regimeAtEntry,
           sentimentAtEntry: position.sentimentAtEntry,
+          builderCode: position.builderCode,
           firstEntryTime: position.firstEntryTime,
           lastExitTime: position.lastExitTime,
         },
@@ -597,6 +598,7 @@ export class GroupingService {
       regimeAtEntry: p.regimeAtEntry,
       sentimentAtEntry: p.sentimentAtEntry,
       linkedStrategyId: null,
+      builderCode: p.builderCode,
     }));
 
     // Will throw if validation fails
@@ -928,9 +930,11 @@ export class GroupingService {
       ? Math.round((lastExitTime.getTime() - firstEntryTime.getTime()) / 1000)
       : null;
 
-    const regimeAtEntry = allFills.sort(
+    const sortedByEntry = [...allFills].sort(
       (a, b) => (a.entryTime?.getTime() ?? 0) - (b.entryTime?.getTime() ?? 0),
-    )[0]?.regimeAtEntry ?? null;
+    );
+    const regimeAtEntry = sortedByEntry[0]?.regimeAtEntry ?? null;
+    const builderCode = sortedByEntry.find((f) => f.builderCode)?.builderCode ?? null;
 
     // Status by net exposure (open_ sizes minus close_ sizes). Using the raw
     // per-fill side — not exitTime/pnlRealized nullness — because a normal
@@ -952,6 +956,7 @@ export class GroupingService {
         lastExitTime,
         holdTimeSeconds,
         regimeAtEntry,
+        builderCode,
         status,
       },
     });

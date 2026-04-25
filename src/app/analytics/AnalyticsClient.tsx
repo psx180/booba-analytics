@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import type { AnalyticsFilters } from './types';
-import { EMPTY_FILTERS, ALL_REGIMES, REGIME_LABELS, TRADE_TYPES, buildParams } from './types';
+import { EMPTY_FILTERS, ALL_REGIMES, REGIME_LABELS, TRADE_TYPES, buildParams, DEFAULT_NOISE_BUILDER_CODES } from './types';
 import { useJournal } from '../JournalContext';
 import { useAuthFetch } from '@/lib/api-client';
 import CalendarHeatmap from './CalendarHeatmap';
@@ -12,6 +12,7 @@ import ExitAnalysis, { type ExitSummary } from './ExitAnalysis';
 import StrategyBreakdown from './StrategyBreakdown';
 import WhatIfExplorer from './WhatIfExplorer';
 import RegimePerformance from './RegimePerformance';
+import BuilderCodeBreakdown from './BuilderCodeBreakdown';
 import PatternsSection, { OutcomeSerialDependence } from './PatternsSection';
 import EdgeFinder, { type CombinatorialSearchResult } from './EdgeFinder';
 import WartRadar, { type WartResult } from './WartRadar';
@@ -281,6 +282,7 @@ interface SavedTradesFilterEntry {
     tradeTypes?: string[];
     assets?: string[];
     builderCodes?: string[];
+    manualOnly?: boolean;
     [key: string]: unknown;
   };
 }
@@ -326,11 +328,14 @@ function LoadFilterDropdown({
 
   const apply = (sf: SavedTradesFilterEntry) => {
     const f = sf.filter;
+    const builderCode = f.builderCodes?.[0] ?? '';
+    const manualOnly = f.manualOnly === true;
     onLoad(sf.name, {
       regime: f.regimes?.[0] ?? '',
       tradeType: f.tradeTypes?.[0] ?? '',
       asset: f.assets?.[0] ?? '',
-      builderCode: f.builderCodes?.[0] ?? '',
+      builderMode: manualOnly ? 'manual' : builderCode ? 'specific' : 'all',
+      builderCode,
     });
     setOpen(false);
   };
@@ -1846,6 +1851,12 @@ function StrategyTab({
         evidence={<RegimePerformance {...chartProps} />}
         implication={regimeImplication}
       />
+      <NarrativeSection
+        question="Which builder codes are pulling their weight?"
+        verdict="Per-builder performance vs. manual trading. Use this to spot market-making or arbitrage flows that are dragging down your aggregate stats."
+        evidence={<BuilderCodeBreakdown {...chartProps} />}
+        implication="Hide noise codes via the filter bar to clean up the rest of your analytics."
+      />
 
       {/* ── Advanced Analysis (collapsed) ───────────────────────────────── */}
       <div className="bg-[#161b22] border border-[#21262d] rounded-lg overflow-hidden">
@@ -2556,7 +2567,11 @@ export default function AnalyticsClient() {
     }
   }, [journalId, filters, authFetch, runningDeepAnalysis]);
 
-  const hasFilters = Object.values(filters).some(Boolean);
+  // builderMode defaults to 'all' (truthy), so a naive Object.values…some
+  // would always report hasFilters. Compare each field against EMPTY_FILTERS
+  // so the Clear-filters button only appears when something actually narrows.
+  const hasFilters = (Object.keys(EMPTY_FILTERS) as (keyof AnalyticsFilters)[])
+    .some((k) => filters[k] !== EMPTY_FILTERS[k]);
   const chartProps = { filters, journalId: journalId ?? undefined };
 
   const combinatorialInsight = insights.find((i) => i.module === 'combinatorial-search');
@@ -2589,36 +2604,77 @@ export default function AnalyticsClient() {
             onChange={(v) => set('asset', v)}
             options={assetOptions.map((a) => ({ value: a, label: a }))}
           />
-          {builderCodeOptions.length > 0 && (
-            <div className="flex flex-col gap-1">
-              <label className="text-[10px] uppercase tracking-widest text-[#6e7681]">Builder Code</label>
-              <div className="flex gap-1.5 items-center">
-                <select
-                  value={filters.builderCode}
-                  onChange={(e) => set('builderCode', e.target.value)}
-                  className="bg-[#21262d] border border-[#30363d] text-sm text-[#e6edf3] rounded px-2 py-1.5 focus:outline-none focus:border-blue-500 min-w-[120px]"
-                >
-                  <option value="">All</option>
-                  {builderCodeOptions.map((code) => (
-                    <option key={code} value={code}>{code}</option>
-                  ))}
-                </select>
-                {filters.builderCode && (
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] uppercase tracking-widest text-[#6e7681]">Builder</label>
+            <div className="flex gap-1.5 items-center">
+              <div className="inline-flex bg-[#21262d] border border-[#30363d] rounded overflow-hidden">
+                {(['all', 'manual', 'specific'] as const).map((mode) => (
                   <button
-                    onClick={() => setFilters((f) => ({ ...f, builderCodeExclude: !f.builderCodeExclude }))}
-                    title={filters.builderCodeExclude ? 'Excluding — click to include instead' : 'Including — click to exclude instead'}
-                    className={`px-2 py-1.5 text-xs rounded border transition-colors whitespace-nowrap ${
-                      filters.builderCodeExclude
-                        ? 'bg-red-900/30 border-red-700/40 text-red-300 hover:bg-red-900/50'
-                        : 'bg-blue-900/20 border-blue-700/40 text-blue-300 hover:bg-blue-900/40'
+                    key={mode}
+                    type="button"
+                    onClick={() => setFilters((f) => ({
+                      ...f,
+                      builderMode: mode,
+                      // Leaving 'specific' clears the picker so stale codes
+                      // don't silently re-apply when the user comes back.
+                      builderCode: mode === 'specific' ? f.builderCode : '',
+                      builderCodeExclude: mode === 'specific' ? f.builderCodeExclude : false,
+                    }))}
+                    className={`px-2.5 py-1.5 text-xs whitespace-nowrap transition-colors ${
+                      filters.builderMode === mode
+                        ? 'bg-blue-900/40 text-blue-200'
+                        : 'text-[#8b949e] hover:bg-[#2a2f37]'
                     }`}
                   >
-                    {filters.builderCodeExclude ? 'Excl.' : 'Incl.'}
+                    {mode === 'all' ? 'All' : mode === 'manual' ? 'Manual only' : 'Specific'}
                   </button>
-                )}
+                ))}
               </div>
+              {filters.builderMode === 'specific' && builderCodeOptions.length > 0 && (
+                <>
+                  <select
+                    value={filters.builderCode}
+                    onChange={(e) => set('builderCode', e.target.value)}
+                    className="bg-[#21262d] border border-[#30363d] text-sm text-[#e6edf3] rounded px-2 py-1.5 focus:outline-none focus:border-blue-500 min-w-[120px]"
+                  >
+                    <option value="">— pick code —</option>
+                    {builderCodeOptions.map((code) => (
+                      <option key={code} value={code}>{code}</option>
+                    ))}
+                  </select>
+                  {filters.builderCode && (
+                    <button
+                      onClick={() => setFilters((f) => ({ ...f, builderCodeExclude: !f.builderCodeExclude }))}
+                      title={filters.builderCodeExclude ? 'Excluding — click to include instead' : 'Including — click to exclude instead'}
+                      className={`px-2 py-1.5 text-xs rounded border transition-colors whitespace-nowrap ${
+                        filters.builderCodeExclude
+                          ? 'bg-red-900/30 border-red-700/40 text-red-300 hover:bg-red-900/50'
+                          : 'bg-blue-900/20 border-blue-700/40 text-blue-300 hover:bg-blue-900/40'
+                      }`}
+                    >
+                      {filters.builderCodeExclude ? 'Excl.' : 'Incl.'}
+                    </button>
+                  )}
+                </>
+              )}
             </div>
-          )}
+          </div>
+          <label
+            className="flex items-center gap-1.5 text-xs text-[#8b949e] hover:text-white transition-colors self-end pb-1.5 cursor-pointer"
+            title={
+              DEFAULT_NOISE_BUILDER_CODES.length > 0
+                ? `Excludes: ${DEFAULT_NOISE_BUILDER_CODES.join(', ')}`
+                : 'No default noise codes configured yet — add them to DEFAULT_NOISE_BUILDER_CODES.'
+            }
+          >
+            <input
+              type="checkbox"
+              checked={filters.hideNoise}
+              onChange={(e) => setFilters((f) => ({ ...f, hideNoise: e.target.checked }))}
+              className="accent-blue-500"
+            />
+            Hide market-making activity
+          </label>
           <LoadFilterDropdown
             selectedName={loadedFilterName}
             onLoad={(name, patch) => {

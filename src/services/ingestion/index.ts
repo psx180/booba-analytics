@@ -284,6 +284,24 @@ export async function syncEquitySnapshots(
   }
 
   console.log(`[sync] Synced ${result.upserted} equity snapshots for ${walletAddress}`);
+
+  // === TEMPORARY TEST — remove after investigation ===
+  try {
+    const testResults: Record<string, number> = {};
+    for (const testLimit of [200, 500, 1000, 5000]) {
+      try {
+        const testPage = await accountApi.getEquityHistory({ account: walletAddress, timeRange: 'all', limit: testLimit });
+        testResults[`limit_${testLimit}`] = testPage.length;
+      } catch (err) {
+        testResults[`limit_${testLimit}`] = -1; // failed
+      }
+    }
+    console.log('[sync] SNAPSHOT LIMIT TEST:', JSON.stringify(testResults));
+  } catch (err) {
+    console.log('[sync] SNAPSHOT LIMIT TEST failed:', (err as Error).message);
+  }
+  // === END TEMPORARY TEST ===
+
   return result;
 }
 

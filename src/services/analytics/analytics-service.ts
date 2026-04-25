@@ -246,6 +246,8 @@ export class AnalyticsService {
       filters?.tradeType ||
       filters?.source ||
       filters?.builderCode ||
+      filters?.manualOnly ||
+      (filters?.excludeBuilderCodes && filters.excludeBuilderCodes.length > 0) ||
       filters?.dateFrom ||
       filters?.dateTo,
     );
@@ -547,15 +549,50 @@ export class AnalyticsService {
       };
     }
 
-    if (filters?.builderCode) {
-      const builderClause = {
-        orderGroups: { some: { trades: { some: { builderCode: filters.builderCode } } } },
-      };
+    // Builder filter on the denormalized Position.builderCode. Composed via
+    // an AND array so it stacks cleanly with any pre-existing where.OR
+    // (e.g. the tradeType filter above) without trampling it.
+    //
+    // SQLite three-valued logic note: `{ not: X }` and `{ notIn: [...] }`
+    // both DROP rows where builderCode IS NULL. Every "exclude" branch
+    // therefore wraps in `OR builderCode IS NULL` to preserve manual rows,
+    // matching the previous relational filter's semantics.
+    const builderAnds: any[] = [];
+    if (filters?.manualOnly) {
+      builderAnds.push({ builderCode: null });
+    } else if (filters?.builderCode) {
       if (filters.builderCodeExclude) {
-        where.NOT = builderClause;
+        builderAnds.push({
+          OR: [
+            { builderCode: null },
+            { builderCode: { not: filters.builderCode } },
+          ],
+        });
       } else {
-        Object.assign(where, builderClause);
+        builderAnds.push({ builderCode: filters.builderCode });
       }
+    }
+    // Noise blocklist (the "Hide market-making activity" toggle). Layered
+    // on top so a single specific filter doesn't have to know about it.
+    // Skipped under manualOnly since NULL rows are already the only ones
+    // present and can't appear in the exclusion list.
+    if (
+      !filters?.manualOnly &&
+      filters?.excludeBuilderCodes &&
+      filters.excludeBuilderCodes.length > 0
+    ) {
+      builderAnds.push({
+        OR: [
+          { builderCode: null },
+          { builderCode: { notIn: filters.excludeBuilderCodes } },
+        ],
+      });
+    }
+    if (builderAnds.length > 0) {
+      where.AND = [
+        ...(Array.isArray(where.AND) ? where.AND : []),
+        ...builderAnds,
+      ];
     }
 
     return this.db.position.findMany({ where });

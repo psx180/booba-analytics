@@ -10,6 +10,7 @@ const VALID_DIMENSIONS = new Set([
   'strategy',
   'source',
   'tradeType',
+  'builderCode',
   'entryHour',
   'entryDayOfWeek',
   'entrySession',

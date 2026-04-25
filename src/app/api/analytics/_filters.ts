@@ -34,6 +34,15 @@ export function parseFilters(sp: URLSearchParams): Filters {
   const builderCode = sp.get('builderCode');
   if (builderCode) filters.builderCode = builderCode;
   if (sp.get('builderCodeExclude') === 'true') filters.builderCodeExclude = true;
+  if (sp.get('manualOnly') === 'true') filters.manualOnly = true;
+  // CSV in the query string keeps it readable in URLs and avoids the
+  // `?excludeBuilderCodes=a&excludeBuilderCodes=b` repeat-key idiom that
+  // browsers don't always preserve.
+  const excludeRaw = sp.get('excludeBuilderCodes');
+  if (excludeRaw) {
+    const codes = excludeRaw.split(',').map((s) => s.trim()).filter(Boolean);
+    if (codes.length > 0) filters.excludeBuilderCodes = codes;
+  }
 
   const dateFrom = sp.get('dateFrom');
   if (dateFrom) {

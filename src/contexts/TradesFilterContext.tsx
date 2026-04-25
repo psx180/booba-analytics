@@ -36,6 +36,16 @@ export interface TradesFilter {
   signalCaller: string;
   builderCodes: string[];
   builderCodeExclude: boolean;
+  /**
+   * Three-state builder mode that mirrors the Analytics page:
+   *   - false (default) → use builderCodes/builderCodeExclude as before
+   *   - true            → "Manual only": ignore builderCodes, restrict to
+   *                        positions whose builder code is null
+   * Stored as a discrete flag rather than rolling it into builderCodes so
+   * existing saved filters keep their semantics (empty builderCodes ≠
+   * "manual only").
+   */
+  manualOnly: boolean;
 }
 
 export const EMPTY_TRADES_FILTER: TradesFilter = {
@@ -56,6 +66,7 @@ export const EMPTY_TRADES_FILTER: TradesFilter = {
   signalCaller: '',
   builderCodes: [],
   builderCodeExclude: false,
+  manualOnly: false,
 };
 
 export function isFilterActive(f: TradesFilter): boolean {
@@ -72,7 +83,8 @@ export function isFilterActive(f: TradesFilter): boolean {
     f.pnlFilter !== '' ||
     f.signalSource !== '' ||
     f.signalCaller !== '' ||
-    f.builderCodes.length > 0
+    f.builderCodes.length > 0 ||
+    f.manualOnly
   );
 }
 
@@ -135,6 +147,7 @@ export function serializeFilterToUrl(f: TradesFilter): URLSearchParams {
   if (f.signalCaller) p.set('signalCaller', f.signalCaller);
   if (f.builderCodes.length) p.set('builderCodes', f.builderCodes.join(','));
   if (f.builderCodeExclude) p.set('builderCodeExclude', 'true');
+  if (f.manualOnly) p.set('manualOnly', 'true');
   return p;
 }
 
@@ -165,5 +178,6 @@ export function parseFilterFromUrl(p: URLSearchParams): Partial<TradesFilter> {
   const sc = p.get('signalCaller'); if (sc) out.signalCaller = sc;
   const bc = split('builderCodes'); if (bc) out.builderCodes = bc;
   if (p.get('builderCodeExclude') === 'true') out.builderCodeExclude = true;
+  if (p.get('manualOnly') === 'true') out.manualOnly = true;
   return out;
 }
