@@ -54,11 +54,11 @@ export interface RiskMetrics {
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-function r2(v: number): number {
+function round2(v: number): number {
   return Math.round(v * 100) / 100;
 }
 
-function r4(v: number): number {
+function round4(v: number): number {
   return Math.round(v * 10000) / 10000;
 }
 
@@ -160,7 +160,7 @@ export function computeRiskMetrics(
     const m = mean(returns);
     const sd = stddev(returns);
     if (sd > 0) {
-      sharpeRatio = r4((m / sd) * annualization);
+      sharpeRatio = round4((m / sd) * annualization);
     }
   }
 
@@ -170,7 +170,7 @@ export function computeRiskMetrics(
     const m = mean(returns);
     const dd = downsideDeviation(returns);
     if (dd > 0) {
-      sortinoRatio = r4((m / dd) * annualization);
+      sortinoRatio = round4((m / dd) * annualization);
     }
   }
 
@@ -182,17 +182,21 @@ export function computeRiskMetrics(
 
   let payoffRatio: number | null = null;
   if (avgWin > 0 && avgLoss < 0) {
-    payoffRatio = r2(avgWin / Math.abs(avgLoss));
+    payoffRatio = round2(avgWin / Math.abs(avgLoss));
   }
 
   // ── Drawdown analysis (days-based) ─────────────────────────────────────────
-  const drawdownAnalysis = computeDrawdownAnalysis(closed);
+  const drawdownAnalysis = computeDrawdownAnalysis(closed, startingCapital);
 
   // ── Recovery factor ────────────────────────────────────────────────────────
+  // Recovery factor is "net profit / max drawdown" — only meaningful when
+  // profit is positive. A negative recovery factor reads like a metric value
+  // but actually means the trader is in net loss; suppress to null in that
+  // case so the UI doesn't render a misleading number.
   const totalPnl = closed.reduce((s, p) => s + (p.aggregatePnl ?? 0), 0);
   let recoveryFactor: number | null = null;
-  if (drawdownAnalysis.maxDrawdown < 0) {
-    recoveryFactor = r2(totalPnl / Math.abs(drawdownAnalysis.maxDrawdown));
+  if (drawdownAnalysis.maxDrawdown < 0 && totalPnl > 0) {
+    recoveryFactor = round2(totalPnl / Math.abs(drawdownAnalysis.maxDrawdown));
   }
 
   // ── Calmar ratio ───────────────────────────────────────────────────────────
@@ -212,7 +216,7 @@ export function computeRiskMetrics(
     const lastMs  = closed[n - 1].lastExitTime!.getTime();
     const days = Math.max(1, (lastMs - firstMs) / (1000 * 60 * 60 * 24));
     const annualizedReturnPct = (totalReturnPct / days) * 365;
-    calmarRatio = r4(annualizedReturnPct / drawdownAnalysis.maxDrawdownPercent);
+    calmarRatio = round4(annualizedReturnPct / drawdownAnalysis.maxDrawdownPercent);
   }
 
   // ── Fee attribution ────────────────────────────────────────────────────────
@@ -225,14 +229,14 @@ export function computeRiskMetrics(
   if (n >= MIN_TRADES_FOR_RATIOS) {
     const rMultiples = computeRMultiples(closed);
     if (rMultiples.length >= MIN_TRADES_FOR_RATIOS) {
-      avgRMultiple = r2(mean(rMultiples));
+      avgRMultiple = round2(mean(rMultiples));
       const positive = rMultiples.filter((r) => r > 0);
       const negative = rMultiples.filter((r) => r < 0);
       rMultipleDistribution = {
         positive: positive.length,
         negative: negative.length,
-        avgPositive: positive.length > 0 ? r2(mean(positive)) : 0,
-        avgNegative: negative.length > 0 ? r2(mean(negative)) : 0,
+        avgPositive: positive.length > 0 ? round2(mean(positive)) : 0,
+        avgNegative: negative.length > 0 ? round2(mean(negative)) : 0,
       };
     }
   }
@@ -261,6 +265,7 @@ export function computeRiskMetrics(
 
 function computeDrawdownAnalysis(
   sorted: Position[], // pre-sorted by lastExitTime, closed only
+  startingCapital: number,
 ): DrawdownAnalysis {
   const empty: DrawdownAnalysis = {
     maxDrawdown: 0,
@@ -274,25 +279,29 @@ function computeDrawdownAnalysis(
 
   if (sorted.length === 0) return empty;
 
+  // Equity = startingCapital + cumulative realized P&L. Using equity as the
+  // drawdown denominator (rather than cumulative P&L from 0) prevents the
+  // pathological case where a tiny early HWM produces percentages in the
+  // thousands.
   let cum = 0;
-  let hwm = 0;
-  let hwmDate: Date = sorted[0].lastExitTime!;
+  let peakEquity = startingCapital;
   let maxDrawdown = 0;
   let maxDrawdownPercent = 0;
 
-  // Track drawdown episodes: enter when cum < hwm, exit when cum >= hwm.
+  // Track drawdown episodes: enter when equity < peakEquity, exit when equity >= peakEquity.
   let inDrawdown = false;
   let drawdownStartDate: Date | null = null;
   let drawdownWorstPct = 0;
   const drawdownDurations: number[] = []; // in days, completed episodes
   let longestDrawdown = 0;
-  let drawdownCount = 0; // episodes with worst point > 5% below HWM
+  let drawdownCount = 0; // episodes with worst point > 5% below peakEquity
 
   for (const p of sorted) {
     cum += p.aggregatePnl ?? 0;
+    const equity = startingCapital + cum;
     const exitDate = p.lastExitTime!;
 
-    if (cum > hwm) {
+    if (equity > peakEquity) {
       // New high water mark
       if (inDrawdown && drawdownStartDate) {
         // Recovery — record this episode
@@ -304,11 +313,10 @@ function computeDrawdownAnalysis(
         drawdownStartDate = null;
         drawdownWorstPct = 0;
       }
-      hwm = cum;
-      hwmDate = exitDate;
-    } else if (cum < hwm) {
-      const denom = Math.abs(hwm) > 0 ? hwm : 1;
-      const underwaterPct = Math.abs((cum - hwm) / denom) * 100;
+      peakEquity = equity;
+    } else if (equity < peakEquity) {
+      const denom = Math.max(peakEquity, 1); // guard divide-by-zero / negative peak
+      const underwaterPct = Math.abs((equity - peakEquity) / denom) * 100;
 
       if (!inDrawdown) {
         // Start of a new drawdown episode
@@ -318,18 +326,18 @@ function computeDrawdownAnalysis(
       }
       if (underwaterPct > drawdownWorstPct) drawdownWorstPct = underwaterPct;
 
-      const underwater = cum - hwm; // negative
+      const underwater = equity - peakEquity; // negative dollars
       if (underwater < maxDrawdown) {
         maxDrawdown = underwater;
         maxDrawdownPercent = underwaterPct;
       }
     }
-    // cum === hwm: no movement, stay in current state
+    // equity === peakEquity: no movement, stay in current state
   }
 
   // Current drawdown — still in a drawdown at the end of history
-  const lastExit = sorted[sorted.length - 1].lastExitTime!;
-  const currentDrawdown = cum < hwm ? cum - hwm : 0; // ≤ 0
+  const finalEquity = startingCapital + cum;
+  const currentDrawdown = finalEquity < peakEquity ? finalEquity - peakEquity : 0; // ≤ 0
   const currentDrawdownDuration =
     inDrawdown && drawdownStartDate
       ? (Date.now() - drawdownStartDate.getTime()) / (1000 * 60 * 60 * 24)
@@ -344,13 +352,13 @@ function computeDrawdownAnalysis(
     drawdownDurations.length > 0 ? mean(drawdownDurations) : 0;
 
   return {
-    maxDrawdown: r2(maxDrawdown),
-    maxDrawdownPercent: r2(maxDrawdownPercent),
-    currentDrawdown: r2(currentDrawdown),
-    currentDrawdownDuration: r2(currentDrawdownDuration),
-    avgDrawdownDuration: r2(avgDrawdownDuration),
+    maxDrawdown: round2(maxDrawdown),
+    maxDrawdownPercent: round2(maxDrawdownPercent),
+    currentDrawdown: round2(currentDrawdown),
+    currentDrawdownDuration: round2(currentDrawdownDuration),
+    avgDrawdownDuration: round2(avgDrawdownDuration),
     drawdownCount,
-    longestDrawdown: r2(longestDrawdown),
+    longestDrawdown: round2(longestDrawdown),
   };
 }
 
@@ -372,13 +380,13 @@ function computeFeeAttribution(closed: Position[], totalPnl: number): FeeAttribu
   totalFees = -Math.abs(totalFees);
 
   const directionalPnl = totalPnl - totalFunding;
-  const feeImpact = grossWins > 0 ? r4(Math.abs(totalFees) / grossWins * 100) : 0;
-  const fundingImpact = Math.abs(totalPnl) > 0 ? r4(totalFunding / Math.abs(totalPnl) * 100) : 0;
+  const feeImpact = grossWins > 0 ? round4(Math.abs(totalFees) / grossWins * 100) : 0;
+  const fundingImpact = Math.abs(totalPnl) > 0 ? round4(totalFunding / Math.abs(totalPnl) * 100) : 0;
 
   return {
-    totalFees: r2(totalFees),
-    totalFunding: r2(totalFunding),
-    directionalPnl: r2(directionalPnl),
+    totalFees: round2(totalFees),
+    totalFunding: round2(totalFunding),
+    directionalPnl: round2(directionalPnl),
     feeImpact,
     fundingImpact,
   };

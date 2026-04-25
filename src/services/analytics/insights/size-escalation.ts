@@ -89,9 +89,17 @@ export const sizeEscalationDetector: InsightDetector = {
     const lossRate     = 1 - afterLossWins / afterLoss.length;
     const dollarImpact = excessSize * lossRate * afterLoss.length;
 
-    const primaryTest   = outcomeTest && outcomeTest.pValue < sizeTest.pValue ? outcomeTest : sizeTest;
-    const isSignificant = sizeTest.isSignificant || (outcomeTest?.isSignificant ?? false);
-    const impactScore   = computeImpactScore(dollarImpact, primaryTest, 0.7);
+    // Bonferroni correction across the within-detector tests: size Welch
+    // (post-loss vs post-win) and the optional outcome Welch (big vs normal
+    // post-loss). Previous code claimed significance if ANY test tripped at
+    // α=0.05 — selection-bias inflation. Both tests are still attached to
+    // `statistics` below for the global BH pass.
+    const numTests = outcomeTest ? 2 : 1;
+    const alphaBonf = 0.05 / numTests;
+    const isSignificant =
+      sizeTest.pValue < alphaBonf || (outcomeTest != null && outcomeTest.pValue < alphaBonf);
+    const strongestTest = outcomeTest && outcomeTest.pValue < sizeTest.pValue ? outcomeTest : sizeTest;
+    const impactScore   = computeImpactScore(dollarImpact, strongestTest, 0.7);
 
     const direction = sizeDiffPct > 0 ? 'larger' : 'smaller';
     const description =

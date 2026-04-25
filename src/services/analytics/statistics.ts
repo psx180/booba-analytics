@@ -196,6 +196,80 @@ export function pearsonCorrelation(xs: number[], ys: number[]): StatisticalTest 
   };
 }
 
+/**
+ * One-way ANOVA F-test for k independent groups.
+ *
+ * H_0: all group means are equal. H_1: at least one differs.
+ *
+ * Use this when comparing more than two groups (e.g. four hold-time
+ * quartiles) — running pairwise Welch tests on the most-extreme pair after
+ * the fact inflates Type-I error roughly k-choose-2 fold. ANOVA gives one
+ * honest p-value across all groups; downstream code can then describe the
+ * extremes without inheriting the selection bias.
+ *
+ * Effect size is η² (SSB / SST) on a 0-1 scale. Cohen's conventions for
+ * η²: small ≈ 0.01, medium ≈ 0.06, large ≈ 0.14.
+ */
+export function oneWayAnova(groups: number[][]): StatisticalTest {
+  const valid = groups.filter((g) => g.length >= 2);
+  const k = valid.length;
+  if (k < 2) return insufficientData('one_way_anova', 0, 0);
+
+  const sizes = valid.map((g) => g.length);
+  const N = sizes.reduce((a, b) => a + b, 0);
+  if (N <= k) return insufficientData('one_way_anova', N, 0);
+
+  const groupMeans = valid.map((g) => g.reduce((s, v) => s + v, 0) / g.length);
+  const grandSum = valid.reduce((s, g) => s + g.reduce((a, v) => a + v, 0), 0);
+  const grandMean = grandSum / N;
+
+  let ssBetween = 0;
+  for (let i = 0; i < k; i++) {
+    ssBetween += sizes[i] * (groupMeans[i] - grandMean) ** 2;
+  }
+
+  let ssWithin = 0;
+  for (let i = 0; i < k; i++) {
+    const m = groupMeans[i];
+    for (const v of valid[i]) ssWithin += (v - m) ** 2;
+  }
+
+  const dfBetween = k - 1;
+  const dfWithin = N - k;
+  if (ssWithin <= 0 || dfWithin <= 0) return insufficientData('one_way_anova', N, 0);
+
+  const F = (ssBetween / dfBetween) / (ssWithin / dfWithin);
+  // P(F > observed) for F(dfBetween, dfWithin):
+  //   = I_{dfWithin / (dfWithin + dfBetween*F)}(dfWithin/2, dfBetween/2)
+  const x = dfWithin / (dfWithin + dfBetween * F);
+  const pValue = betaInc(dfWithin / 2, dfBetween / 2, x);
+
+  const ssTotal = ssBetween + ssWithin;
+  const etaSq = ssTotal > 0 ? ssBetween / ssTotal : 0;
+  const isSignificant = pValue < 0.05;
+
+  const effectLabel =
+    etaSq < 0.01 ? 'trivial effect' :
+    etaSq < 0.06 ? 'small effect' :
+    etaSq < 0.14 ? 'medium effect' :
+                   'large effect';
+  const pStr = pValue < 0.001 ? 'p<0.001' : `p=${pValue.toFixed(3)}`;
+  const description = isSignificant
+    ? `Statistically significant (${pStr}, N=${N}, k=${k}, ${effectLabel})`
+    : `Not significant (${pStr}, N=${N}, k=${k})`;
+
+  // Schema is binary (sampleSizeA/B) — split first group vs pooled rest.
+  return {
+    testName: 'one_way_anova',
+    pValue,
+    effectSize: etaSq,
+    sampleSizeA: sizes[0],
+    sampleSizeB: N - sizes[0],
+    isSignificant,
+    description,
+  };
+}
+
 /** Cohen's d — effect size for means comparison. */
 export function cohensD(groupA: number[], groupB: number[]): number {
   if (groupA.length < 2 || groupB.length < 2) return 0;

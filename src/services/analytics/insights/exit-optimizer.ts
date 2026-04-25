@@ -90,16 +90,26 @@ export const exitOptimizerDetector: InsightDetector = {
     const worstEntry = significantEntries[0] ?? null;
     const anySignificant = significantEntries.length > 0;
 
-    // Projected gain from 20% absolute efficiency improvement in worst regime
+    // Projected gain from 20pp absolute efficiency improvement in worst regime.
+    // If current efficiency is e and LOT = total × (1 − e), a 20pp improvement
+    // (new efficiency = e + 0.2) yields LOT_new = total × (1 − e − 0.2), so the
+    // recovered share of LOT is 0.2 / (1 − e). The previous formula divided by
+    // e instead of (1 − e), implying recoveries above 100% of LOT — impossible
+    // by construction. Cap LOT-recovery share at 1.0 since 100% capture is the
+    // physical ceiling.
     let projectedGain = 0;
-    if (worstEntry && worstEntry[1].stats.avgEfficiency > 0) {
-      const factor = 0.2 / worstEntry[1].stats.avgEfficiency;
+    if (worstEntry && worstEntry[1].stats.avgEfficiency < 1) {
+      const remaining = 1 - worstEntry[1].stats.avgEfficiency;
+      const factor = Math.min(1, 0.2 / remaining);
       projectedGain = Math.round(worstEntry[1].stats.totalLeftOnTable * factor * 100) / 100;
     }
 
+    // leftOnTableRatio is "money left on table as fraction of net P&L" — only
+    // meaningful when totalPnl > 0. For breakeven/losing accounts the ratio is
+    // undefined, so use null and don't escalate severity on that basis alone.
     const totalPnl = qualified.reduce((s, p) => s + (p.aggregatePnl ?? 0), 0);
-    const leftOnTableRatio = totalPnl > 0 ? overall.totalLeftOnTable / totalPnl : Infinity;
-    const severity = leftOnTableRatio > 0.1 ? 'warning' : 'info';
+    const leftOnTableRatio = totalPnl > 0 ? overall.totalLeftOnTable / totalPnl : null;
+    const severity = leftOnTableRatio !== null && leftOnTableRatio > 0.1 ? 'warning' : 'info';
 
     const efficiencyPct = Math.round(overall.avgEfficiency * 1000) / 10;
 

@@ -66,7 +66,15 @@ export const equityCurveAggregator: Aggregator = {
 
       const underwater = cumulative - hwm; // ≤ 0
       const denom = Math.max(Math.abs(hwm), 1);
-      const underwaterPct = (underwater / denom) * 100;
+      // TODO: this sync path uses cumulative P&L as the drawdown denominator
+      // instead of equity. When `hwm` is small (early in the series) tiny
+      // dollar drawdowns blow up to multi-thousand-percent values. The async
+      // path (`getEquityCurveAsync` + `EquitySourceProvider`) threads
+      // `startingCapital` and computes against equity correctly. Until this
+      // sync path is removed or migrated, the clamp below at least bounds the
+      // emitted percentage to a sane [-100, 0] range so consumers don't read
+      // -1846% drawdown values.
+      const underwaterPct = Math.max(-100, Math.min(0, (underwater / denom) * 100));
 
       if (underwater < 0) {
         currentRunLen += 1;

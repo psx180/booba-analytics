@@ -111,9 +111,20 @@ export const revengeTradingDetector: InsightDetector = {
     const avgNormalPnl   = mean(normalPnls);
     const totalRevengePnl = sum(revengePnls);
 
-    const isSignificant  = pnlTest.isSignificant || winRateTest.isSignificant;
-    const primaryTest    = pnlTest.pValue <= winRateTest.pValue ? pnlTest : winRateTest;
-    const impactScore    = computeImpactScore(Math.abs(totalRevengePnl), primaryTest, 1.0);
+    // Bonferroni correction across the two within-detector tests (P&L Welch
+    // and win-rate chi-squared). The previous code took the smaller of the
+    // two p-values as a "primary" test, which doubles the family-wise Type-I
+    // rate. Both raw p-values are still passed to the global BH pass below
+    // via `statistics: [pnlTest, winRateTest]` for cross-detector correction;
+    // the Bonferroni gate here just keeps the *narrative* honest.
+    const NUM_TESTS = 2;
+    const ALPHA_BONF = 0.05 / NUM_TESTS;
+    const isSignificant =
+      pnlTest.pValue < ALPHA_BONF || winRateTest.pValue < ALPHA_BONF;
+    // Use the lower-p test for impact-score *weighting* — that's ranking, not
+    // a significance claim, so it doesn't suffer from the selection bias.
+    const strongestTest  = pnlTest.pValue <= winRateTest.pValue ? pnlTest : winRateTest;
+    const impactScore    = computeImpactScore(Math.abs(totalRevengePnl), strongestTest, 1.0);
 
     const firstDate = new Date(sorted[0].firstEntryTime!);
     const lastDate  = new Date(sorted[sorted.length - 1].firstEntryTime!);

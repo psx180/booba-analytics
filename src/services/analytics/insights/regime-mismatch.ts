@@ -206,8 +206,11 @@ export const regimeMismatchDetector: InsightDetector = {
       regimeBreakdown,
       statistics: top.tests,
       impactScore,
+      // Compute from the actual tests rather than hard-coding true: the global
+      // BH pass overwrites this anyway, but the value should be honest between
+      // emission and correction so any pre-correction consumer sees the truth.
+      isSignificant: top.tests.some((t) => t.isSignificant),
       category: 'strategy',
-      isSignificant: true,
       sampleSize: qualified.length,
     }];
   },

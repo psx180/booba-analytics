@@ -78,9 +78,20 @@ export const overtradingDetector: InsightDetector = {
 
     const isNegativeCorr = avgHeavy < avgLight; // more trades → worse P&L
     const dollarImpact   = Math.abs(avgHeavy - avgLight) * heavyDays.length;
-    const primaryTest    = tTest && tTest.pValue < corrTest.pValue ? tTest : corrTest;
-    const impactScore    = computeImpactScore(dollarImpact, primaryTest, 0.7);
-    const isSignificant  = corrTest.isSignificant || (tTest?.isSignificant ?? false);
+    // Bonferroni correction across the (up to two) within-detector tests:
+    // Pearson correlation on count vs P&L, plus the optional median-split
+    // Welch on heavy-day vs light-day P&L. The earlier code took the
+    // smaller-of-two p-value as primary, which inflated Type-I roughly 2×.
+    // Emit both raw p-values to the global BH pass via `statistics` below;
+    // the within-detector gate uses α/k.
+    const numTests = tTest ? 2 : 1;
+    const alphaBonf = 0.05 / numTests;
+    const isSignificant =
+      corrTest.pValue < alphaBonf || (tTest != null && tTest.pValue < alphaBonf);
+    // Strongest test (lowest p) drives impactScore weighting only — that's
+    // ranking, not significance gating, so it's not biased.
+    const strongestTest = tTest && tTest.pValue < corrTest.pValue ? tTest : corrTest;
+    const impactScore   = computeImpactScore(dollarImpact, strongestTest, 0.7);
 
     const rSign = isNegativeCorr ? '-' : '+';
     const rStr  = `r=${rSign}${corrTest.effectSize.toFixed(2)}`;

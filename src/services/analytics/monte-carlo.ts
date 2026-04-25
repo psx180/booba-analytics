@@ -1,3 +1,34 @@
+/**
+ * Monte Carlo simulation of future trading outcomes.
+ *
+ * Model: iid Bernoulli win/loss selection with returns sampled from the
+ * trader's empirical return distribution (when `winReturnPcts` /
+ * `lossReturnPcts` are provided) or from average win/loss percentages
+ * otherwise. Returns are applied multiplicatively
+ * (`balance *= (1 + pct/100)`), so gains and losses correctly compound with
+ * account size — the equity-based percentages produced by the route caller
+ * (`api/analytics/monte-carlo/route.ts`, which uses the reconstructed equity
+ * provider) ensure each input pct is "% of equity at that trade", not "% of
+ * notional".
+ *
+ * Outputs:
+ * - drawdown probabilities (25%, 50%, ruin) computed per-simulation against
+ *   each path's running peak,
+ * - final-balance distribution (median, p10, p90, mean),
+ * - up to 100 sampled paths for visualisation, and
+ * - per-trade-number percentile bands (p5/p25/p50/p75/p95) for the fan chart.
+ *
+ * Limitations to keep in mind when interpreting:
+ * - returns are iid — no autocorrelation, no regime switching, no streaks
+ * - position sizing is implicit in the sampled return distribution
+ * - win/loss classification is binary (true breakevens drop out at the
+ *   caller, not here)
+ * - the average-only fallback (no empirical distribution) collapses to two
+ *   outcomes per trade, which under-states variance — prefer the empirical
+ *   path whenever the caller has the data
+ * - the RNG is unseeded `Math.random()`, so results vary slightly between
+ *   runs even at 10k sims
+ */
 export interface MonteCarloInput {
   winRate: number;          // e.g. 0.415
   avgWinPct: number;        // percentage return on wins, e.g. 3.2 (= +3.2%)
@@ -90,6 +121,27 @@ export function runMonteCarloSimulation(input: MonteCarloInput): MonteCarloResul
       // This correctly scales gains/losses with account size and compounds realistically.
       balance *= (1 + pct / 100);
 
+      // Ruin handling: once balance hits zero or below, freeze it and fill
+      // the remaining trades with 0. Without this guard, a subsequent
+      // (1 + pct/100) multiplication on a negative balance flips the sign of
+      // future "losses" and produces nonsense paths. A ruin event is by
+      // definition a 100% drawdown, so set the DD flags here too — otherwise
+      // the bands would under-count drawdown probabilities for paths that
+      // ruin before either threshold was tripped on the way down.
+      if (balance <= 0) {
+        balance = 0;
+        hitRuin = true;
+        hitDD25 = true;
+        hitDD50 = true;
+        tradeBalances[t][s] = 0;
+        if (pathBuf) pathBuf.push(0);
+        for (let t2 = t + 1; t2 < tradeCount; t2++) {
+          tradeBalances[t2][s] = 0;
+          if (pathBuf) pathBuf.push(0);
+        }
+        break;
+      }
+
       if (balance > peak) peak = balance;
       if (peak > 0) {
         const dd = (peak - balance) / peak;
@@ -98,7 +150,6 @@ export function runMonteCarloSimulation(input: MonteCarloInput): MonteCarloResul
 
       if (!hitDD25 && maxDDFrac >= 0.25) hitDD25 = true;
       if (!hitDD50 && maxDDFrac >= 0.50) hitDD50 = true;
-      if (!hitRuin && balance <= 0) hitRuin = true;
 
       tradeBalances[t][s] = balance;
       if (pathBuf) pathBuf.push(balance);

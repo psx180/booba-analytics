@@ -138,12 +138,20 @@ export const streakBehaviorDetector: InsightDetector = {
       description: 'Not significant (insufficient streak data)',
     };
 
-    const primaryTest   = allTests.length > 0
+    // Bonferroni correction across the (up to four) within-detector tests:
+    // size and P&L Welch tests for both win and loss streaks. The previous
+    // code declared significance if ANY of the four tripped at α=0.05 — that
+    // inflates family-wise Type-I roughly 4×. Emit all four to the global BH
+    // pass via `statistics` for cross-detector correction; the narrative gate
+    // here uses α/k.
+    const strongestTest = allTests.length > 0
       ? allTests.reduce((b, t) => (t.pValue < b.pValue ? t : b))
       : placeholderTest;
-    const isSignificant = allTests.some((t) => t.isSignificant);
+    const numTests = Math.max(1, allTests.length);
+    const alphaBonf = 0.05 / numTests;
+    const isSignificant = allTests.some((t) => t.pValue < alphaBonf);
     const dollarImpact  = Math.abs(Math.min(0, winStreakTotalPnl) + Math.min(0, lossStreakTotalPnl));
-    const impactScore   = computeImpactScore(dollarImpact, primaryTest, 0.7);
+    const impactScore   = computeImpactScore(dollarImpact, strongestTest, 0.7);
 
     let description = '';
 
@@ -164,7 +172,7 @@ export const streakBehaviorDetector: InsightDetector = {
 
     const verb = totalStreakPnl < 0 ? 'cost' : 'earned';
     description += `Streak-influenced trades have ${verb} you $${Math.abs(Math.round(totalStreakPnl)).toLocaleString()}.`;
-    if (allTests.length > 0) description += ` ${primaryTest.description}.`;
+    if (allTests.length > 0) description += ` ${strongestTest.description}.`;
 
     if (tiltDataAvailable && lossStreakEpisodeIds.size > 0) {
       description +=

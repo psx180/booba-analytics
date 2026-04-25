@@ -136,13 +136,23 @@ export const timeOfDayEdgeDetector: InsightDetector = {
     const worstHourPositionIds = qualified.filter((p) => p.entryHour === worstHour.hour).map((p) => p.id);
 
     // ─── Decision-fatigue regression ─────────────────────────────────────
+    // Significance gate is the OLS slope test on `pnl ~ tradeNumberInSession`,
+    // which is a legitimate global test of "does P&L decay as the session
+    // wears on." The optimal cutoff and the early/late averages are reported
+    // *descriptively* — they were selected post-hoc to maximise the early
+    // average, so the narrative carries an explicit caveat. The earlier
+    // version of this code ran a second Welch test on that same snooped
+    // split; that test was removed because its p-value inherited the
+    // selection bias and double-counted in BH.
     const fatigue = computeFatigueAnalysis(qualified);
     let fatigueDescription = '';
     if (fatigue && fatigue.isSignificant) {
       fatigueDescription =
-        ` Within each session, your performance declines after trade ${fatigue.optimalCutoff}. ` +
+        ` Within each session, your performance declines as you trade more ` +
+        `(${fatigue.slopeTest.description}). ` +
         `Trades 1-${fatigue.optimalCutoff} average $${fatigue.earlyAvg.toFixed(2)}, ` +
-        `trades ${fatigue.optimalCutoff + 1}+ average $${fatigue.lateAvg.toFixed(2)} (${fatigue.test.description}). ` +
+        `trades ${fatigue.optimalCutoff + 1}+ average $${fatigue.lateAvg.toFixed(2)} ` +
+        `(optimal cutoff selected post-hoc — interpret as approximate). ` +
         `Daily trade limit suggestion: ${fatigue.optimalCutoff} trades. ` +
         `Estimated savings from stopping earlier: $${Math.round(fatigue.estimatedSavings).toLocaleString()}.`;
     } else if (fatigue) {
@@ -151,10 +161,7 @@ export const timeOfDayEdgeDetector: InsightDetector = {
         `(${fatigue.slopeTest.description}).`;
     }
 
-    // BH correction considers the slopeTest too — it's the gate that controls
-    // whether the fatigue narrative above is claimed, and is what consumers
-    // downstream key off via fatigue.isSignificant.
-    const fatigueStats = fatigue ? [fatigue.test, fatigue.slopeTest] : [];
+    const fatigueStats = fatigue ? [fatigue.slopeTest] : [];
     const finalStatistics = [...rawTests, ...fatigueStats];
 
     return [{
@@ -204,10 +211,9 @@ interface FatigueResult {
   slope: number;             // OLS slope of pnl ~ tradeNumberInSession
   slopeTest: StatisticalTest; // Pearson r (== slope t-test) — gates the narrative
   isSignificant: boolean;    // shortcut for slopeTest.isSignificant
-  test: StatisticalTest;     // Welch on early (1..N) vs late (N+1..)
-  optimalCutoff: number;
-  earlyAvg: number;
-  lateAvg: number;
+  optimalCutoff: number;     // post-hoc selected cutoff that maximises early-session avg P&L
+  earlyAvg: number;          // descriptive — selection-biased, do not test
+  lateAvg: number;           // descriptive — selection-biased, do not test
   estimatedSavings: number;  // sum of pnl for trades past the optimal cutoff
   maxTradesPerDay: number;
 }
@@ -271,7 +277,11 @@ function computeFatigueAnalysis(qualified: QualifiedTrade[]): FatigueResult | nu
 
   const earlyAvg = earlyPnls.reduce((a, b) => a + b, 0) / earlyPnls.length;
   const lateAvg  = latePnls.reduce((a, b) => a + b, 0)  / latePnls.length;
-  const test = welchTTest(earlyPnls, latePnls);
+
+  // No Welch test on early-vs-late at the snooped split — `bestN` was chosen
+  // to maximise that very contrast, so a t-test there is a textbook
+  // data-snooping false-positive generator. The slopeTest above is the
+  // legitimate global fatigue test; early/late averages are descriptive only.
 
   // The "savings" is the sum of P&L from trades the user would have skipped
   // if they'd stopped at the cutoff. Negative late P&L → positive savings.
@@ -282,7 +292,6 @@ function computeFatigueAnalysis(qualified: QualifiedTrade[]): FatigueResult | nu
     slope,
     slopeTest,
     isSignificant: slopeTest.isSignificant,
-    test,
     optimalCutoff: bestN,
     earlyAvg,
     lateAvg,

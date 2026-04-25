@@ -93,10 +93,15 @@ export function computeXpnlMap(positions: Position[]): Map<string, number> {
   const out = new Map<string, number>();
 
   for (let i = 0; i < features.length; i++) {
-    // KNN with leave-one-out: find the K closest other rows by squared L2.
+    // Walk-forward KNN: only consider trades that occurred BEFORE this one.
+    // Using future trades to predict the current one leaks information the
+    // trader couldn't have had, turning the "skill vs luck" residual into
+    // "how well does my future self predict my past." Trades early in the
+    // history with too few priors get no xPnL — better to skip than to
+    // self-predict (the previous fallback `out.set(..., features[i].pnl)`
+    // baked in zero residual and inflated R²).
     const neighbors = topKNeighbors(matrix, i, K);
     if (neighbors.length === 0) {
-      out.set(features[i].positionId, features[i].pnl);
       continue;
     }
     const xpnl =
@@ -207,16 +212,20 @@ function featureColumnNames(): readonly string[] {
   ];
 }
 
-/** Return indices of the K nearest rows to row `i`, excluding `i` itself. */
+/**
+ * Return indices of the K nearest rows to row `i`, restricted to rows
+ * STRICTLY BEFORE `i`. The features matrix is parallel to a chronologically
+ * sorted positions array (see extractFeatures), so `j < i` is equivalent to
+ * "occurred before in time" — the walk-forward constraint that prevents
+ * future-data leakage.
+ */
 function topKNeighbors(matrix: number[][], i: number, k: number): number[] {
-  const n = matrix.length;
-  if (n <= 1) return [];
+  if (i === 0) return [];
 
-  // Maintain a small max-heap as a sorted insertion list (k is tiny).
+  // Maintain a small sorted insertion list (k is tiny).
   const best: { idx: number; dist: number }[] = [];
 
-  for (let j = 0; j < n; j++) {
-    if (j === i) continue;
+  for (let j = 0; j < i; j++) {
     const dist = squaredEuclidean(matrix[i], matrix[j]);
     if (best.length < k) {
       best.push({ idx: j, dist });

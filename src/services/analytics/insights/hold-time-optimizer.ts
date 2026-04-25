@@ -7,7 +7,7 @@
 
 import type { InsightDetector, Insight, Position } from './base';
 import { sampleSizeConfidence, formatDuration } from './base';
-import { welchTTest, computeImpactScore } from '../statistics';
+import { oneWayAnova, computeImpactScore } from '../statistics';
 import type { StatisticalTest } from '../types';
 
 const MIN_POSITIONS       = 30;
@@ -93,14 +93,21 @@ export const holdTimeOptimizerDetector: InsightDetector = {
       const worstIdx = qStats.reduce((w, q, i) => (q.avgPnl < qStats[w].avgPnl ? i : w), 0);
       if (bestIdx === worstIdx) continue;
 
-      const test = welchTTest(qStats[bestIdx].pnls, qStats[worstIdx].pnls);
+      // One-way ANOVA F-test across all (≤4) quartiles is the honest gate.
+      // Previously this ran Welch on the cherry-picked best vs worst pair —
+      // selection on extremes inflates Type-I error roughly C(4,2) = 6 fold.
+      // ANOVA gives one p-value over the whole hold-time profile; the best
+      // and worst quartiles are still reported descriptively below.
+      const test = oneWayAnova(qStats.map((q) => q.pnls));
 
-      const outsidePnls   = tradePositions.filter((_, i) => !quartiles[bestIdx].includes(_)).map((p) => p.aggregatePnl!);
+      // Use Set lookup instead of Array.includes (O(1) vs O(n) per filter).
+      const bestQuartileIds = new Set(quartiles[bestIdx].map((p) => p.id));
+      const outsidePnls   = tradePositions.filter((p) => !bestQuartileIds.has(p.id)).map((p) => p.aggregatePnl!);
       const outsideAvgPnl = outsidePnls.length > 0 ? mean(outsidePnls) : 0;
 
       // Dollar impact: gap between optimal and actual average × trade count
-      const totalActualPnl    = mean(tradePositions.map((p) => p.aggregatePnl!));
-      const dollarImpact      = Math.abs((qStats[bestIdx].avgPnl - totalActualPnl) * tradePositions.length);
+      const avgActualPnl  = mean(tradePositions.map((p) => p.aggregatePnl!));
+      const dollarImpact  = Math.abs((qStats[bestIdx].avgPnl - avgActualPnl) * tradePositions.length);
 
       findings.push({
         tradeType,

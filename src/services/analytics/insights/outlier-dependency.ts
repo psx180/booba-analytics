@@ -66,13 +66,21 @@ export const outlierDependencyDetector: InsightDetector = {
     // isSignificant if top 10% accounts for >50% of (positive) P&L
     const isDependentOnOutliers = totalPnl > 0 && topPct > 50;
 
+    // Dummy "descriptive" test — we don't run a hypothesis test here, but the
+    // global BH pass uses `statistics.some(t => t.isSignificant)` to overwrite
+    // the insight's `isSignificant` flag after correction. If we hard-code
+    // `isSignificant: false` here, the global pass will *always* turn this
+    // insight off regardless of how concentrated the trader's P&L actually
+    // is. Bind the dummy's significance to the same `isDependentOnOutliers`
+    // criterion the insight reports, so the BH overwrite is a no-op for this
+    // module and the headline stays correct.
     const dummyTest: StatisticalTest = {
       testName: 'descriptive',
       pValue:      1,
       effectSize:  Math.min(1, Math.abs(topPct) / 100),
       sampleSizeA: topPositions.length,
       sampleSizeB: sorted.length - topPositions.length,
-      isSignificant: false,
+      isSignificant: isDependentOnOutliers,
       description: isDependentOnOutliers
         ? `Descriptive — top ${top10Count} trades drive >50% of P&L`
         : `Descriptive — P&L is reasonably distributed across trades`,

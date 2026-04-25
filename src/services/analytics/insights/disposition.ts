@@ -66,9 +66,20 @@ export const dispositionDetector: InsightDetector = {
     const dispositionDelta = pgrProxy - plrProxy; // positive ⇒ disposition
     const pgrTest = welchTTest(winnerRealisationRates, loserRealisationRates);
 
-    // The more significant of the two becomes the primary narrative.
-    const primaryTest = pgrTest.pValue < holdTimeTest.pValue ? pgrTest : holdTimeTest;
-    const test = primaryTest; // alias used by the existing branches below
+    // Bonferroni correction across the two related tests (raw hold-time
+    // Welch + reciprocal-hold-time PGR/PLR Welch). The previous code picked
+    // the smaller p-value as primary — selection bias that the global BH pass
+    // can't undo because it sees only the chosen test, not the suppressed one.
+    // Both tests are emitted in `statistics`, and the within-detector gate
+    // below uses α/2 = 0.025 so the narrative claim is honestly corrected.
+    const NUM_TESTS = 2;
+    const ALPHA_BONF = 0.05 / NUM_TESTS;
+    // For description purposes we still pick the lower-p test as the headline
+    // — that's a ranking choice, not a significance claim.
+    const strongestTest = pgrTest.pValue < holdTimeTest.pValue ? pgrTest : holdTimeTest;
+    const test = strongestTest; // alias used by the existing branches below
+    const bonferroniSignificant =
+      pgrTest.pValue < ALPHA_BONF || holdTimeTest.pValue < ALPHA_BONF;
 
     // Estimate dollar cost of the disposition effect:
     //   extra hold time for losers × average loss rate per second × number of losers
@@ -78,7 +89,7 @@ export const dispositionDetector: InsightDetector = {
     const extraHoldSeconds = Math.max(0, overall.avgLoserHold - overall.avgWinnerHold);
     const estimatedCost = extraHoldSeconds * avgLossPerSecond * overall.loserCount;
 
-    const impactScore = computeImpactScore(estimatedCost, primaryTest, 0.7);
+    const impactScore = computeImpactScore(estimatedCost, strongestTest, 0.7);
 
     // Both methods are reported in the description so the user sees that the
     // two analyses agree (or where they disagree).
@@ -124,7 +135,7 @@ export const dispositionDetector: InsightDetector = {
     let suggestion: string | undefined;
     let severity: Insight['severity'];
 
-    if (!test.isSignificant) {
+    if (!bonferroniSignificant) {
       // Not enough evidence — don't claim a disposition effect exists
       title       = 'No Disposition Effect Detected';
       description = `Your winner and loser hold times are similar (ratio ${ratio.toFixed(2)}x) and the difference is not statistically significant. This is a healthy sign — you're not systematically holding losers longer. ${methodLines}`;
@@ -169,10 +180,12 @@ export const dispositionDetector: InsightDetector = {
         primaryMethod:   pgrTest.pValue < holdTimeTest.pValue ? 'pgr_plr' : 'hold_time',
       },
       regimeBreakdown,
-      statistics: [primaryTest],
+      // Emit BOTH tests so the global BH pass can correct on either; the
+      // within-detector narrative gate above already used Bonferroni at α/2.
+      statistics: [holdTimeTest, pgrTest],
       impactScore,
       category: 'behavior',
-      isSignificant: primaryTest.isSignificant,
+      isSignificant: bonferroniSignificant,
       sampleSize: qualified.length,
     }];
   },
