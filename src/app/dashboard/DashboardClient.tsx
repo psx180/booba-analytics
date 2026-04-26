@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import EquityCurve, { EquityPoint, TradeMeta, REGIME_LABELS, type ChartMode } from './EquityCurve';
+import ReportMenu from './ReportMenu';
 import UnderwaterCurve, { UnderwaterPoint } from './UnderwaterCurve';
 import OpenPositions from './OpenPositions';
 import LiveToast, { type Toast } from './LiveToast';
@@ -1098,6 +1099,12 @@ export default function DashboardClient() {
 
   return (
     <div className="space-y-4">
+      {/* ── Top toolbar — report download lives here, near the page top so a
+            user can grab a snapshot without scrolling. */}
+      <div className="flex items-center justify-end">
+        <ReportMenu />
+      </div>
+
       {/* ── Stats Bar ─────────────────────────────────────────────────────── */}
       <div className="space-y-3">
         {/* Row 1 — two large hero cards */}

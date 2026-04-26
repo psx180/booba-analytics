@@ -516,6 +516,19 @@ export class AnalyticsService {
     return { insights: deduped, lastComputedAt };
   }
 
+  /**
+   * Public passthrough to the internal filter-aware position loader.
+   * The report-service orchestrator uses this so the report covers exactly
+   * the same population every other analytic respects under the same
+   * filters — no duplicated Prisma query, no drift.
+   */
+  async loadPositions(
+    walletAddress: string,
+    filters?: Filters,
+  ): Promise<Position[]> {
+    return this.loadFilteredPositions(walletAddress, filters);
+  }
+
   // ─── Internal helpers ───────────────────────────────────────────────────
 
   private async loadFilteredPositions(
