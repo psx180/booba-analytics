@@ -37,11 +37,36 @@ export function generateRegime(data: ReportData): RegimeSection | null {
     : null;
 
   return {
+    summary: buildSummary(performanceByRegime),
     currentRegime: data.currentRegime,
     performanceByRegime,
     edgePersistence,
     recommendations: regimeRecommendations(performanceByRegime),
   };
+}
+
+function buildSummary(rows: BreakdownRow[]): string {
+  const qualifying = rows.filter((r) => r.tradeCount >= 5 && r.label !== 'Unknown');
+  if (qualifying.length === 0) {
+    return 'Not enough regime-tagged trades yet to draw meaningful conclusions.';
+  }
+
+  const profitable = qualifying.filter((r) => r.totalPnl > 0);
+  const losing = qualifying.filter((r) => r.totalPnl < 0);
+
+  if (profitable.length > 0 && losing.length === 0) {
+    return 'Your performance is consistent across regimes — every market condition has produced a net profit.';
+  }
+  if (losing.length > 0 && profitable.length === 0) {
+    return 'Every regime tracked is a net loser — the issue is broader than market conditions.';
+  }
+  if (profitable.length > 0 && losing.length > 0) {
+    const profLabels = profitable.map((r) => r.label.toLowerCase()).slice(0, 2).join(' and ');
+    const loseLabels = losing.map((r) => r.label.toLowerCase()).slice(0, 2).join(' and ');
+    return `Your performance is strongly regime-dependent. You are profitable in ${profLabels} ` +
+      `but lose money in ${loseLabels}.`;
+  }
+  return 'Regime-by-regime performance is roughly flat.';
 }
 
 function regimeRecommendations(rows: BreakdownRow[]): string[] {

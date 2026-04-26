@@ -18,15 +18,89 @@ export function generateBehavioral(data: ReportData): BehavioralSection | null {
   const byModule = new Map<string, Insight>();
   for (const insight of data.storedInsights) byModule.set(insight.module, insight);
 
+  const serialDependence = deriveSerialDependence(byModule.get('streak-behavior'));
+  const revengeTradingSignals = deriveRevenge(byModule.get('revenge-trading'));
+  const dispositionEffect = deriveDisposition(byModule.get('disposition'));
+  const tiltEpisodes = deriveTilt(data);
+  const sessionFatigue = deriveSessionFatigue(byModule.get('session-fatigue'));
+  const overtrading = deriveOvertrading(byModule.get('overtrading'));
+  const insights = data.storedInsights.map((i) => insightSummary(i));
+
   return {
-    serialDependence: deriveSerialDependence(byModule.get('streak-behavior')),
-    revengeTradingSignals: deriveRevenge(byModule.get('revenge-trading')),
-    dispositionEffect: deriveDisposition(byModule.get('disposition')),
-    tiltEpisodes: deriveTilt(data),
-    sessionFatigue: deriveSessionFatigue(byModule.get('session-fatigue')),
-    overtrading: deriveOvertrading(byModule.get('overtrading')),
-    insights: data.storedInsights.map((i) => insightSummary(i)),
+    summary: buildSummary({
+      serialDependence,
+      revengeTradingSignals,
+      dispositionEffect,
+      tiltEpisodes,
+      sessionFatigue,
+      overtrading,
+      insights,
+    }),
+    serialDependence,
+    revengeTradingSignals,
+    dispositionEffect,
+    tiltEpisodes,
+    sessionFatigue,
+    overtrading,
+    insights,
   };
+}
+
+// Friendly labels we already mention via the named-pattern accessors —
+// matched against `insightSummary().name` to dedupe so the summary doesn't
+// list "revenge trading" twice when the detector also surfaces it as a
+// generic insight.
+const NAMED_PATTERN_LABELS = new Set([
+  'Revenge trading',
+  'Disposition effect',
+  'Serial dependence',
+  'Overtrading',
+  'Session fatigue',
+  'Tilt episodes',
+]);
+
+function buildSummary(s: {
+  serialDependence: BehavioralSection['serialDependence'];
+  revengeTradingSignals: BehavioralSection['revengeTradingSignals'];
+  dispositionEffect: BehavioralSection['dispositionEffect'];
+  tiltEpisodes: BehavioralSection['tiltEpisodes'];
+  sessionFatigue: BehavioralSection['sessionFatigue'];
+  overtrading: BehavioralSection['overtrading'];
+  insights: BehavioralSection['insights'];
+}): string {
+  const flags: string[] = [];
+
+  if (s.revengeTradingSignals.detected) flags.push('revenge trading');
+  if (s.dispositionEffect?.detected) flags.push('a disposition effect (holding losers, cutting winners)');
+  if (s.serialDependence?.isSignificant) flags.push('serial dependence between consecutive trades');
+  if (s.overtrading?.isSignificant) flags.push('overtrading on heavy days');
+  if (s.sessionFatigue?.isSignificant) flags.push('session fatigue');
+
+  // Pull in any other behavioural detector that came back significant —
+  // skip the ones we already named explicitly above so we don't repeat
+  // ourselves.
+  for (const ins of s.insights) {
+    if (!ins.isSignificant) continue;
+    if (NAMED_PATTERN_LABELS.has(ins.name)) continue;
+    flags.push(ins.name.toLowerCase());
+  }
+
+  // Tilt episodes are themselves a significant behavioural finding — they
+  // should never appear as a tail clause that contradicts a "no patterns"
+  // header.
+  if (s.tiltEpisodes && s.tiltEpisodes.count > 0) {
+    const n = s.tiltEpisodes.count;
+    flags.push(`${n} tilt episode${n === 1 ? '' : 's'}`);
+  }
+
+  if (flags.length === 0) {
+    return 'No significant behavioural patterns or tilt episodes surfaced this period.';
+  }
+  if (flags.length === 1) {
+    return `One behavioural finding stands out: ${flags[0]}.`;
+  }
+  const last = flags.pop();
+  return `Multiple behavioural findings are present — ${flags.join(', ')}, and ${last}.`;
 }
 
 // ─── Per-detector accessors (defensive — return null on shape mismatch) ───

@@ -20,11 +20,28 @@ export function generatePerformance(data: ReportData): PerformanceSection | null
     if ((p.aggregatePnl ?? 0) < (worstTrade.aggregatePnl ?? 0)) worstTrade = p;
   }
 
+  const tradeCount = data.closedPositions.length;
+  const profitFactor = (perf.profitFactor as number) ?? 0;
+  // Pacifica's per-fill pnlRealized — and therefore Position.aggregatePnl —
+  // is already net of fees, so totalPnl IS the net P&L. Subtracting
+  // totalFees here would double-count them. Funding is shown alongside but
+  // is also reflected in pnlRealized for funding-bearing fills, so we don't
+  // re-add it either. Fees and funding stay in the report as informational
+  // line items.
+  const netPnl = totalPnl;
+  const periodMonths = monthsBetween(
+    data.closedPositions[0]?.firstEntryTime ?? null,
+    data.closedPositions[data.closedPositions.length - 1]?.lastExitTime ?? null,
+  );
+
+  const summary = buildSummary({ tradeCount, periodMonths, netPnl, winRate, profitFactor });
+
   return {
+    summary,
     totalPnl: round(totalPnl, 2),
     totalFees: round(totalFees, 2),
     totalFunding: round(totalFunding, 2),
-    netPnl: round(totalPnl - totalFees + totalFunding, 2),
+    netPnl: round(netPnl, 2),
     winRate: round(winRate, 4),
     averageWin: round(averageWin, 2),
     averageLoss: round(averageLoss, 2),
@@ -70,4 +87,49 @@ function round(v: number, digits: number): number {
   if (!isFinite(v)) return 0;
   const m = 10 ** digits;
   return Math.round(v * m) / m;
+}
+
+function monthsBetween(start: Date | null, end: Date | null): number | null {
+  if (!start || !end) return null;
+  const ms = end.getTime() - start.getTime();
+  if (ms <= 0) return null;
+  return ms / (1000 * 60 * 60 * 24 * 30.44);
+}
+
+function buildSummary(args: {
+  tradeCount: number;
+  periodMonths: number | null;
+  netPnl: number;
+  winRate: number;
+  profitFactor: number;
+}): string {
+  const { tradeCount, periodMonths, netPnl, winRate, profitFactor } = args;
+  const span =
+    periodMonths == null ? '' :
+    periodMonths < 1 ? ' over less than a month' :
+    periodMonths < 2 ? ' over the past month' :
+    ` over ${Math.round(periodMonths)} months`;
+
+  const pnlVerb = netPnl >= 0 ? 'a net profit of' : 'a net loss of';
+  const pnlMag = `$${Math.abs(Math.round(netPnl)).toLocaleString()}`;
+
+  const wrPct = (winRate * 100).toFixed(1);
+  const wrLabel =
+    winRate < 0.40 ? 'below average' :
+    winRate < 0.55 ? 'roughly average' :
+    'above average';
+
+  let pfClause: string;
+  if (profitFactor >= 2) {
+    pfClause = 'and a profit factor above 2 indicates winners materially outweigh losers';
+  } else if (profitFactor >= 1.5) {
+    pfClause = 'and a profit factor above 1.5 suggests winners outweigh losers';
+  } else if (profitFactor >= 1) {
+    pfClause = 'with a profit factor barely above breakeven';
+  } else {
+    pfClause = 'and a profit factor below 1 means losses are dominating';
+  }
+
+  return `You closed ${tradeCount.toLocaleString()} trades${span} with ${pnlVerb} ${pnlMag}. ` +
+    `Your win rate of ${wrPct}% is ${wrLabel}, ${pfClause}.`;
 }

@@ -74,6 +74,8 @@ export interface BreakdownRow {
 }
 
 export interface PerformanceSection {
+  /** 1-2 sentence italic intro, generated dynamically from the numbers below. */
+  summary: string;
   totalPnl: number;
   totalFees: number;
   totalFunding: number;
@@ -91,6 +93,7 @@ export interface PerformanceSection {
 // ─── Section: Behavioral ───────────────────────────────────────────────────
 
 export interface BehavioralSection {
+  summary: string;
   serialDependence: {
     lossAfterLoss: number;
     winAfterWin: number;
@@ -141,6 +144,7 @@ export interface BehavioralSection {
 // ─── Section: Risk ─────────────────────────────────────────────────────────
 
 export interface RiskSection {
+  summary: string;
   sharpeRatio: number | null;
   sortinoRatio: number | null;
   calmarRatio: number | null;
@@ -161,6 +165,7 @@ export interface RiskSection {
 // ─── Section: Execution ────────────────────────────────────────────────────
 
 export interface ExecutionSection {
+  summary: string;
   avgExitEfficiency: number | null;
   exitEfficiencyByRegime:
     | Array<{ regime: string; efficiency: number; tradeCount: number }>
@@ -177,6 +182,7 @@ export interface ExecutionSection {
 // ─── Section: Regime ───────────────────────────────────────────────────────
 
 export interface RegimeSection {
+  summary: string;
   currentRegime: string | null;
   performanceByRegime: BreakdownRow[];
   edgePersistence: {
