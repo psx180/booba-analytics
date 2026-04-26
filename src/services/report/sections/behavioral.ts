@@ -1,6 +1,7 @@
 import type { Insight, StatisticalTest } from '../../analytics/types';
 import type { ReportData } from '../data';
 import type { BehavioralSection } from '../types';
+import { evaluateSyndromes } from '../../analytics/syndromes/syndrome-detector';
 
 const MODULE_LABELS: Record<string, string> = {
   'streak-behavior': 'Serial dependence',
@@ -25,6 +26,7 @@ export function generateBehavioral(data: ReportData): BehavioralSection | null {
   const sessionFatigue = deriveSessionFatigue(byModule.get('session-fatigue'));
   const overtrading = deriveOvertrading(byModule.get('overtrading'));
   const insights = data.storedInsights.map((i) => insightSummary(i));
+  const syndromes = deriveSyndromes(data);
 
   return {
     summary: buildSummary({
@@ -43,6 +45,50 @@ export function generateBehavioral(data: ReportData): BehavioralSection | null {
     sessionFatigue,
     overtrading,
     insights,
+    syndromes,
+  };
+}
+
+function deriveSyndromes(data: ReportData): BehavioralSection['syndromes'] {
+  if (data.storedInsights.length === 0) return null;
+  const report = evaluateSyndromes({
+    insights: data.storedInsights,
+    walkForward: data.walkForward,
+    regimeBreakdown: data.regimeBreakdown,
+  });
+  return {
+    results: report.syndromes.map((s) => ({
+      name: s.name,
+      displayName: s.displayName,
+      confidence: s.confidence,
+      presentCount: s.presentCount,
+      totalCount: s.totalCount,
+      summary: s.summary,
+      intervention: s.intervention,
+      requiredSignals: s.requiredSignals.map((sig) => ({
+        name: sig.name,
+        displayName: sig.displayName,
+        status: sig.status,
+        description: sig.description,
+        pValue: sig.pValue,
+      })),
+      supportingSignals: s.supportingSignals.map((sig) => ({
+        name: sig.name,
+        displayName: sig.displayName,
+        status: sig.status,
+        description: sig.description,
+        pValue: sig.pValue,
+      })),
+      contradictingSignals: s.contradictingSignals.map((sig) => ({
+        name: sig.name,
+        displayName: sig.displayName,
+        status: sig.status,
+        description: sig.description,
+        pValue: sig.pValue,
+      })),
+    })),
+    dominantSyndrome: report.dominantSyndrome?.name ?? null,
+    overallAssessment: report.overallAssessment,
   };
 }
 

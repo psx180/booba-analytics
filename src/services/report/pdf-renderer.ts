@@ -37,6 +37,8 @@ const COLOR_RULE_LIGHT = '#d0d7de';
 const COLOR_GREEN = '#1a7f37';
 const COLOR_RED = '#cf222e';
 const COLOR_BLUE = '#0969da';
+const COLOR_YELLOW = '#bf8700';
+const COLOR_ORANGE = '#bc4c00';
 const COLOR_HEADER_BG = '#f0f0f0';
 const COLOR_ZEBRA_BG = '#f9f9f9';
 
@@ -269,6 +271,8 @@ function drawBehavioral(doc: Doc, report: TradingReport): void {
   startSection(doc, 'Behavioural');
   drawSummary(doc, s.summary);
 
+  if (s.syndromes) drawSyndromes(doc, s.syndromes);
+
   if (s.serialDependence) {
     drawSubsection(doc, 'Serial dependence');
     drawKvList(doc, [
@@ -351,6 +355,176 @@ function drawBehavioral(doc: Doc, report: TradingReport): void {
     { text: i.isSignificant ? 'Yes' : '—', color: i.isSignificant ? COLOR_GREEN : COLOR_MUTED },
     ])));
   }
+}
+
+// ─── Behavioural syndromes subsection ─────────────────────────────────────
+
+function drawSyndromes(
+  doc: Doc,
+  syndromes: NonNullable<TradingReport['sections']['behavioral']>['syndromes'],
+): void {
+  if (!syndromes) return;
+
+  drawSubsection(doc, 'Behavioural syndromes');
+
+  // Overall assessment paragraph at the top.
+  ensureSpace(doc, 36);
+  doc.font('Helvetica').fontSize(BODY_FONT_SIZE).fillColor(COLOR_INK);
+  doc.text(syndromes.overallAssessment, PAGE_MARGIN, doc.y, {
+    width: CONTENT_WIDTH,
+    lineGap: BODY_LINE_HEIGHT - BODY_FONT_SIZE,
+  });
+  doc.y += PARA_GAP;
+
+  // Per-syndrome detail blocks for confidence >= moderate; absent/weak get
+  // a one-line entry in a compact table at the bottom so the reader still
+  // sees what was tested.
+  const featured = syndromes.results.filter(
+    (r) => r.confidence === 'moderate' || r.confidence === 'strong',
+  );
+  const others = syndromes.results.filter(
+    (r) => r.confidence === 'weak' || r.confidence === 'absent',
+  );
+
+  for (const syn of featured) {
+    drawSyndromeBlock(doc, syn);
+  }
+
+  if (others.length > 0) {
+    ensureSpace(doc, 24 + others.length * 16);
+    doc.font('Helvetica-Bold').fontSize(11).fillColor(COLOR_INK);
+    doc.text('Other syndromes tested', PAGE_MARGIN, doc.y, { width: CONTENT_WIDTH });
+    doc.y += 4;
+    drawTable(doc, [
+      { header: 'Syndrome', width: 180 },
+      { header: 'Confidence', width: 100 },
+      { header: 'Signals', width: 80, align: 'right' },
+      { header: 'Summary', width: CONTENT_WIDTH - 360 },
+    ], others.map((r) => ([
+      { text: r.displayName },
+      { text: capitalize(r.confidence), color: confidenceColor(r.confidence) },
+      { text: `${r.presentCount}/${r.totalCount}` },
+      { text: r.summary },
+    ])));
+  }
+}
+
+type SyndromeRow = NonNullable<
+  NonNullable<TradingReport['sections']['behavioral']>['syndromes']
+>['results'][number];
+
+function drawSyndromeBlock(doc: Doc, syn: SyndromeRow): void {
+  ensureSpace(doc, 60);
+
+  // Title row: name (bold) + colored confidence badge.
+  doc.font('Helvetica-Bold').fontSize(12).fillColor(COLOR_INK);
+  const titleY = doc.y;
+  doc.text(syn.displayName, PAGE_MARGIN, titleY, { width: CONTENT_WIDTH - 140 });
+  const titleHeight = doc.heightOfString(syn.displayName, { width: CONTENT_WIDTH - 140 });
+
+  const badgeText = `${capitalize(syn.confidence)} confidence`;
+  const badgeColor = confidenceColor(syn.confidence);
+  doc.font('Helvetica-Bold').fontSize(10).fillColor(badgeColor);
+  const badgeWidth = doc.widthOfString(badgeText);
+  doc.text(badgeText, PAGE_MARGIN + CONTENT_WIDTH - badgeWidth, titleY + 1, {
+    width: badgeWidth,
+  });
+  doc.y = titleY + Math.max(titleHeight, 14) + 4;
+
+  // Counts.
+  doc.font('Helvetica').fontSize(9).fillColor(COLOR_MUTED);
+  doc.text(`${syn.presentCount} of ${syn.totalCount} indicators present`, PAGE_MARGIN, doc.y, {
+    width: CONTENT_WIDTH,
+  });
+  doc.y += 12;
+
+  // Summary paragraph.
+  doc.font('Helvetica').fontSize(BODY_FONT_SIZE).fillColor(COLOR_INK);
+  doc.text(syn.summary, PAGE_MARGIN, doc.y, {
+    width: CONTENT_WIDTH,
+    lineGap: BODY_LINE_HEIGHT - BODY_FONT_SIZE,
+  });
+  doc.y += 6;
+
+  // Checklist of signals.
+  drawSyndromeChecklist(doc, 'Required', syn.requiredSignals);
+  drawSyndromeChecklist(doc, 'Supporting', syn.supportingSignals);
+  if (syn.contradictingSignals.some((sig) => sig.status === 'present')) {
+    drawSyndromeChecklist(doc, 'Contradicting', syn.contradictingSignals);
+  }
+
+  // Intervention.
+  if (syn.intervention) {
+    ensureSpace(doc, 36);
+    doc.font('Helvetica-Bold').fontSize(BODY_FONT_SIZE).fillColor(COLOR_INK);
+    doc.text('Recommendation: ', PAGE_MARGIN, doc.y, { continued: true });
+    doc.font('Helvetica').fillColor(COLOR_INK);
+    doc.text(syn.intervention, {
+      width: CONTENT_WIDTH,
+      lineGap: BODY_LINE_HEIGHT - BODY_FONT_SIZE,
+    });
+    doc.y += 4;
+  }
+
+  doc.y += PARA_GAP;
+}
+
+function drawSyndromeChecklist(
+  doc: Doc,
+  label: string,
+  signals: Array<{
+    displayName: string;
+    status: 'present' | 'absent' | 'insufficient_data';
+    description: string;
+  }>,
+): void {
+  if (signals.length === 0) return;
+  ensureSpace(doc, 18 + signals.length * 14);
+
+  doc.font('Helvetica-Bold').fontSize(9).fillColor(COLOR_MUTED);
+  doc.text(label, PAGE_MARGIN, doc.y, { width: CONTENT_WIDTH });
+  doc.y += 2;
+
+  doc.font('Helvetica').fontSize(9);
+  for (const sig of signals) {
+    ensureSpace(doc, 14);
+    const y = doc.y;
+    const marker = signalMarker(sig.status);
+    doc.fillColor(signalColor(sig.status));
+    doc.text(marker, PAGE_MARGIN + 8, y, { width: 24 });
+    doc.fillColor(COLOR_INK);
+    doc.text(`${sig.displayName} — ${sig.description}`, PAGE_MARGIN + 32, y, {
+      width: CONTENT_WIDTH - 32,
+    });
+    doc.y = y + 12;
+  }
+  doc.y += 4;
+}
+
+function signalMarker(status: 'present' | 'absent' | 'insufficient_data'): string {
+  // pdfkit's built-in Helvetica is WinAnsi-encoded — no ✓/✗ glyphs available.
+  // Use ASCII labels so all readers render reliably.
+  if (status === 'present') return 'Yes';
+  if (status === 'absent') return 'No';
+  return 'n/a';
+}
+
+function signalColor(status: 'present' | 'absent' | 'insufficient_data'): string {
+  if (status === 'present') return COLOR_GREEN;
+  if (status === 'absent') return COLOR_MUTED;
+  return COLOR_SUBTLE;
+}
+
+function confidenceColor(confidence: 'strong' | 'moderate' | 'weak' | 'absent'): string {
+  if (confidence === 'absent') return COLOR_GREEN;
+  if (confidence === 'weak') return COLOR_YELLOW;
+  if (confidence === 'moderate') return COLOR_ORANGE;
+  return COLOR_RED;
+}
+
+function capitalize(s: string): string {
+  if (!s) return '';
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

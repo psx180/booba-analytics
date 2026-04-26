@@ -139,6 +139,42 @@ export interface BehavioralSection {
     effectSize: number | null;
     sampleSize: number;
   }>;
+  /** Cross-signal behavioural-syndrome diagnoses. Null when the syndrome
+   *  pass couldn't run (e.g. no stored insights). */
+  syndromes: {
+    results: Array<{
+      name: string;
+      displayName: string;
+      confidence: 'strong' | 'moderate' | 'weak' | 'absent';
+      presentCount: number;
+      totalCount: number;
+      summary: string;
+      intervention: string | null;
+      requiredSignals: Array<{
+        name: string;
+        displayName: string;
+        status: 'present' | 'absent' | 'insufficient_data';
+        description: string;
+        pValue: number | null;
+      }>;
+      supportingSignals: Array<{
+        name: string;
+        displayName: string;
+        status: 'present' | 'absent' | 'insufficient_data';
+        description: string;
+        pValue: number | null;
+      }>;
+      contradictingSignals: Array<{
+        name: string;
+        displayName: string;
+        status: 'present' | 'absent' | 'insufficient_data';
+        description: string;
+        pValue: number | null;
+      }>;
+    }>;
+    dominantSyndrome: string | null;
+    overallAssessment: string;
+  } | null;
 }
 
 // ─── Section: Risk ─────────────────────────────────────────────────────────
