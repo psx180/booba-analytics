@@ -81,40 +81,48 @@ function compositeOr(name: string, displayName: string, parts: SignalDef[]): Sig
 
 // ─── Atomic signal extractors ─────────────────────────────────────────────
 
-/** Serial dependence — read directly from the revenge-trading detector
- *  (which already incorporates tilt-score behaviour and a chi-squared
- *  win-rate test on revenge vs normal trades). */
+/** Serial dependence — read from the Markov-transition detector. The
+ *  chi-squared independence test on the W/L transition matrix is a stronger
+ *  test of "outcomes cluster more than chance" than the revenge-trading
+ *  detector's Welch on per-trade P&L. Signal PRESENT when the independence
+ *  test is significant AND loss-after-loss exceeds win-after-win (i.e. the
+ *  clustering direction is loss-driven, not win-streaky). */
 const sigSerialDependence: SignalDef = {
   name: 'serial_dependence',
   displayName: 'Serial dependence',
   extract(data) {
-    const insight = findInsight(data.insights, 'revenge-trading');
+    const insight = findInsight(data.insights, 'ml-patterns-markov');
     if (!insight) {
       return insufficient(this.name, this.displayName,
-        'Revenge-trading detector has not run');
+        'Markov transition analysis has not run');
     }
-    const d = insight.data ?? {};
-    const revengeWinRate = typeof d.revengeWinRate === 'number' ? d.revengeWinRate : null;
-    const normalWinRate  = typeof d.normalWinRate  === 'number' ? d.normalWinRate  : null;
-    const totalRevengePnl = typeof d.totalRevengePnl === 'number' ? d.totalRevengePnl : null;
+    const markov = insight.data?.markov;
+    if (!markov || !markov.transitionProbabilities) {
+      return insufficient(this.name, this.displayName,
+        'Markov transition probabilities unavailable');
+    }
+    const lossAfterLoss = typeof markov.transitionProbabilities.lossAfterLoss === 'number'
+      ? markov.transitionProbabilities.lossAfterLoss : null;
+    const winAfterWin = typeof markov.transitionProbabilities.winAfterWin === 'number'
+      ? markov.transitionProbabilities.winAfterWin : null;
     const pValue = pickPrimaryPValue(insight);
 
     if (!insight.isSignificant) {
       return absent(this.name, this.displayName,
-        'No significant clustering of post-loss trades', pValue);
+        'No significant deviation from outcome independence', pValue);
     }
-    // Significant + actually worse after losses (lower win rate or net negative)
-    const worseAfterLoss =
-      (revengeWinRate != null && normalWinRate != null && revengeWinRate < normalWinRate) ||
-      (totalRevengePnl != null && totalRevengePnl < 0);
-    if (!worseAfterLoss) {
+    if (lossAfterLoss == null || winAfterWin == null) {
+      return insufficient(this.name, this.displayName,
+        'Transition probabilities not computed');
+    }
+    if (lossAfterLoss <= winAfterWin) {
       return absent(this.name, this.displayName,
-        'Post-loss clustering present but does not underperform baseline', pValue);
+        `Significant clustering but win-streaky direction (LL ${(lossAfterLoss * 100).toFixed(0)}% vs WW ${(winAfterWin * 100).toFixed(0)}%)`,
+        pValue);
     }
-    const desc = revengeWinRate != null && normalWinRate != null
-      ? `Post-loss win rate ${revengeWinRate}% vs ${normalWinRate}% baseline (p=${pValue?.toFixed(3) ?? '?'})`
-      : `Revenge trading detected (p=${pValue?.toFixed(3) ?? '?'})`;
-    return present(this.name, this.displayName, desc, pValue);
+    return present(this.name, this.displayName,
+      `Loss→loss rate ${(lossAfterLoss * 100).toFixed(0)}% vs win→win ${(winAfterWin * 100).toFixed(0)}% (p=${pValue?.toFixed(3) ?? '?'})`,
+      pValue);
   },
 };
 
@@ -217,7 +225,11 @@ const sigShortenedHoldAfterLoss: SignalDef = {
   },
 };
 
-/** Classic disposition effect — holding losers longer than winners. */
+/** Classic disposition effect — holding losers longer than winners. Any
+ *  significant classic-direction effect (ratio > 1) fires this supporting
+ *  signal; the strong-disposition contradicting signal below uses ratio
+ *  >= 1.5 so a mild classic effect can co-exist with fear without firing
+ *  the contradiction. */
 const sigDispositionPresent: SignalDef = {
   name: 'disposition_present',
   displayName: 'Disposition effect (classic)',
@@ -228,7 +240,7 @@ const sigDispositionPresent: SignalDef = {
     const ratio = typeof d.ratio === 'number' ? d.ratio : null;
     const pValue = pickPrimaryPValue(insight);
     if (ratio == null) return insufficient(this.name, this.displayName, 'Hold-time ratio not computed');
-    if (insight.isSignificant && ratio > 1.2) {
+    if (insight.isSignificant && ratio > 1) {
       return present(this.name, this.displayName,
         `Losers held ${ratio.toFixed(2)}x longer than winners (p=${pValue?.toFixed(3) ?? '?'})`,
         pValue);
@@ -626,48 +638,85 @@ const sigRegimeMismatchSignificant: SignalDef = {
   },
 };
 
-/** No evidence of strategy adaptation: the combinatorial search did NOT
- *  surface a significant regime × tradeType slice. PRESENT means "no
- *  adaptation", which is the required signal for regime blindness. */
+/** No evidence of trade-type adaptation across regimes. Demoted to
+ *  SUPPORTING for regime blindness because tradeType (scalp / directional /
+ *  scaled_directional / carry_trade) is a structural classification based on
+ *  hold time and fill patterns — a trader can adapt strategy by changing
+ *  direction, sizing, or entry criteria without crossing a tradeType
+ *  boundary, so absence here is a weak proxy for "not adapting". */
 const sigNoStrategyAdaptation: SignalDef = {
   name: 'no_strategy_adaptation',
-  displayName: 'No regime × strategy adaptation',
+  displayName: 'No regime × trade-type adaptation',
   extract(data) {
     const insight = findInsight(data.insights, 'combinatorial-search');
     if (!insight) return insufficient(this.name, this.displayName, 'Combinatorial search has not run');
-    const findings = insight.data?.combinatorial?.findings as Array<{ dimensions?: Array<{ name: string }> }> | undefined;
+    const findings = insight.data?.combinatorial?.findings as Array<{
+      dimensions?: Array<{ name: string }>; effectDirection?: 'better' | 'worse';
+    }> | undefined;
     if (!Array.isArray(findings)) {
       return insufficient(this.name, this.displayName, 'No findings array on combinatorial search');
     }
     const adapted = findings.some((f) => {
       const dims = (f.dimensions ?? []).map((d) => d.name);
-      return dims.includes('regime') && dims.includes('tradeType');
+      return dims.includes('regime') && dims.includes('tradeType') && f.effectDirection === 'better';
     });
     if (!adapted) {
       return present(this.name, this.displayName,
-        'No surviving regime × tradeType slice — same approach across conditions', null);
+        'No winning regime × tradeType slice — trade-type mix is static across conditions', null);
     }
     return absent(this.name, this.displayName,
-      'Edge finder shows trade type performance differs by regime — trader is adapting', null);
+      'Trade-type mix has a winning slice in at least one regime — some adaptation present', null);
   },
 };
 
-/** Strategy IS adapting — the inverse of the above; contradicts regime
- *  blindness. */
-const sigStrategyAdapting: SignalDef = {
-  name: 'strategy_adapting',
-  displayName: 'Trade-type mix changes with regime',
+/** Direction × regime — the trader has picked a winning direction for at
+ *  least one regime. PRESENT (i.e. not adapting) when no `effectDirection:
+ *  'better'` slice exists for the direction × regime cross. A 'worse'
+ *  finding alone does NOT count as adaptation — it's evidence the trader is
+ *  leaking in a specific direction × regime combo, not steering away from
+ *  it. Required signal for regime blindness because direction is a more
+ *  behavioural lever than tradeType. */
+const sigNoDirectionAdaptation: SignalDef = {
+  name: 'no_direction_adaptation',
+  displayName: 'No direction × regime adaptation',
   extract(data) {
-    const sig = sigNoStrategyAdaptation.extract(data);
+    const insight = findInsight(data.insights, 'combinatorial-search');
+    if (!insight) return insufficient(this.name, this.displayName, 'Combinatorial search has not run');
+    const findings = insight.data?.combinatorial?.findings as Array<{
+      dimensions?: Array<{ name: string }>; effectDirection?: 'better' | 'worse';
+    }> | undefined;
+    if (!Array.isArray(findings)) {
+      return insufficient(this.name, this.displayName, 'No findings array on combinatorial search');
+    }
+    const adapted = findings.some((f) => {
+      const dims = (f.dimensions ?? []).map((d) => d.name);
+      return dims.includes('regime') && dims.includes('direction') && f.effectDirection === 'better';
+    });
+    if (!adapted) {
+      return present(this.name, this.displayName,
+        'No winning direction × regime slice — direction is static across regimes', null);
+    }
+    return absent(this.name, this.displayName,
+      'Edge finder shows a winning direction × regime combo — trader is steering direction with regime', null);
+  },
+};
+
+/** Direction is adapting — inverse of the above; contradicts regime
+ *  blindness when a 'better' direction × regime slice exists. */
+const sigDirectionAdapting: SignalDef = {
+  name: 'direction_adapting',
+  displayName: 'Direction shifts with regime',
+  extract(data) {
+    const sig = sigNoDirectionAdaptation.extract(data);
     if (sig.status === 'insufficient_data') {
       return insufficient(this.name, this.displayName, sig.description);
     }
     if (sig.status === 'absent') {
       return present(this.name, this.displayName,
-        'Trade-type mix shifts significantly across regimes', sig.pValue);
+        'A winning direction × regime slice exists — trader adapts direction to regime', sig.pValue);
     }
     return absent(this.name, this.displayName,
-      'No significant regime × tradeType variation detected', sig.pValue);
+      'No winning direction × regime slice detected', sig.pValue);
   },
 };
 
@@ -796,9 +845,9 @@ export const SYNDROMES: SyndromeDef[] = [
   {
     name: 'regime_blindness',
     displayName: 'Regime Blindness',
-    required: [sigRegimeMismatchSignificant, sigNoStrategyAdaptation],
-    supporting: [sigWorstRegimeDominantLoss, sigTransitionalLossesElevated],
-    contradicting: [sigStrategyAdapting],
+    required: [sigRegimeMismatchSignificant, sigNoDirectionAdaptation],
+    supporting: [sigNoStrategyAdaptation, sigWorstRegimeDominantLoss, sigTransitionalLossesElevated],
+    contradicting: [sigDirectionAdapting],
     intervention(data) {
       const rb = data.regimeBreakdown ?? {};
       const entries = Object.entries(rb)

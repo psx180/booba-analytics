@@ -23,11 +23,22 @@ import type {
 
 // ─── Public API ───────────────────────────────────────────────────────────
 
+export interface EvaluateSyndromesOptions {
+  /** When true, dump a summary of every stored insight to the console
+   *  before evaluating. Off by default — flip on from the API route or a
+   *  one-off script when extractor output looks wrong. */
+  verbose?: boolean;
+}
+
 /**
  * Pure synthesis over already-loaded data. Use this from the report flow
  * where everything has already been fetched.
  */
-export function evaluateSyndromes(input: SyndromeInputData): SyndromeReport {
+export function evaluateSyndromes(
+  input: SyndromeInputData,
+  options: EvaluateSyndromesOptions = {},
+): SyndromeReport {
+  if (options.verbose) logInputDataSummary(input);
   const syndromes = SYNDROMES.map((def) => evaluateSyndrome(def, input));
   const dominant = pickDominant(syndromes);
   return {
@@ -45,9 +56,33 @@ export function evaluateSyndromes(input: SyndromeInputData): SyndromeReport {
 export async function detectSyndromes(
   walletAddress: string,
   journalId?: string,
+  options: EvaluateSyndromesOptions = {},
 ): Promise<SyndromeReport> {
   const input = await loadSyndromeInputData(walletAddress, journalId);
-  return evaluateSyndromes(input);
+  return evaluateSyndromes(input, options);
+}
+
+/** Diagnostic dump of the data the extractors will see — module names,
+ *  significance flags, data field keys, and statistical-test summaries.
+ *  Logged only when callers pass { verbose: true }. */
+function logInputDataSummary(input: SyndromeInputData): void {
+  const insightSummary = input.insights.map((i) => ({
+    module: i.module,
+    isSignificant: i.isSignificant,
+    category: i.category,
+    dataKeys: Object.keys(i.data ?? {}),
+    statistics: (i.statistics ?? []).map((s) => ({
+      testName: s.testName,
+      pValue: s.pValue,
+      isSignificant: s.isSignificant,
+      correctionApplied: s.correctionApplied,
+    })),
+  }));
+  console.log('[syndromes] Available insights:', JSON.stringify(insightSummary, null, 2));
+  console.log('[syndromes] walkForward:', input.walkForward
+    ? { trend: input.walkForward.expectancyTrend, slope: input.walkForward.expectancySlope }
+    : null);
+  console.log('[syndromes] regimes:', Object.keys(input.regimeBreakdown ?? {}));
 }
 
 /**
@@ -160,7 +195,23 @@ function buildSyndromeSummary(
     : ' No contradicting evidence.';
 
   const opener = `${def.displayName} pattern detected (${confidence} confidence). ${evidenceCount} of ${totalSignals} indicators present.`;
-  return `${opener} ${evidence}${contradictionLine}`;
+  const tail = syndromeSummaryNote(def, [...required, ...supporting]);
+  return `${opener} ${evidence}${contradictionLine}${tail ? ' ' + tail : ''}`;
+}
+
+/** Per-syndrome summary addendum. Currently used to flag the structural
+ *  tradeType caveat on regime-blindness when the tradeType supporting
+ *  signal fires — the user should know the static tradeType reading is a
+ *  weak proxy for "not adapting", since direction/sizing/entry-criteria
+ *  changes can be invisible to that classification. */
+function syndromeSummaryNote(def: SyndromeDef, signals: SyndromeSignal[]): string | null {
+  if (def.name === 'regime_blindness') {
+    const tradeTypeSig = signals.find((s) => s.name === 'no_strategy_adaptation');
+    if (tradeTypeSig?.status === 'present') {
+      return '(Note: trade type classification is based on hold time and fill patterns — subtle strategy adaptations may not be captured.)';
+    }
+  }
+  return null;
 }
 
 // ─── Dominant syndrome + overall assessment ──────────────────────────────

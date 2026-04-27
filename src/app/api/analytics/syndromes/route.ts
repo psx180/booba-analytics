@@ -15,7 +15,8 @@ export async function GET(req: NextRequest) {
     if (!journalRes.valid) {
       return NextResponse.json({ error: 'Journal not found for this wallet' }, { status: 404 });
     }
-    const result = await detectSyndromes(walletAddress, journalRes.id ?? undefined);
+    const verbose = sp.get('verbose') === '1' || sp.get('verbose') === 'true';
+    const result = await detectSyndromes(walletAddress, journalRes.id ?? undefined, { verbose });
     return NextResponse.json(result);
   });
 }
