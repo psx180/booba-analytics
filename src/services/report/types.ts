@@ -232,6 +232,13 @@ export interface RegimeSection {
 
 // ─── Section: Methodology ──────────────────────────────────────────────────
 
+/** How well-grounded the methodology behind a given test is. Surfaces a
+ *  confidence column in the PDF methodology appendix so reviewers can
+ *  quickly distinguish well-established statistics (Welch t-test, BH FDR)
+ *  from domain adaptations (xPnL, BTC-proxy regime detection) and
+ *  experimental constructs (behavioural syndromes, entropy-as-consistency). */
+export type MethodologyConfidence = 'established' | 'adapted' | 'experimental';
+
 export interface MethodologyEntry {
   test: string;
   hypothesis: string;
@@ -240,6 +247,7 @@ export interface MethodologyEntry {
   sampleB: number;
   result: string;
   finding: string;
+  confidence: MethodologyConfidence;
 }
 
 export interface MethodologySection {

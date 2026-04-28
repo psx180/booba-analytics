@@ -118,14 +118,14 @@ export function getContextualMessage(
       );
     }
 
-    // Elo at new peak
-    if (
-      data.eloResult &&
-      data.eloResult.currentElo >= data.eloResult.peakElo &&
-      data.eloResult.recentTrend === 'improving'
-    ) {
-      analyticsMsgs.push(m(`New Elo peak! You're trading at ${data.eloResult.tier} level.`, 'excited'));
-    }
+    // Hidden — Elo requires population calibration to be meaningful
+    // if (
+    //   data.eloResult &&
+    //   data.eloResult.currentElo >= data.eloResult.peakElo &&
+    //   data.eloResult.recentTrend === 'improving'
+    // ) {
+    //   analyticsMsgs.push(m(`New Elo peak! You're trading at ${data.eloResult.tier} level.`, 'excited'));
+    // }
 
     // Discipline low
     if (data.entropyResult && data.entropyResult.compositeScore < 30) {

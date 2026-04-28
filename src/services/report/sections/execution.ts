@@ -64,16 +64,16 @@ function buildSummary(args: {
     return 'Exit efficiency is unavailable — too few winning trades have MFE-tagged candle data.';
   }
   const pct = Math.round(eff * 100);
-  const verdict =
-    eff < 0.40 ? 'significant room to improve exit timing' :
-    eff < 0.65 ? 'reasonable exit timing with room to refine' :
-    'strong exit discipline';
   let entryClause = '';
   if (args.entryTimingScore != null) {
     if (args.entryTimingScore < 0.5) entryClause = ' Entries print favourably relative to adverse excursion.';
     else if (args.entryTimingScore > 1.5) entryClause = ' Entries see substantial adverse excursion before working.';
   }
-  return `You capture ${pct}% of available favourable movement on average — ${verdict}.${entryClause}`;
+  // Descriptive — judgmental "you exit too early/late" framing replaced with
+  // a neutral capture statistic plus the no-universal-benchmark caveat.
+  return `You captured ${pct}% of average maximum favourable excursion across winning trades.${entryClause} ` +
+    `Exit efficiency varies by strategy — there is no universal benchmark. ` +
+    `Comparison against specific exit rules (trailing stops, fixed targets) would provide more actionable context.`;
 }
 
 function avg(values: number[]): number | null {

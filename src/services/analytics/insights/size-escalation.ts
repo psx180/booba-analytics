@@ -116,7 +116,7 @@ export const sizeEscalationDetector: InsightDetector = {
 
     return [{
       module: 'size-escalation',
-      title: isSignificant && sizeDiffPct > 10 ? 'Size Escalation After Losses' : 'Position Sizing Analysis',
+      title: isSignificant && sizeDiffPct > 10 ? 'Pattern consistent with size escalation after losses' : 'Position Sizing Analysis',
       description,
       suggestion,
       severity: isSignificant && sizeDiffPct > 20 ? 'warning' : 'info',

@@ -1,6 +1,6 @@
 import type { Insight, StatisticalTest } from '../../analytics/types';
 import type { ReportData } from '../data';
-import type { MethodologyEntry, MethodologySection } from '../types';
+import type { MethodologyConfidence, MethodologyEntry, MethodologySection } from '../types';
 
 const KNOWN_LIMITATIONS = [
   'Sharpe uses per-trade returns, not daily mark-to-market',
@@ -69,7 +69,33 @@ function entryFor(insight: Insight, test: StatisticalTest): MethodologyEntry | n
     sampleB: test.sampleSizeB,
     result: describeResult(test),
     finding: test.isSignificant ? 'Significant' : 'Not significant',
+    confidence: assignConfidence(insight.module, test.testName),
   };
+}
+
+/** Methodology-confidence assignment per the cleanup spec.
+ *  - Established: standard frequentist tests (Welch / chi-squared / Fisher /
+ *    Pearson) and the BH FDR correction applied across them.
+ *  - Adapted: domain-adapted methods that borrow an established framework
+ *    (xPnL ~ xG, combinatorial search ~ Harvey/Liu/Zhu, Markov serial
+ *    dependence on transitions, regime detection that uses BTC as a market
+ *    proxy).
+ *  - Experimental: composite/synthesis layers built on top of the above —
+ *    WART composite, entropy framed as decision-consistency, walk-forward
+ *    persistence at low window counts. (Behavioural syndromes do not
+ *    surface here because they run no statistical tests of their own.) */
+function assignConfidence(module: string, testName: string): MethodologyConfidence {
+  if (module === 'wart-insight' || module === 'entropy') return 'experimental';
+  if (
+    module === 'xpnl-insight' ||
+    module === 'combinatorial-search' ||
+    module === 'ml-patterns-markov' ||
+    module === 'regime-mismatch'
+  ) {
+    return 'adapted';
+  }
+  if (testName === 'descriptive') return 'experimental';
+  return 'established';
 }
 
 function describeMethod(test: StatisticalTest): string {

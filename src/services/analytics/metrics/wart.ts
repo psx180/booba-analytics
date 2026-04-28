@@ -369,12 +369,11 @@ function improvementText(name: keyof WartResult['axes'], axis: WartAxis): string
       return `Your exit timing is uneven. Aim to hold winners about 1.2× as long as losers based on disposition analysis.`;
     }
     case 'discipline': {
-      return `Your trading entropy is high — you're scattered across many setups. Focusing on fewer, repeatable patterns could improve results.`;
+      return `Your decision patterns are more varied than your baseline. Concentrating on fewer repeatable setups may help.`;
     }
     case 'timing': {
-      const sessionMatch = axis.details.match(/Best session: (\w+)/);
-      const session = sessionMatch ? sessionMatch[1] : 'your best session';
-      return `Your best performance is during the ${session} session. Concentrating activity there could lift overall returns.`;
+      // Hidden — session concentration is a weak skill dimension, pending redesign.
+      return null;
     }
     case 'entry': {
       if (axis.method === 'xpnl_luck') {

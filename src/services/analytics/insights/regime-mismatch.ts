@@ -189,7 +189,7 @@ export const regimeMismatchDetector: InsightDetector = {
 
     return [{
       module: 'regime-mismatch',
-      title: 'Regime-Strategy Mismatch Detected',
+      title: 'Pattern consistent with regime-strategy mismatch',
       description,
       suggestion,
       severity: dollarImpact > 500 ? 'warning' : 'info',

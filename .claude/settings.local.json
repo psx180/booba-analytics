@@ -30,7 +30,8 @@
       "Bash(git -C \"D:/IdeaProjects/pacibooba\" log --oneline -10 -- src/app/analytics/AnalyticsClient.tsx)",
       "Bash(git -C \"D:/IdeaProjects/pacibooba\" show --stat 6f78d54)",
       "Bash(git -C D:/IdeaProjects/pacibooba status --short)",
-      "Bash(git -C D:/IdeaProjects/pacibooba diff --stat HEAD)"
+      "Bash(git -C D:/IdeaProjects/pacibooba diff --stat HEAD)",
+      "Bash(grep -n '\\\\${angle1} \\\\${angle2}\\\\|angle2\\\\|angle2}' src/services/analytics/insights/sizing-analysis.ts)"
     ]
   }
 }

@@ -72,7 +72,7 @@ export const socialCorrelationDetector: InsightDetector = {
     return [
       {
         module: 'social-correlation',
-        title: 'Social Attention Affects Your Win Rate',
+        title: 'Your data suggests social attention is associated with win rate',
         description,
         severity: 'info',
         confidence,

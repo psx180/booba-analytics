@@ -737,11 +737,14 @@ export default function TradeDetailModal({ positionId, onClose }: TradeDetailMod
                   value={position.mfePnl != null ? fmt$(position.mfePnl) : '—'}
                   valueClass={position.mfePnl != null ? pnlColor(position.mfePnl) : 'text-[#6e7681]'}
                 />
-                <MetricCell
-                  label="R-Multiple"
-                  value={rMultiple != null ? `${rMultiple >= 0 ? '+' : ''}${rMultiple.toFixed(2)}R` : '—'}
-                  valueClass={rMultiple != null ? pnlColor(rMultiple) : 'text-[#6e7681]'}
-                />
+                {/* Hidden — MAE-based R-multiple is non-standard; needs stop-loss data for proper Van Tharp R */}
+                {(false as boolean) && (
+                  <MetricCell
+                    label="R-Multiple"
+                    value={rMultiple != null ? `${rMultiple >= 0 ? '+' : ''}${rMultiple.toFixed(2)}R` : '—'}
+                    valueClass={rMultiple != null ? pnlColor(rMultiple) : 'text-[#6e7681]'}
+                  />
+                )}
               </div>
             </div>
 

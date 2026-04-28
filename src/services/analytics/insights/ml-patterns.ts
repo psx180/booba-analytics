@@ -128,7 +128,7 @@ function buildClusteringInsight(result: ClusteringResult, sampleSize: number): I
 
   return {
     module: 'ml-patterns-clustering',
-    title: `Trade DNA: ${result.k} Natural Patterns Discovered`,
+    title: `Trade DNA: ${result.k} natural patterns identified`,
     description,
     suggestion: worst.avgPnl < 0
       ? `The "${worst.label}" cluster is losing money on average. Review the trades in this cluster (open the patterns section) to understand what they share.`
@@ -229,7 +229,7 @@ function buildAnomalyInsight(result: AnomalyResult, positions: Position[]): Insi
 
   return {
     module: 'ml-patterns-anomaly',
-    title: `${result.anomalies.length} Unusual Trades Detected`,
+    title: `${result.anomalies.length} unusual trades flagged`,
     description,
     suggestion: avgFlaggedPnl < avgNormalPnl
       ? 'Anomalous trades are underperforming on average — they likely represent mistakes worth understanding before they recur.'
@@ -294,7 +294,7 @@ function buildMarkovInsight(result: MarkovResult, sampleSize: number): Insight {
 
   return {
     module: 'ml-patterns-markov',
-    title: isSig ? 'Serial Dependence Detected' : 'Outcome Independence Analysis',
+    title: isSig ? 'Pattern consistent with serial dependence' : 'Outcome Independence Analysis',
     description: result.interpretation,
     suggestion: isSig
       ? 'After a losing trade, pause briefly before entering the next one. The data shows your losses cluster more than chance — break the chain.'

@@ -166,7 +166,7 @@ export const timeOfDayEdgeDetector: InsightDetector = {
 
     return [{
       module: 'time-of-day-edge',
-      title: isSignificant ? 'Time-of-Day Edge Detected' : 'No Time-of-Day Edge',
+      title: isSignificant ? 'Pattern consistent with a time-of-day edge' : 'No Time-of-Day Edge',
       description: description + fatigueDescription,
       suggestion,
       severity: 'info',

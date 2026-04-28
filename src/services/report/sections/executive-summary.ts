@@ -11,7 +11,7 @@ export function generateExecutiveSummary(data: ReportData): ExecutiveSummarySect
 
   const perf = data.performance.data ?? {};
   const wart = data.wartResult;
-  const elo = data.eloResult;
+  // Elo intentionally not read — hidden from the section per the cleanup pass.
 
   const axes: Record<string, number> = {};
   for (const [name, axis] of Object.entries(wart.axes ?? {})) {
@@ -28,13 +28,8 @@ export function generateExecutiveSummary(data: ReportData): ExecutiveSummarySect
       tier: wart.tier ?? '—',
       axes,
     },
-    eloRating: elo
-      ? {
-          current: Math.round(elo.currentElo ?? 0),
-          tier: elo.tier ?? '—',
-          trend: elo.recentTrend ?? 'stable',
-        }
-      : null,
+    // Hidden — Elo requires population calibration to be meaningful
+    eloRating: null,
     headlineMetrics: {
       sharpe: data.riskMetrics.sharpeRatio,
       sortino: data.riskMetrics.sortinoRatio,

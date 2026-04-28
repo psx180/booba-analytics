@@ -272,33 +272,19 @@ export async function computeWalkForward(
 
   // ── Summary ───────────────────────────────────────────────────────────────
 
-  let summary: string;
-  if (degradationDetected) {
-    summary =
-      `Your strategy performance has declined. Windows 1–${compareN} averaged ` +
-      `$${r2(firstAvg)} expectancy, but windows ${numWindows - compareN + 1}–${numWindows} ` +
-      `averaged $${r2(lastAvg)}. Your edge may be eroding — consider reviewing your approach.`;
-  } else if (expectancyTrend === 'improving' && lastAvg > 0) {
-    const improvePct =
-      firstAvg !== 0
-        ? Math.round(((lastAvg - firstAvg) / Math.abs(firstAvg)) * 100)
-        : null;
-    const improveStr = improvePct != null ? `${improvePct}%` : 'significantly';
-    summary =
-      `Your performance is improving. Recent trades show ${improveStr} higher expectancy ` +
-      `than your early trades. Your skills are developing.`;
-  } else if (expectancyTrend === 'improving' && lastAvg <= 0) {
-    // Still unprofitable, but losses are shrinking — don't celebrate the
-    // slope while every window is still negative. Frames the trajectory
-    // honestly: direction is right, result isn't there yet.
-    summary =
-      `Your losses are decreasing — expectancy improved from $${r2(firstAvg)} to ` +
-      `$${r2(lastAvg)} per trade, but remains negative. Continued improvement ` +
-      `needed to reach profitability.`;
-  } else {
-    summary =
-      `Your performance is consistent across time periods. Your edge appears durable.`;
-  }
+  // Walk-forward over {numWindows} windows (typically 5) is too low-power
+  // to make a confirmed claim about edge persistence. Summary copy is now
+  // descriptive — directional language only, with an explicit "not
+  // statistically tested with this sample size" qualifier.
+  const trendLabel = degradationDetected
+    ? 'declining'
+    : expectancyTrend === 'improving' && lastAvg > 0 ? 'improving'
+    : expectancyTrend === 'improving' && lastAvg <= 0 ? 'improving (losses shrinking, still negative)'
+    : 'stable';
+  const summary =
+    `Expectancy trend (descriptive — not statistically tested with this sample size): ${trendLabel}. ` +
+    `First windows averaged $${r2(firstAvg)} expectancy, last windows averaged $${r2(lastAvg)} ` +
+    `(based on ${numWindows} windows — interpret as directional trend, not a confirmed finding).`;
 
   return {
     windows,

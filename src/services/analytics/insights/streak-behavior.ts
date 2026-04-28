@@ -187,7 +187,7 @@ export const streakBehaviorDetector: InsightDetector = {
 
     return [{
       module: 'streak-behavior',
-      title: isSignificant ? 'Streak-Influenced Behaviour Detected' : 'Streak Behaviour: No Significant Pattern',
+      title: isSignificant ? 'Pattern consistent with streak-influenced behaviour' : 'Streak Behaviour: No Significant Pattern',
       description,
       suggestion,
       severity: isSignificant && dollarImpact > 200 ? 'warning' : 'info',

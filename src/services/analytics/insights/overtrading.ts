@@ -114,7 +114,7 @@ export const overtradingDetector: InsightDetector = {
 
     return [{
       module: 'overtrading',
-      title: isSignificant && isNegativeCorr ? 'Overtrading Pattern Detected' : 'Trade Frequency Analysis',
+      title: isSignificant && isNegativeCorr ? 'Pattern consistent with overtrading' : 'Trade Frequency Analysis',
       description,
       suggestion,
       severity: isSignificant && isNegativeCorr ? 'warning' : 'info',

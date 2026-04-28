@@ -59,7 +59,7 @@ export default function DisciplineGauge({ compositeScore, rollingSeries }: Disci
   return (
     <div className="flex flex-col items-center">
       <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-0.5">
-        Trading Discipline
+        Decision Consistency
       </div>
 
       {/* Gauge SVG */}

@@ -145,7 +145,7 @@ export const dispositionDetector: InsightDetector = {
       description = `You hold losing positions only ${ratio.toFixed(2)}x as long as winning positions — healthy exit discipline confirmed by statistical testing. Average winner: ${formatDuration(overall.avgWinnerHold)}, average loser: ${formatDuration(overall.avgLoserHold)}. ${methodLines}`;
       severity    = 'info';
     } else if (isElevated) {
-      title       = 'Disposition Effect Detected';
+      title       = 'Pattern consistent with a disposition effect';
       description = `You hold losing positions ${ratio.toFixed(1)}x longer than winning positions, and this difference is statistically significant. Average winner: ${formatDuration(overall.avgWinnerHold)}, average loser: ${formatDuration(overall.avgLoserHold)}. ${methodLines}${regimeNotes ? ' ' + regimeNotes : ''}`;
       suggestion  = 'Consider setting time-based stops or reviewing positions held longer than your average winner duration. The estimated cost of this pattern is $' + Math.round(estimatedCost).toLocaleString() + ' across all affected trades.';
       severity    = ratio >= CRITICAL_MIN ? 'warning' : 'info';

@@ -164,7 +164,7 @@ export const revengeTradingDetector: InsightDetector = {
 
     return [{
       module: 'revenge-trading',
-      title: isSignificant ? 'Revenge Trading Detected' : 'Revenge Trading: Not Significant',
+      title: isSignificant ? 'Pattern consistent with revenge trading' : 'Revenge Trading: Not Significant',
       description,
       suggestion,
       severity: isSignificant && totalRevengePnl < -500 ? 'warning' : 'info',

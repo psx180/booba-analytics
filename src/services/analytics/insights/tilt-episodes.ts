@@ -169,7 +169,7 @@ export const tiltEpisodesDetector: InsightDetector = {
 
     return [{
       module: 'tilt-episodes',
-      title: isSignificant ? 'Tilt Episodes Hurting P&L' : 'Tilt Episodes Detected',
+      title: isSignificant ? 'Tilt episodes may be affecting your P&L' : 'Tilt episodes flagged',
       description,
       suggestion,
       severity: isSignificant && improvement > 500 ? 'warning' : 'info',

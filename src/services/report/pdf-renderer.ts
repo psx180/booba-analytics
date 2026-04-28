@@ -150,7 +150,7 @@ function drawCoverPage(doc: Doc, report: TradingReport): void {
   const cFootY = PAGE_HEIGHT - PAGE_MARGIN - 56;
   doc.text(
     'The Composite Trader Score (inspired by baseball\'s Wins Above Replacement) ' +
-    'aggregates entry, exit, risk, timing, and discipline axes into a single number. ' +
+    'aggregates entry, exit, risk, timing, and decision-consistency axes into a single number. ' +
     'See the methodology appendix for the full computation.',
     PAGE_MARGIN, cFootY, { width: CONTENT_WIDTH },
   );
@@ -181,20 +181,18 @@ function drawExecutiveSummary(doc: Doc, report: TradingReport): void {
     'below 0 indicate negative risk-adjusted returns.',
   );
 
+  // Hidden — Elo requires population calibration to be meaningful.
+  // The eloRating field is intentionally null in the executive-summary section;
+  // this guard keeps the PDF safe if it ever returns a value in the future.
   if (s.eloRating) {
-    drawSubsection(doc, 'Elo rating');
-    drawKvList(doc, [
-      ['Current', String(s.eloRating.current)],
-      ['Tier', s.eloRating.tier],
-      ['Trend', s.eloRating.trend],
-    ]);
+    // Elo subsection intentionally suppressed.
   }
 
   if (s.compositeScore.axes && Object.keys(s.compositeScore.axes).length > 0) {
     drawSubsection(doc, 'Composite score axes');
     drawKvList(
       doc,
-      Object.entries(s.compositeScore.axes).map(([k, v]) => [titleCase(k), fmtNum(v, 1)]),
+      Object.entries(s.compositeScore.axes).map(([k, v]) => [wartAxisLabel(k), fmtNum(v, 1)]),
     );
   }
 
@@ -367,7 +365,11 @@ function drawSyndromes(
 
   drawSubsection(doc, 'Behavioural syndromes');
 
-  // Overall assessment paragraph at the top.
+  // Disclaimer — these are statistical signals, not clinical diagnoses.
+  drawAnnotation(doc,
+    'Behavioral patterns are identified from statistical signals in your trading data. They are not clinical diagnoses.');
+
+  // Overall assessment paragraph.
   ensureSpace(doc, 36);
   doc.font('Helvetica').fontSize(BODY_FONT_SIZE).fillColor(COLOR_INK);
   doc.text(syndromes.overallAssessment, PAGE_MARGIN, doc.y, {
@@ -671,18 +673,32 @@ function drawMethodology(doc: Doc, report: TradingReport): void {
 
 function drawMethodologyTable(doc: Doc, entries: MethodologyEntry[]): void {
   drawTable(doc, [
-    { header: 'Test', width: 110 },
-    { header: 'Method', width: 130 },
-    { header: 'Sample', width: 60, align: 'right' },
-    { header: 'Result', width: 110 },
-    { header: 'Finding', width: 58 },
+    { header: 'Test', width: 100 },
+    { header: 'Method', width: 110 },
+    { header: 'Sample', width: 50, align: 'right' },
+    { header: 'Result', width: 95 },
+    { header: 'Finding', width: 55 },
+    { header: 'Confidence', width: 58 },
   ], entries.map((e) => ([
     { text: e.test },
     { text: e.method },
     { text: `${e.sampleA}+${e.sampleB}` },
     { text: e.result },
     { text: e.finding, color: e.finding === 'Significant' ? COLOR_GREEN : COLOR_MUTED },
+    { text: capitalize(e.confidence), color: methodologyConfidenceColor(e.confidence) },
   ])), { fontSize: 8, lineHeight: 11, padV: 4, padH: 6 });
+
+  // Legend so the column is interpretable without flipping back to the spec.
+  drawAnnotation(doc,
+    'Confidence: Established = standard frequentist tests with broad consensus (Welch, chi-squared, BH). ' +
+    'Adapted = domain-adapted methods on an established framework (xPnL, BTC-proxy regimes, combinatorial search, Markov serial dependence). ' +
+    'Experimental = composite/synthesis layers built on top (WART, decision-consistency entropy, low-power walk-forward).');
+}
+
+function methodologyConfidenceColor(c: 'established' | 'adapted' | 'experimental'): string {
+  if (c === 'established') return COLOR_GREEN;
+  if (c === 'adapted') return COLOR_YELLOW;
+  return COLOR_ORANGE;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1065,6 +1081,19 @@ function colorForTier(tier: string): string {
 
 function titleCase(s: string): string {
   return s.replace(/^./, (c) => c.toUpperCase());
+}
+
+/** WART axis label override. Stored axis keys stay as 'timing'/'discipline'
+ *  so the underlying composite weighting is unchanged; only the human label
+ *  shifts.
+ *  - Timing → 'Timing (TBD)' — session concentration is a weak skill
+ *    dimension, pending redesign.
+ *  - Discipline → 'Decision Consistency' — the entropy axis is a measure of
+ *    decision spread, not a clinical "discipline" claim. */
+function wartAxisLabel(key: string): string {
+  if (key === 'timing') return 'Timing (TBD)';
+  if (key === 'discipline') return 'Decision Consistency';
+  return titleCase(key);
 }
 
 // ─── Metric interpretations ────────────────────────────────────────────────

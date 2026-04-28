@@ -66,8 +66,9 @@ export async function GET(req: NextRequest) {
     recoveryFactor:          rm.recoveryFactor,
     drawdownAnalysis:        rm.drawdownAnalysis,
     feeAttribution:          rm.feeAttribution,
-    avgRMultiple:            rm.avgRMultiple,
-    rMultipleDistribution:   rm.rMultipleDistribution,
+    // Hidden — MAE-based R-multiple is non-standard; needs stop-loss data for proper Van Tharp R
+    avgRMultiple:            null,
+    rMultipleDistribution:   null,
     riskTradeCount:          rm.tradeCount,
   });
   });

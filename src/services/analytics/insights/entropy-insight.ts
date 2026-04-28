@@ -139,24 +139,23 @@ export const entropyInsightDetector: InsightDetector = {
     let body: string;
     if (score >= 65) {
       body =
-        `Your trading discipline score is ${score}/100 based on Shannon entropy ` +
-        `analysis of your decisions. You trade with focus — concentrated on ` +
+        `Your decision-consistency score is ${score}/100 based on Shannon entropy ` +
+        `analysis of your decisions. Your patterns are concentrated on ` +
         `${focusedDims.length > 0 ? focusedDims.join(', ') : 'specific dimensions'}, ` +
-        `consistent sizing, and predictable timing. This suggests systematic, ` +
+        `with consistent sizing and predictable timing — suggestive of systematic, ` +
         `rule-based trading.`;
     } else if (score >= 40) {
       body =
-        `Your trading discipline score is ${score}/100. You show focus on some ` +
-        `dimensions but not others. ` +
+        `Your decision-consistency score is ${score}/100. Some dimensions are ` +
+        `concentrated and others more varied. ` +
         (scatteredDims.length > 0
-          ? `Scattered across ${scatteredDims.join(', ')}.`
+          ? `More varied across ${scatteredDims.join(', ')}.`
           : '');
     } else {
       body =
-        `Your trading discipline score is ${score}/100. Your trading is ` +
-        `scattered ${scatteredDims.length > 0 ? `across ${scatteredDims.join(', ')}` : 'across many dimensions'}, ` +
-        `with variable sizing and inconsistent timing. This may indicate ` +
-        `exploratory trading or lack of a defined system.`;
+        `Your decision-consistency score is ${score}/100. Your decision patterns ` +
+        `are more varied than your baseline ${scatteredDims.length > 0 ? `across ${scatteredDims.join(', ')}` : 'across many dimensions'}, ` +
+        `with variable sizing and inconsistent timing.`;
       severity = 'info';
     }
 
@@ -167,7 +166,7 @@ export const entropyInsightDetector: InsightDetector = {
         `have consistent rules for how to react to outcomes.`;
     }
 
-    body += ` Your discipline has ${result.trend} over the last ${ROLLING_WINDOW} trades.`;
+    body += ` Your decision consistency has ${result.trend} over the last ${ROLLING_WINDOW} trades.`;
 
     return [{
       module: 'entropy',

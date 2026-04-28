@@ -157,7 +157,11 @@ export const sizingAnalysisDetector: InsightDetector = {
 
     const angle1 = `Sizing consistency: ${cvLabel}. ${corrLine}${afterLine}`;
 
-    const angle2 = `Kelly reference: ${kellyLine}`;
+    // Hidden — binary Kelly approximation is inappropriate for continuous fat-tailed returns.
+    // halfKelly is still computed and persisted in `data.halfKelly` for any
+    // future caller; the description string just no longer surfaces it.
+    // const angle2 = `Kelly reference: ${kellyLine}`;
+    const angle2 = '';
 
     let angle3: string;
     if (regimeSizeTest == null) {
@@ -271,7 +275,7 @@ export const sizingAnalysisDetector: InsightDetector = {
 
     return [{
       module: 'sizing-analysis',
-      title: 'Position Sizing Issues Detected',
+      title: 'Pattern consistent with position-sizing issues',
       description: `${angle1} ${angle2} ${angle3}`.trim(),
       suggestion,
       severity: dollarImpact > 500 ? 'warning' : 'info',

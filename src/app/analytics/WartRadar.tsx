@@ -41,8 +41,11 @@ const AXIS_LABELS: Record<keyof WartResult['axes'], string> = {
   entry:      'Entry',
   exit:       'Exit',
   risk:       'Risk',
-  timing:     'Timing',
-  discipline: 'Discipline',
+  // Hidden — session concentration is a weak skill dimension, pending redesign.
+  // Display-only suppression: stored composite weighting is unchanged.
+  timing:     'Timing (TBD)',
+  // Renamed — entropy is a measure of decision spread, not a clinical "discipline" claim.
+  discipline: 'Decision Consistency',
 };
 
 function tierColor(composite: number): string {

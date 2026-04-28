@@ -500,11 +500,11 @@ function deriveImpactHeadline(insight: Insight): string {
     case 'entropy': {
       const score = num(d.compositeScore);
       if (score != null) {
-        if (score >= 65) return `Discipline score: ${Math.round(score)}/100 — focused, rule-driven trading`;
-        if (score >= 40) return `Discipline score: ${Math.round(score)}/100 — mixed consistency`;
-        return `Discipline score: ${Math.round(score)}/100 — scattered across dimensions`;
+        if (score >= 65) return `Decision consistency: ${Math.round(score)}/100 — focused, rule-driven patterns`;
+        if (score >= 40) return `Decision consistency: ${Math.round(score)}/100 — mixed patterns`;
+        return `Decision consistency: ${Math.round(score)}/100 — decision patterns more varied than baseline`;
       }
-      return 'Trading discipline score pending';
+      return 'Decision consistency score pending';
     }
     case 'wart': {
       const composite = num(d.composite);
@@ -1201,11 +1201,12 @@ function OverviewTab({
               <span className="text-[#6e7681] ml-1">({wartResult.tier})</span>
             </span>
           )}
-          {eloResult && (
+          {/* Hidden — Elo requires population calibration to be meaningful */}
+          {(false as boolean) && eloResult && (
             <span>
               <span className="text-[10px] uppercase tracking-widest text-[#6e7681] mr-1.5">Elo</span>
-              <span className={eloColor(eloResult.currentElo)}>{Math.round(eloResult.currentElo)}</span>
-              <span className="text-[#6e7681] ml-1">({eloResult.tier})</span>
+              <span className={eloColor(eloResult!.currentElo)}>{Math.round(eloResult!.currentElo)}</span>
+              <span className="text-[#6e7681] ml-1">({eloResult!.tier})</span>
             </span>
           )}
           {sharpeRatio != null && (
@@ -1243,29 +1244,25 @@ function OverviewTab({
 
         {/* Right column: Elo card + top 3 insights */}
         <div className="space-y-3">
-          {/* Elo card */}
-          {eloResult ? (
+          {/* Hidden — Elo requires population calibration to be meaningful */}
+          {(false as boolean) && eloResult && (
             <div className="bg-[#161b22] border border-[#21262d] rounded-lg px-4 py-3 flex items-center gap-6">
               <div>
                 <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">Elo Rating</div>
-                <div className={`text-2xl font-bold ${eloColor(eloResult.currentElo)}`}>
-                  {Math.round(eloResult.currentElo)}
-                  <span className="text-sm ml-1.5 text-[#6e7681]">{trendArrow(eloResult.recentTrend)}</span>
+                <div className={`text-2xl font-bold ${eloColor(eloResult!.currentElo)}`}>
+                  {Math.round(eloResult!.currentElo)}
+                  <span className="text-sm ml-1.5 text-[#6e7681]">{trendArrow(eloResult!.recentTrend)}</span>
                 </div>
-                <div className="text-xs text-[#6e7681]">{eloResult.tier}</div>
+                <div className="text-xs text-[#6e7681]">{eloResult!.tier}</div>
               </div>
               <div className="border-l border-[#21262d] pl-6">
                 <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">Peak</div>
-                <div className="text-sm font-medium text-white">{Math.round(eloResult.peakElo)}</div>
+                <div className="text-sm font-medium text-white">{Math.round(eloResult!.peakElo)}</div>
               </div>
               <div className="border-l border-[#21262d] pl-6">
                 <div className="text-[10px] uppercase tracking-widest text-[#6e7681] mb-1">Trades</div>
-                <div className="text-sm font-medium text-white">{eloResult.tradeCount}</div>
+                <div className="text-sm font-medium text-white">{eloResult!.tradeCount}</div>
               </div>
-            </div>
-          ) : (
-            <div className="bg-[#161b22] border border-[#21262d] rounded-lg px-4 py-3">
-              <p className="text-xs text-[#4a5568] italic">Elo rating not yet available.</p>
             </div>
           )}
 
@@ -1480,7 +1477,7 @@ function PsychologyTab({
         : score >= 40
           ? 'shows moderate consistency'
           : 'is scattered across patterns';
-    disciplineVerdict = `Discipline score: ${score}/100. Your trading ${desc}.`;
+    disciplineVerdict = `Decision consistency: ${score}/100. Your trading ${desc}.`;
   } else {
     disciplineVerdict = NO_DATA_VERDICT;
   }
@@ -1508,12 +1505,12 @@ function PsychologyTab({
     const score = Math.round(entropyResult.compositeScore);
     disciplineImplication =
       score >= 65
-        ? 'Your trading discipline is strong. Keep following your rules.'
+        ? 'Your decision patterns are highly consistent across the dimensions tested.'
         : score >= 40
-          ? 'Review your rule adherence — consistency still has room to improve.'
-          : 'Your trading lacks consistency. Focus on following a structured plan.';
+          ? 'Your decision patterns show moderate consistency — some dimensions are more varied than others.'
+          : 'Your decision patterns are more varied than your baseline across most dimensions.';
   } else {
-    disciplineImplication = 'Not enough data yet to assess discipline patterns.';
+    disciplineImplication = 'Not enough data yet to assess decision-consistency patterns.';
   }
 
   // ── Section 2: EMOTIONAL PATTERNS ───────────────────────────────────────
@@ -1575,7 +1572,7 @@ function PsychologyTab({
                 />
               ) : (
                 <div className="flex items-center justify-center h-[180px] text-xs text-[#4a5568] italic">
-                  Discipline score not yet computed
+                  Decision consistency score not yet computed
                 </div>
               )}
             </div>

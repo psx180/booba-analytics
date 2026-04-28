@@ -172,7 +172,7 @@ export const holdTimeOptimizerDetector: InsightDetector = {
 
     return [{
       module: 'hold-time-optimizer',
-      title: isSignificant ? 'Hold Time Pattern Detected' : 'Hold Time Analysis',
+      title: isSignificant ? 'Pattern consistent with a hold-time effect' : 'Hold Time Analysis',
       description,
       suggestion,
       severity: isSignificant && top.dollarImpact > 500 ? 'warning' : 'info',

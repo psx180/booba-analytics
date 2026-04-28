@@ -57,7 +57,7 @@ export const liquidationDetector: InsightDetector = {
 
     return [{
       module: 'liquidation',
-      title: `Liquidation${liquidated.length > 1 ? 's' : ''} Detected`,
+      title: `Liquidation${liquidated.length > 1 ? 's' : ''} flagged`,
       description:
         `You were liquidated ${assetPhrase}. Review your leverage and margin management.`,
       suggestion:

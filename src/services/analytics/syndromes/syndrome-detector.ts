@@ -179,7 +179,7 @@ function buildSyndromeSummary(
   contradicting: SyndromeSignal[],
 ): string {
   if (confidence === 'absent') {
-    return `${def.displayName} not detected. None of the required signals are present.`;
+    return `Not consistent with a ${def.displayName.toLowerCase()} pattern. None of the required signals are present.`;
   }
   const presentSignals = [...required, ...supporting].filter((s) => s.status === 'present');
   const presentDescriptions = presentSignals.map((s) => s.description);
@@ -194,7 +194,7 @@ function buildSyndromeSummary(
     ? ` Contradicting: ${contradictingPresent.map((s) => s.description).join('; ')}.`
     : ' No contradicting evidence.';
 
-  const opener = `${def.displayName} pattern detected (${confidence} confidence). ${evidenceCount} of ${totalSignals} indicators present.`;
+  const opener = `Consistent with a ${def.displayName.toLowerCase()} pattern (${confidence} confidence). ${evidenceCount} of ${totalSignals} indicators present.`;
   const tail = syndromeSummaryNote(def, [...required, ...supporting]);
   return `${opener} ${evidence}${contradictionLine}${tail ? ' ' + tail : ''}`;
 }
@@ -244,12 +244,12 @@ function buildOverallAssessment(
 ): string {
   const detected = results.filter((r) => CONFIDENCE_RANK[r.confidence] >= CONFIDENCE_RANK['moderate']);
   if (detected.length === 0) {
-    return 'No significant behavioural syndromes detected. Your trading behaviour is consistent across the conditions tested.';
+    return 'No behavioural patterns rose to a moderate or strong reading. Your trading behaviour is consistent across the conditions tested.';
   }
 
   const lead = dominant
-    ? `Your primary behavioural challenge is ${dominant.displayName.toLowerCase()} (${dominant.confidence} confidence). ${dominant.summary}`
-    : `${detected.length} behavioural syndrome${detected.length === 1 ? '' : 's'} detected.`;
+    ? `Your trading is most consistent with a ${dominant.displayName.toLowerCase()} pattern (${dominant.confidence} confidence). ${dominant.summary}`
+    : `${detected.length} behavioural pattern${detected.length === 1 ? '' : 's'} flagged.`;
 
   const others = detected.filter((r) => r !== dominant);
   if (others.length === 0) {
@@ -261,5 +261,5 @@ function buildOverallAssessment(
   }
 
   const otherNames = others.map((r) => `${r.displayName.toLowerCase()} (${r.confidence})`);
-  return `${lead} Also detected: ${otherNames.join(', ')}.`;
+  return `${lead} Also consistent with: ${otherNames.join(', ')}.`;
 }
