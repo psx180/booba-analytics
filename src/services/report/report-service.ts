@@ -96,7 +96,7 @@ export async function generateReport(
 
   // Risk metrics consume positions + starting capital (matches the
   // dashboard summary's wiring exactly).
-  const riskMetrics = computeRiskMetrics(positions, startingCapital);
+  const riskMetrics = await computeRiskMetrics(walletAddress, positions, startingCapital);
 
   // Elo + xPnL + entropy feed WART; same dependency graph the analytics
   // service uses for the dashboard.

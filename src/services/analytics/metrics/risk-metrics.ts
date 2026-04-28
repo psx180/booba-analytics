@@ -10,6 +10,7 @@
  */
 
 import type { Position } from '../../../../generated/prisma/client';
+import { computeDailyReturns } from '../equity/daily-returns';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -39,16 +40,45 @@ export interface RMultipleDistribution {
 }
 
 export interface RiskMetrics {
+  /**
+   * Primary Sharpe/Sortino/Calmar fields. Prefer the daily mark-to-market
+   * series when at least 30 daily observations are available; otherwise
+   * fall back to the per-trade approximation. `usingDailyMetrics` reflects
+   * which source produced these primary values so the UI can label them.
+   */
   sharpeRatio: number | null;
   sortinoRatio: number | null;
   calmarRatio: number | null;
+  /** True when the primary Sharpe/Sortino/Calmar fields were sourced from
+   *  the daily mark-to-market series, false when they fell back to the
+   *  per-trade approximation. Drives the "(daily)" vs "(per-trade)" label. */
+  usingDailyMetrics: boolean;
+
+  /** Per-trade approximations — kept as a fallback and supplementary. */
+  perTradeSharpe: number | null;
+  perTradeSortino: number | null;
+  perTradeCalmar: number | null;
+
+  /** Daily mark-to-market values (null when fewer than 30 daily snapshots). */
+  dailySharpe: number | null;
+  dailySortino: number | null;
+  dailyCalmar: number | null;
+
+  /** Additional risk diagnostics derived from the daily series. */
+  ulcerIndex: number | null;
+  maxDrawdownDurationDays: number | null;
+  avgDrawdownPct: number | null;
+  /** Number of distinct daily-return observations the daily ratios are
+   *  computed from. Null when no equity-snapshot data is available. */
+  dailyObservationCount: number | null;
+
   payoffRatio: number | null;
   recoveryFactor: number | null;
   drawdownAnalysis: DrawdownAnalysis;
   feeAttribution: FeeAttribution;
   avgRMultiple: number | null;
   rMultipleDistribution: RMultipleDistribution | null;
-  /** Number of closed positions the ratios are computed from. */
+  /** Number of closed positions the per-trade ratios are computed from. */
   tradeCount: number;
 }
 
@@ -125,10 +155,11 @@ function computeReturnsWithEquityDenominator(
   return returns;
 }
 
-export function computeRiskMetrics(
+export async function computeRiskMetrics(
+  walletAddress: string,
   positions: Position[],
   startingCapital: number = FALLBACK_STARTING_CAPITAL,
-): RiskMetrics {
+): Promise<RiskMetrics> {
   const closed = positions
     .filter((p) => p.status === 'closed' && p.aggregatePnl != null && p.lastExitTime != null)
     .sort((a, b) => a.lastExitTime!.getTime() - b.lastExitTime!.getTime());
@@ -154,23 +185,23 @@ export function computeRiskMetrics(
     annualization = Math.sqrt(tradesPerYear);
   }
 
-  // ── Sharpe ratio ───────────────────────────────────────────────────────────
-  let sharpeRatio: number | null = null;
+  // ── Sharpe ratio (per-trade approximation) ────────────────────────────────
+  let perTradeSharpe: number | null = null;
   if (n >= MIN_TRADES_FOR_RATIOS) {
     const m = mean(returns);
     const sd = stddev(returns);
     if (sd > 0) {
-      sharpeRatio = round4((m / sd) * annualization);
+      perTradeSharpe = round4((m / sd) * annualization);
     }
   }
 
-  // ── Sortino ratio ──────────────────────────────────────────────────────────
-  let sortinoRatio: number | null = null;
+  // ── Sortino ratio (per-trade approximation) ───────────────────────────────
+  let perTradeSortino: number | null = null;
   if (n >= MIN_TRADES_FOR_RATIOS) {
     const m = mean(returns);
     const dd = downsideDeviation(returns);
     if (dd > 0) {
-      sortinoRatio = round4((m / dd) * annualization);
+      perTradeSortino = round4((m / dd) * annualization);
     }
   }
 
@@ -199,12 +230,12 @@ export function computeRiskMetrics(
     recoveryFactor = round2(totalPnl / Math.abs(drawdownAnalysis.maxDrawdown));
   }
 
-  // ── Calmar ratio ───────────────────────────────────────────────────────────
+  // ── Calmar ratio (per-trade approximation) ────────────────────────────────
   // Annualized total return (as % of equity) divided by the max drawdown %.
   // Summing the per-trade percent returns gives a simple (non-compounded)
   // approximation of the cumulative return over the measurement window; we
   // scale it up to a year using the same calendar span as Sharpe.
-  let calmarRatio: number | null = null;
+  let perTradeCalmar: number | null = null;
   if (
     n >= MIN_TRADES_FOR_RATIOS &&
     drawdownAnalysis.maxDrawdownPercent > 0 &&
@@ -216,7 +247,7 @@ export function computeRiskMetrics(
     const lastMs  = closed[n - 1].lastExitTime!.getTime();
     const days = Math.max(1, (lastMs - firstMs) / (1000 * 60 * 60 * 24));
     const annualizedReturnPct = (totalReturnPct / days) * 365;
-    calmarRatio = round4(annualizedReturnPct / drawdownAnalysis.maxDrawdownPercent);
+    perTradeCalmar = round4(annualizedReturnPct / drawdownAnalysis.maxDrawdownPercent);
   }
 
   // ── Fee attribution ────────────────────────────────────────────────────────
@@ -241,16 +272,50 @@ export function computeRiskMetrics(
     }
   }
 
+  // ── Daily mark-to-market metrics (preferred when available) ───────────────
+  // Pulls hourly equity snapshots, resamples to daily, removes cash flows via
+  // TWR adjustment, and computes the standard √252 Sharpe / Sortino / Calmar.
+  // See equity/daily-returns.ts for the full methodology.
+  let dailyResult: Awaited<ReturnType<typeof computeDailyReturns>> = null;
+  try {
+    dailyResult = await computeDailyReturns(walletAddress);
+  } catch (err) {
+    console.error(`[risk] computeDailyReturns failed for ${walletAddress}`, err);
+  }
+
+  const dailySharpe = dailyResult?.dailySharpe != null ? round4(dailyResult.dailySharpe) : null;
+  const dailySortino = dailyResult?.dailySortino != null ? round4(dailyResult.dailySortino) : null;
+  const dailyCalmar = dailyResult?.dailyCalmar != null ? round4(dailyResult.dailyCalmar) : null;
+
+  // Headline ratios prefer the daily values; fall back to per-trade when the
+  // wallet has no equity-snapshot history or fewer than 30 daily observations.
+  const usingDailyMetrics = dailySharpe != null;
+  const sharpeRatio = dailySharpe ?? perTradeSharpe;
+  const sortinoRatio = dailySortino ?? perTradeSortino;
+  const calmarRatio = dailyCalmar ?? perTradeCalmar;
+
   console.log(
-    `[risk] Sharpe: ${sharpeRatio} Sortino: ${sortinoRatio} Calmar: ${calmarRatio} ` +
-      `trades: ${n} annualization: ${annualization.toFixed(2)} ` +
-      `startingCapital: ${startingCapital}`,
+    `[risk] Sharpe: ${sharpeRatio} (daily=${dailySharpe}, perTrade=${perTradeSharpe}) ` +
+      `Sortino: ${sortinoRatio} Calmar: ${calmarRatio} ` +
+      `trades: ${n} dailyObs: ${dailyResult?.tradingDays ?? 0} ` +
+      `usingDaily: ${usingDailyMetrics} startingCapital: ${startingCapital}`,
   );
 
   return {
     sharpeRatio,
     sortinoRatio,
     calmarRatio,
+    usingDailyMetrics,
+    perTradeSharpe,
+    perTradeSortino,
+    perTradeCalmar,
+    dailySharpe,
+    dailySortino,
+    dailyCalmar,
+    ulcerIndex: dailyResult?.ulcerIndex != null ? round4(dailyResult.ulcerIndex) : null,
+    maxDrawdownDurationDays: dailyResult?.maxDrawdownDuration ?? null,
+    avgDrawdownPct: dailyResult?.avgDrawdownPct != null ? round4(dailyResult.avgDrawdownPct) : null,
+    dailyObservationCount: dailyResult?.tradingDays ?? null,
     payoffRatio,
     recoveryFactor,
     drawdownAnalysis,

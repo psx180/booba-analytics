@@ -538,18 +538,28 @@ function drawRisk(doc: Doc, report: TradingReport): void {
   startSection(doc, 'Risk');
   drawSummary(doc, s.summary);
 
-  drawKvList(doc, [
-    ['Sharpe', fmtNum(s.sharpeRatio, 2)],
-    ['Sortino', fmtNum(s.sortinoRatio, 2)],
-    ['Calmar', fmtNum(s.calmarRatio, 2)],
+  const basisSuffix = s.usingDailyMetrics ? ' (daily)' : ' (per-trade)';
+  const ratioRows: [string, string][] = [
+    [`Sharpe${basisSuffix}`, fmtNum(s.sharpeRatio, 2)],
+    [`Sortino${basisSuffix}`, fmtNum(s.sortinoRatio, 2)],
+    [`Calmar${basisSuffix}`, fmtNum(s.calmarRatio, 2)],
     ['Recovery factor', fmtNum(s.recoveryFactor, 2)],
     ['Max drawdown ($)', fmtMoney(s.maxDrawdownDollars)],
     ['Max drawdown (%)', fmtNum(s.maxDrawdownPct, 2)],
     ['Current drawdown (%)', fmtNum(s.currentDrawdownPct, 2)],
-  ]);
+  ];
+  if (s.usingDailyMetrics) {
+    if (s.ulcerIndex != null) ratioRows.push(['Ulcer index', fmtNum(s.ulcerIndex, 2)]);
+    if (s.maxDrawdownDurationDays != null) {
+      ratioRows.push(['Max drawdown duration (days)', String(s.maxDrawdownDurationDays)]);
+    }
+  }
+  drawKvList(doc, ratioRows);
+  drawAnnotation(doc, s.methodologyNote);
   drawAnnotation(doc,
     'Sharpe = excess return per unit of total volatility. Sortino = excess return per unit of downside ' +
-    'volatility only. Calmar = annualised return divided by max drawdown.');
+    'volatility only. Calmar = annualised return divided by max drawdown. Ulcer index = root-mean-square of ' +
+    'daily drawdown percentages, capturing both depth and duration.');
 
   if (s.monteCarlo) {
     drawSubsection(doc, 'Monte Carlo (10,000 sims, 100 trades forward)');

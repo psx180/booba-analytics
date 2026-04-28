@@ -325,7 +325,7 @@ export class AnalyticsService {
     // reflects the same deposit/history model the equity chart uses — not a
     // hard-coded $10k — keeping Sharpe comparable across accounts.
     const startingCapital = await defaultEquityProvider.getStartingCapital(walletAddress);
-    const riskMetrics = computeRiskMetrics(positions, startingCapital);
+    const riskMetrics = await computeRiskMetrics(walletAddress, positions, startingCapital);
 
     // WART consumes the existing computed dependencies plus the drawdown
     // fields from the equity curve aggregator. Pass them through so the

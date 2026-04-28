@@ -184,6 +184,17 @@ export interface RiskSection {
   sharpeRatio: number | null;
   sortinoRatio: number | null;
   calmarRatio: number | null;
+  /** True when the headline ratios above were sourced from the daily
+   *  mark-to-market series; false means they fell back to the per-trade
+   *  approximation. Drives "(daily)" vs "(per-trade)" labels. */
+  usingDailyMetrics: boolean;
+  /** Number of distinct daily observations underlying the daily ratios.
+   *  Null when no equity-snapshot data is available. */
+  dailyObservationCount: number | null;
+  /** Root-mean-square of daily drawdown percentages — depth × duration. */
+  ulcerIndex: number | null;
+  /** Longest run of consecutive days underwater from the daily series. */
+  maxDrawdownDurationDays: number | null;
   maxDrawdownDollars: number;
   maxDrawdownPct: number;
   currentDrawdownPct: number;
@@ -196,6 +207,9 @@ export interface RiskSection {
     p90FinalBalance: number;
   } | null;
   recoveryFactor: number | null;
+  /** Methodology footnote describing the basis used (daily vs per-trade)
+   *  and key methodology choices. */
+  methodologyNote: string;
 }
 
 // ─── Section: Execution ────────────────────────────────────────────────────

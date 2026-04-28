@@ -1914,6 +1914,10 @@ function RiskTab({
   sharpeRatio,
   sortinoRatio,
   calmarRatio,
+  usingDailyMetrics,
+  dailyObservationCount,
+  ulcerIndex,
+  maxDrawdownDurationDays,
   riskTradeCount,
   drawdownAnalysis,
   feeAttribution,
@@ -1924,6 +1928,10 @@ function RiskTab({
   sharpeRatio: number | null;
   sortinoRatio: number | null;
   calmarRatio: number | null;
+  usingDailyMetrics: boolean;
+  dailyObservationCount: number | null;
+  ulcerIndex: number | null;
+  maxDrawdownDurationDays: number | null;
   riskTradeCount: number;
   drawdownAnalysis: DrawdownAnalysis | null;
   feeAttribution: FeeAttribution | null;
@@ -1951,6 +1959,18 @@ function RiskTab({
   const hasDrawdown = drawdownAnalysis != null && drawdownAnalysis.maxDrawdown < 0;
   const fmtRatio = (v: number | null) =>
     v != null && Number.isFinite(v) ? v.toFixed(2) : 'N/A';
+
+  // Daily mark-to-market metrics are the preferred basis (industry standard
+  // √252 Sharpe). When the wallet has fewer than 30 daily snapshots we fall
+  // back to the per-trade approximation and surface the label difference so
+  // a reader knows which methodology produced the number.
+  const ratioBasisLabel = usingDailyMetrics ? 'daily' : 'per-trade';
+  const ratioCountLabel = usingDailyMetrics
+    ? `${dailyObservationCount ?? 0} daily obs`
+    : `${riskTradeCount} trade${riskTradeCount === 1 ? '' : 's'}`;
+  const ratioTooltip = usingDailyMetrics
+    ? 'Computed from daily mark-to-market equity returns, annualized with √252. Accounts for unrealized P&L on open positions.'
+    : 'Daily mark-to-market data unavailable — using per-trade approximation. Annualized via observed trade frequency.';
 
   // ── Section 1: RISK-ADJUSTED PERFORMANCE ────────────────────────────────
   let riskAdjVerdict: string;
@@ -2031,9 +2051,9 @@ function RiskTab({
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <div className="flex items-baseline gap-2 mb-1">
-                    <span className="text-xs text-[#6e7681]">Sharpe Ratio</span>
+                    <span className="text-xs text-[#6e7681]">Sharpe Ratio ({ratioBasisLabel})</span>
                     <span className="text-[10px] text-[#4a5568]">
-                      ({riskTradeCount} trade{riskTradeCount === 1 ? '' : 's'})
+                      ({ratioCountLabel})
                     </span>
                   </div>
                   <div
@@ -2043,7 +2063,7 @@ function RiskTab({
                         : sharpeRatio >= 0.5 ? 'text-amber-400'
                         : 'text-red-400'
                     }`}
-                    title="Annualized based on trading frequency"
+                    title={ratioTooltip}
                   >
                     {fmtRatio(sharpeRatio)}
                   </div>
@@ -2053,9 +2073,9 @@ function RiskTab({
                 </div>
                 <div>
                   <div className="flex items-baseline gap-2 mb-1">
-                    <span className="text-xs text-[#6e7681]">Sortino Ratio</span>
+                    <span className="text-xs text-[#6e7681]">Sortino Ratio ({ratioBasisLabel})</span>
                     <span className="text-[10px] text-[#4a5568]">
-                      ({riskTradeCount} trade{riskTradeCount === 1 ? '' : 's'})
+                      ({ratioCountLabel})
                     </span>
                   </div>
                   <div
@@ -2065,7 +2085,7 @@ function RiskTab({
                         : sortinoRatio >= 0.5 ? 'text-amber-400'
                         : 'text-red-400'
                     }`}
-                    title="Annualized based on trading frequency"
+                    title={ratioTooltip}
                   >
                     {fmtRatio(sortinoRatio)}
                   </div>
@@ -2074,7 +2094,7 @@ function RiskTab({
                   </div>
                 </div>
                 <div>
-                  <div className="text-xs text-[#6e7681] mb-1">Calmar Ratio</div>
+                  <div className="text-xs text-[#6e7681] mb-1">Calmar Ratio ({ratioBasisLabel})</div>
                   <div
                     className={`text-lg font-bold tabular-nums ${
                       calmarRatio == null ? 'text-[#4a5568]'
@@ -2082,7 +2102,7 @@ function RiskTab({
                         : calmarRatio >= 0.5 ? 'text-amber-400'
                         : 'text-red-400'
                     }`}
-                    title="Annualized return / max drawdown %"
+                    title={ratioTooltip}
                   >
                     {fmtRatio(calmarRatio)}
                   </div>
@@ -2091,6 +2111,36 @@ function RiskTab({
                   </div>
                 </div>
               </div>
+              {!usingDailyMetrics && (
+                <div className="text-[11px] text-[#6e7681] italic">
+                  Daily mark-to-market data unavailable — using per-trade approximation.
+                </div>
+              )}
+              {usingDailyMetrics && (ulcerIndex != null || maxDrawdownDurationDays != null) && (
+                <div className="grid grid-cols-2 gap-4 pt-2 border-t border-[#21262d]">
+                  <div>
+                    <div className="text-xs text-[#6e7681] mb-1">Ulcer Index</div>
+                    <div className="text-lg font-bold tabular-nums text-white">
+                      {ulcerIndex != null ? ulcerIndex.toFixed(2) : '—'}
+                    </div>
+                    <div
+                      className="text-[10px] text-[#4a5568] mt-0.5"
+                      title="Root-mean-square of daily drawdown percentages — captures both depth and duration of drawdowns."
+                    >
+                      Drawdown depth × duration (RMS%)
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-[#6e7681] mb-1">Max DD Duration</div>
+                    <div className="text-lg font-bold tabular-nums text-white">
+                      {maxDrawdownDurationDays != null ? `${maxDrawdownDurationDays}d` : '—'}
+                    </div>
+                    <div className="text-[10px] text-[#4a5568] mt-0.5">
+                      Longest run of consecutive days underwater
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-4 text-xs text-[#4a5568] italic">
@@ -2404,6 +2454,10 @@ export default function AnalyticsClient() {
   const [sharpeRatio, setSharpeRatio] = useState<number | null>(null);
   const [sortinoRatio, setSortinoRatio] = useState<number | null>(null);
   const [calmarRatio, setCalmarRatio] = useState<number | null>(null);
+  const [usingDailyMetrics, setUsingDailyMetrics] = useState<boolean>(false);
+  const [dailyObservationCount, setDailyObservationCount] = useState<number | null>(null);
+  const [ulcerIndex, setUlcerIndex] = useState<number | null>(null);
+  const [maxDrawdownDurationDays, setMaxDrawdownDurationDays] = useState<number | null>(null);
   const [riskTradeCount, setRiskTradeCount] = useState<number>(0);
   const [drawdownAnalysis, setDrawdownAnalysis] = useState<DrawdownAnalysis | null>(null);
   const [feeAttribution, setFeeAttribution] = useState<FeeAttribution | null>(null);
@@ -2479,6 +2533,10 @@ export default function AnalyticsClient() {
         setSharpeRatio(d.sharpeRatio ?? null);
         setSortinoRatio(d.sortinoRatio ?? null);
         setCalmarRatio(d.calmarRatio ?? null);
+        setUsingDailyMetrics(d.usingDailyMetrics === true);
+        setDailyObservationCount(d.dailyObservationCount ?? null);
+        setUlcerIndex(d.ulcerIndex ?? null);
+        setMaxDrawdownDurationDays(d.maxDrawdownDurationDays ?? null);
         setRiskTradeCount(d.riskTradeCount ?? 0);
         setDrawdownAnalysis(d.drawdownAnalysis ?? null);
         setFeeAttribution(d.feeAttribution ?? null);
@@ -2752,6 +2810,10 @@ export default function AnalyticsClient() {
             sharpeRatio={sharpeRatio}
             sortinoRatio={sortinoRatio}
             calmarRatio={calmarRatio}
+            usingDailyMetrics={usingDailyMetrics}
+            dailyObservationCount={dailyObservationCount}
+            ulcerIndex={ulcerIndex}
+            maxDrawdownDurationDays={maxDrawdownDurationDays}
             riskTradeCount={riskTradeCount}
             drawdownAnalysis={drawdownAnalysis}
             feeAttribution={feeAttribution}

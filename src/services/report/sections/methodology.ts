@@ -3,7 +3,6 @@ import type { ReportData } from '../data';
 import type { MethodologyConfidence, MethodologyEntry, MethodologySection } from '../types';
 
 const KNOWN_LIMITATIONS = [
-  'Sharpe uses per-trade returns, not daily mark-to-market',
   'Regime detection uses BTC as market proxy',
   'xPnL uses walk-forward KNN (no future data leakage)',
   'Monte Carlo assumes iid returns (no autocorrelation or regime switching)',
@@ -47,6 +46,59 @@ export function generateMethodology(data: ReportData): MethodologySection {
   }
   // Most-significant findings first so the appendix opens with what matters.
   entries.sort((a, b) => parseP(a.result) - parseP(b.result));
+
+  // Static methodology entries for the risk-adjusted ratios. These don't run
+  // hypothesis tests, so they don't appear via the storedInsights loop, but
+  // they're load-bearing for the report and worth listing in the appendix.
+  // Confidence is 'established' when the daily mark-to-market basis is in use
+  // (industry-standard √252 Sharpe / Sortino / Calmar) and 'experimental'
+  // when the per-trade approximation is the fallback.
+  const r = data.riskMetrics;
+  const riskBasisConfidence: MethodologyConfidence = r.usingDailyMetrics ? 'established' : 'experimental';
+  const riskBasisMethod = r.usingDailyMetrics
+    ? `Daily mark-to-market returns, ×√252 (N=${r.dailyObservationCount ?? 0})`
+    : 'Per-trade approximation, ×√(trades/year)';
+  const riskSampleA = r.usingDailyMetrics ? (r.dailyObservationCount ?? 0) : r.tradeCount;
+  const ratioRows: { test: string; hypothesis: string; finding: string; value: number | null }[] = [
+    {
+      test: 'Sharpe Ratio',
+      hypothesis: 'Risk-adjusted return per unit of total volatility',
+      finding: r.sharpeRatio != null ? r.sharpeRatio.toFixed(2) : '—',
+      value: r.sharpeRatio,
+    },
+    {
+      test: 'Sortino Ratio',
+      hypothesis: 'Risk-adjusted return per unit of downside volatility (Sortino 1980)',
+      finding: r.sortinoRatio != null ? r.sortinoRatio.toFixed(2) : '—',
+      value: r.sortinoRatio,
+    },
+    {
+      test: 'Calmar Ratio',
+      hypothesis: 'Annualized return divided by max drawdown',
+      finding: r.calmarRatio != null ? r.calmarRatio.toFixed(2) : '—',
+      value: r.calmarRatio,
+    },
+  ];
+  if (r.usingDailyMetrics) {
+    ratioRows.push({
+      test: 'Ulcer Index',
+      hypothesis: 'Root-mean-square of daily drawdown percentages — depth × duration',
+      finding: r.ulcerIndex != null ? r.ulcerIndex.toFixed(2) : '—',
+      value: r.ulcerIndex,
+    });
+  }
+  for (const row of ratioRows) {
+    entries.push({
+      test: row.test,
+      hypothesis: row.hypothesis,
+      method: riskBasisMethod,
+      sampleA: riskSampleA,
+      sampleB: 0,
+      result: row.value != null ? row.finding : 'insufficient data',
+      finding: row.value != null ? 'Computed' : 'Unavailable',
+      confidence: riskBasisConfidence,
+    });
+  }
 
   return {
     correctionMethod:

@@ -17,6 +17,10 @@ export function generateRisk(data: ReportData): RiskSection | null {
       }
     : null;
 
+  const methodologyNote = r.usingDailyMetrics
+    ? `Risk-adjusted ratios computed from daily mark-to-market equity (${r.dailyObservationCount ?? 0} daily observations), annualized with √252. Cash flows (deposits/withdrawals) are removed from returns via TWR adjustment.`
+    : 'Daily mark-to-market data unavailable — using per-trade approximation. Annualized via observed trade frequency.';
+
   return {
     summary: buildSummary({
       sharpe: r.sharpeRatio,
@@ -27,11 +31,16 @@ export function generateRisk(data: ReportData): RiskSection | null {
     sharpeRatio: r.sharpeRatio,
     sortinoRatio: r.sortinoRatio,
     calmarRatio: r.calmarRatio,
+    usingDailyMetrics: r.usingDailyMetrics,
+    dailyObservationCount: r.dailyObservationCount,
+    ulcerIndex: r.ulcerIndex,
+    maxDrawdownDurationDays: r.maxDrawdownDurationDays,
     maxDrawdownDollars: round(Math.abs(dd.maxDrawdownDollars), 2),
     maxDrawdownPct: round(Math.abs(dd.maxDrawdownPct), 2),
     currentDrawdownPct: round(Math.abs(dd.currentDrawdownPct), 2),
     monteCarlo,
     recoveryFactor: r.recoveryFactor,
+    methodologyNote,
   };
 }
 
