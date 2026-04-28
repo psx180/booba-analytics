@@ -217,36 +217,25 @@ export async function syncEquitySnapshots(
 ): Promise<SyncEquitySnapshotsResult> {
   const result: SyncEquitySnapshotsResult = { fetched: 0, upserted: 0, errors: [] };
 
-  // Try successively narrower timeRanges if 'all' returns nothing — Pacifica
-  // /portfolio has been observed to return empty for 'all' on some accounts
-  // while returning data for shorter windows.
-  const timeRanges: Array<'all' | '30d' | '7d' | '14d' | '1d'> = ['all', '30d', '14d', '7d', '1d'];
   let snapshots: Awaited<ReturnType<typeof accountApi.getEquityHistory>> = [];
-  let usedTimeRange: typeof timeRanges[number] | null = null;
-
-  for (const timeRange of timeRanges) {
-    try {
-      const page = await accountApi.getEquityHistory({ account: walletAddress, timeRange });
-      console.log(
-        `[sync] getEquityHistory(timeRange=${timeRange}) → ${page.length} snapshots`,
-        page[0] ? `first: ${JSON.stringify(page[0])}` : '',
-      );
-      if (page.length > 0) {
-        snapshots = page;
-        usedTimeRange = timeRange;
-        break;
-      }
-    } catch (err) {
-      result.errors.push(`getEquityHistory(${timeRange}): ${String(err)}`);
-      console.error(`[sync] getEquityHistory(timeRange=${timeRange}) failed`, err);
-    }
+  try {
+    snapshots = await accountApi.getEquityHistory({
+      account: walletAddress,
+      timeRange: 'all',
+      limit: 5000,
+    });
+  } catch (err) {
+    result.errors.push(`getEquityHistory(all): ${String(err)}`);
+    console.error('[sync] getEquityHistory(timeRange=all, limit=5000) failed', err);
+    return result;
   }
 
   if (snapshots.length === 0) {
-    console.warn(`[sync] No equity snapshots returned for ${walletAddress} across any timeRange`);
+    console.warn(`[sync] No equity snapshots returned for ${walletAddress}`);
     return result;
   }
-  console.log(`[sync] Using timeRange=${usedTimeRange} — ${snapshots.length} snapshots for ${walletAddress}`);
+
+  console.log(`[sync] Synced ${snapshots.length} equity snapshots for ${walletAddress}`);
 
   result.fetched = snapshots.length;
 
@@ -282,25 +271,6 @@ export async function syncEquitySnapshots(
       console.error(`[sync] equitySnapshot upsert failed — ${msg}`);
     }
   }
-
-  console.log(`[sync] Synced ${result.upserted} equity snapshots for ${walletAddress}`);
-
-  // === TEMPORARY TEST — remove after investigation ===
-  try {
-    const testResults: Record<string, number> = {};
-    for (const testLimit of [200, 500, 1000, 5000]) {
-      try {
-        const testPage = await accountApi.getEquityHistory({ account: walletAddress, timeRange: 'all', limit: testLimit });
-        testResults[`limit_${testLimit}`] = testPage.length;
-      } catch (err) {
-        testResults[`limit_${testLimit}`] = -1; // failed
-      }
-    }
-    console.log('[sync] SNAPSHOT LIMIT TEST:', JSON.stringify(testResults));
-  } catch (err) {
-    console.log('[sync] SNAPSHOT LIMIT TEST failed:', (err as Error).message);
-  }
-  // === END TEMPORARY TEST ===
 
   return result;
 }
