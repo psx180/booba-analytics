@@ -74,7 +74,7 @@ export function generateMethodology(data: ReportData): MethodologySection {
     },
     {
       test: 'Calmar Ratio',
-      hypothesis: 'Annualized return divided by max drawdown',
+      hypothesis: 'Annualized return divided by max drawdown (Calmar chains all days including idle; Sharpe/Sortino use active days only)',
       finding: r.calmarRatio != null ? r.calmarRatio.toFixed(2) : '—',
       value: r.calmarRatio,
     },

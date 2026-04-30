@@ -1966,7 +1966,7 @@ function RiskTab({
   // a reader knows which methodology produced the number.
   const ratioBasisLabel = usingDailyMetrics ? 'daily' : 'per-trade';
   const ratioCountLabel = usingDailyMetrics
-    ? `${dailyObservationCount ?? 0} daily obs`
+    ? `${dailyObservationCount ?? 0} active daily obs`
     : `${riskTradeCount} trade${riskTradeCount === 1 ? '' : 's'}`;
   const ratioTooltip = usingDailyMetrics
     ? 'Computed from daily mark-to-market equity returns, annualized with √252. Accounts for unrealized P&L on open positions.'
