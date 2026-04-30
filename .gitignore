@@ -19,3 +19,7 @@ dev.db-wal
 src/scripts/seed-signals-cutoff-tight.ts
 src/scripts/seed-signals-cutoff.ts
 
+check-api.ts
+check-extremes.ts
+tmp.ts
+src/scripts/check-orders-api.ts

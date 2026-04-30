@@ -147,7 +147,7 @@ export async function computeDailyReturns(
   for (let i = 1; i < timedEquity.length; i++) {
     const prev = timedEquity[i - 1];
     const curr = timedEquity[i];
-    if (prev.equity <= 0) continue; // can't compute return on zero/negative base
+    if (prev.equity < 1) continue; // sub-dollar equity produces meaningless percentage returns
 
     const periodCashFlow = sortedCashFlows
       .filter((cf) => cf.timestamp > prev.timestamp && cf.timestamp <= curr.timestamp)

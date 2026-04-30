@@ -32,7 +32,13 @@
       "Bash(git -C D:/IdeaProjects/pacibooba status --short)",
       "Bash(git -C D:/IdeaProjects/pacibooba diff --stat HEAD)",
       "Bash(grep -n '\\\\${angle1} \\\\${angle2}\\\\|angle2\\\\|angle2}' src/services/analytics/insights/sizing-analysis.ts)",
-      "Bash(git stash *)"
+      "Bash(git stash *)",
+      "Bash(npx next *)",
+      "Bash(echo \"started: $!\")",
+      "Bash(curl -fs http://localhost:3456/)",
+      "Bash(curl *)",
+      "Bash(pkill -f 'next-server.*3456')",
+      "Bash(pkill -f 'next dev.*3456')"
     ]
   }
 }

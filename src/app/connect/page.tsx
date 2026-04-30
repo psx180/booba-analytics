@@ -27,7 +27,11 @@ import { useRouter } from 'next/navigation';
 import { usePrivy, useLogin } from '@privy-io/react-auth';
 import { isDevBypass } from '../privy-env';
 
-const DEMO_WALLET = '32K2iNzqyFTfahrascrWni9tnp7kkmHcUSVkTzKpAGZk';
+// Demo wallet is supplied via NEXT_PUBLIC_DEMO_WALLET. When the env var is
+// missing or malformed the Try Demo tier is hidden entirely — we never ship
+// a hardcoded fallback in source.
+const DEMO_WALLET = process.env.NEXT_PUBLIC_DEMO_WALLET;
+const HAS_DEMO = !!DEMO_WALLET && /^[A-Za-z0-9]{32,88}$/.test(DEMO_WALLET);
 
 export default function ConnectPage() {
   if (isDevBypass()) {
@@ -51,8 +55,12 @@ function PrivyConnect() {
 
   return (
     <ConnectLayout>
-      <DemoTier />
-      <Divider />
+      {HAS_DEMO && (
+        <>
+          <DemoTier wallet={DEMO_WALLET as string} />
+          <Divider />
+        </>
+      )}
       <GenerateReportTier />
       <Divider />
       <WalletConnectTier ready={ready} onLogin={login} />
@@ -76,10 +84,10 @@ function DevBypassConnect() {
 
 // ─── Tier 1: Try Demo ───────────────────────────────────────────────────────
 
-function DemoTier() {
+function DemoTier({ wallet }: { wallet: string }) {
   const router = useRouter();
   const tryDemo = () => {
-    document.cookie = `manual-wallet=${DEMO_WALLET}; path=/; max-age=86400`;
+    document.cookie = `manual-wallet=${wallet}; path=/; max-age=86400`;
     router.replace('/dashboard');
   };
 

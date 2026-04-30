@@ -5,9 +5,11 @@
  *
  * Three modes:
  *
- *   1. **Connect page** (`/connect`): rendered with no auth gate and no
- *      JournalProvider, so the page can call usePrivy().login() without
- *      being trapped behind its own redirect.
+ *   1. **Public pages** (`/connect`, `/report`): rendered with no auth gate
+ *      and no JournalProvider. /connect needs this so it can call
+ *      usePrivy().login() without being trapped behind its own redirect;
+ *      /report is a public PDF-generation flow that takes the wallet from
+ *      its own query string and never needs the shell's auth state.
  *
  *   2. **Real Privy mode** (default): we read auth state from usePrivy().
  *      While Privy is initialising → show a centred spinner.
@@ -51,6 +53,17 @@ import { GroupingProgressProvider } from './GroupingProgressContext';
 import ProgressToast from './components/ProgressToast';
 
 const CONNECT_PATH = '/connect';
+const REPORT_PATH = '/report';
+
+/**
+ * Pages rendered with no auth gate and no JournalProvider. /connect needs
+ * to call Privy login freely; /report is a public PDF-generation flow that
+ * takes its wallet from its own query string.
+ */
+function isPublicPath(pathname: string | null | undefined): boolean {
+  if (!pathname) return false;
+  return pathname === CONNECT_PATH || pathname.startsWith(REPORT_PATH);
+}
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -79,7 +92,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [manualWallet, setManualWallet] = useState<string | null | undefined>(undefined);
   const [prevPathname, setPrevPathname] = useState<string>(pathname);
   if (prevPathname !== pathname) {
-    if (prevPathname === CONNECT_PATH) {
+    // Reset to undefined when leaving any public path — both /connect (manual
+    // wallet entry) and /report (View-Full-App button) set the cookie just
+    // before navigating, so we need to re-read it after the route change
+    // rather than trust the stale null from the public-page mount.
+    if (isPublicPath(prevPathname)) {
       setManualWallet(undefined);
     }
     setPrevPathname(pathname);
@@ -89,9 +106,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     setManualWallet(match?.[1] ?? null);
   }, [pathname]);
 
-  // Connect page is rendered raw (no nav, no journal context, no auth gate)
-  // so the login button can fire freely.
-  if (pathname === CONNECT_PATH) {
+  // Public pages render raw (no nav, no journal context, no auth gate) so
+  // they can manage their own state. /connect handles login; /report runs
+  // the public PDF pipeline against ?wallet=… in its own URL.
+  if (isPublicPath(pathname)) {
     return <>{children}</>;
   }
 
