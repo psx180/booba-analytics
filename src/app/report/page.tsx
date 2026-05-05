@@ -28,7 +28,7 @@ interface StatusResponse {
   cached: boolean;
   error?: string;
   progress: null | {
-    stage: 'fetching' | 'syncing' | 'grouping' | 'regimes' | 'computing' | 'rendering' | 'done' | 'error';
+    stage: 'fetching' | 'fetching_orders' | 'syncing' | 'grouping' | 'enriching' | 'regimes' | 'computing' | 'rendering' | 'done' | 'error';
     message: string;
     fillsFetched: number;
     computingTier?: 'fast' | 'slow';
@@ -42,8 +42,10 @@ interface StatusResponse {
 // already "behind" the current stage (=> complete).
 const STAGE_ORDER: Record<string, number> = {
   fetching: 1,
+  fetching_orders: 1,
   syncing: 2,
   grouping: 3,
+  enriching: 3,
   'computing-fast': 4,
   'computing-slow': 5,
   rendering: 6,

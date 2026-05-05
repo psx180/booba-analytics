@@ -941,13 +941,15 @@ export default function DashboardClient() {
 
     const stageLabel = (stage: string, fillsFetched: number) => {
       switch (stage) {
-        case 'fetching':  return `Fetching trades from Pacifica... (${fillsFetched} fills loaded)`;
-        case 'syncing':   return 'Syncing account history...';
-        case 'grouping':  return 'Grouping trades into positions...';
-        case 'regimes':   return 'Detecting market regimes...';
-        case 'computing': return 'Computing analytics...';
-        case 'done':      return 'Done! Redirecting...';
-        default:          return null;
+        case 'fetching':         return `Fetching trades from Pacifica... (${fillsFetched} fills loaded)`;
+        case 'fetching_orders':  return 'Fetching order history...';
+        case 'syncing':          return 'Syncing account history...';
+        case 'grouping':         return 'Grouping trades into positions...';
+        case 'enriching':        return 'Enriching positions with stop/TP data...';
+        case 'regimes':          return 'Detecting market regimes...';
+        case 'computing':        return 'Computing analytics...';
+        case 'done':             return 'Done! Redirecting...';
+        default:                 return null;
       }
     };
 

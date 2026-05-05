@@ -45,6 +45,24 @@ export class OrdersAPI {
     );
   }
 
+  /**
+   * Fetch ALL order history by following cursors until has_more is false.
+   * Mirrors AccountAPI.getAllTradeHistory.
+   */
+  async getAllOrderHistory(params: { account?: string; limit?: number } = {}) {
+    const all: Awaited<ReturnType<typeof this.getOrderHistory>>['data'] = [];
+    let cursor: string | undefined;
+
+    do {
+      const page = await this.getOrderHistory({ ...params, cursor });
+      all.push(...page.data);
+      cursor = page.next_cursor ?? undefined;
+      if (!page.has_more) break;
+    } while (cursor);
+
+    return all;
+  }
+
   async getOpenTwapOrders(account?: string) {
     return this.client.get(
       '/orders/twap',

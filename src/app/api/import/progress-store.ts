@@ -7,8 +7,10 @@
 
 export type ImportStage =
   | 'fetching'
+  | 'fetching_orders'
   | 'syncing'
   | 'grouping'
+  | 'enriching'
   | 'regimes'
   | 'computing'
   | 'rendering'

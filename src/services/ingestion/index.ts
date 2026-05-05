@@ -22,6 +22,8 @@
 
 import type { AccountFundingEntry, TradeHistoryEntry } from '../pacifica/types/account';
 import type { AccountAPI } from '../pacifica/rest/account';
+import type { OrdersAPI } from '../pacifica/rest/orders';
+import type { Order as PacificaOrder } from '../pacifica/types/orders';
 import { prisma } from '../../lib/prisma';
 import { fillId, mapFillToTrade } from './mapper';
 
@@ -89,6 +91,7 @@ export async function ingestTrades(
           cause: trade.cause ?? null,
           fundingEarned: null,
           fundingPaid: null,
+          orderId: trade.orderId ?? null,
           rawData: trade.rawData,
           createdAt: trade.createdAt,
           updatedAt: trade.updatedAt,
@@ -99,6 +102,7 @@ export async function ingestTrades(
           entryTime: trade.entryTime ?? null,
           pnlRealized: trade.pnlRealized ?? null,
           holdTimeSeconds: trade.holdTimeSeconds ?? null,
+          orderId: trade.orderId ?? null,
           updatedAt: new Date(),
         },
       });
@@ -410,6 +414,109 @@ export async function syncBalanceEvents(
         : ''),
   );
 
+  return result;
+}
+
+// ─── Order history ingestion ──────────────────────────────────────────────────
+
+export interface SyncOrdersResult {
+  fetched: number;
+  upserted: number;
+  errors: string[];
+}
+
+/**
+ * Convert a Pacifica decimal-string field to number, returning null when the
+ * field is absent or unparseable. Pacifica encodes prices/amounts as strings
+ * to preserve precision; for analytics we project them to Float.
+ */
+function parseDecimal(value: string | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  const n = parseFloat(value);
+  return isFinite(n) ? n : null;
+}
+
+/**
+ * Pull the full order history from Pacifica with cursor pagination and upsert
+ * each order into the Order table. The upsert refreshes mutable fields
+ * (status, fill amounts, average filled price, updated_at) so re-running picks
+ * up status transitions on still-open orders. Idempotent via Order.orderId
+ * unique constraint.
+ */
+export async function syncOrders(
+  walletAddress: string,
+  ordersApi: OrdersAPI,
+): Promise<SyncOrdersResult> {
+  const result: SyncOrdersResult = { fetched: 0, upserted: 0, errors: [] };
+
+  let orders: PacificaOrder[];
+  try {
+    orders = await ordersApi.getAllOrderHistory({ account: walletAddress });
+  } catch (err) {
+    result.errors.push(`getAllOrderHistory: ${String(err)}`);
+    console.error('[sync] getAllOrderHistory failed', err);
+    return result;
+  }
+
+  result.fetched = orders.length;
+  if (orders.length === 0) {
+    console.log(`[sync] No orders returned for ${walletAddress}`);
+    return result;
+  }
+
+  for (const order of orders) {
+    try {
+      const orderId = BigInt(order.order_id);
+      const stopParentOrderId =
+        order.stop_parent_order_id != null ? BigInt(order.stop_parent_order_id) : null;
+      const amount = parseDecimal(order.amount ?? order.initial_amount);
+      if (amount === null) {
+        result.errors.push(`order ${order.order_id}: missing/invalid amount`);
+        continue;
+      }
+      const createdAt = toJsDate(order.created_at);
+      const updatedAt = order.updated_at ? toJsDate(order.updated_at) : null;
+
+      await prisma.order.upsert({
+        where: { orderId },
+        create: {
+          walletAddress,
+          orderId,
+          clientOrderId: order.client_order_id ?? null,
+          symbol: order.symbol,
+          side: order.side,
+          orderType: order.order_type,
+          orderStatus: order.order_status ?? 'open',
+          initialPrice: parseDecimal(order.initial_price ?? order.price),
+          averageFilledPrice: parseDecimal(order.average_filled_price),
+          amount,
+          filledAmount: parseDecimal(order.filled_amount),
+          stopPrice: parseDecimal(order.stop_price),
+          stopParentOrderId,
+          reduceOnly: order.reduce_only ?? false,
+          reason: order.reason ?? null,
+          triggerPriceType: order.trigger_price_type ?? null,
+          instrumentType: order.instrument_type ?? null,
+          createdAt,
+          updatedAt,
+        },
+        update: {
+          orderStatus: order.order_status ?? 'open',
+          averageFilledPrice: parseDecimal(order.average_filled_price),
+          filledAmount: parseDecimal(order.filled_amount),
+          reason: order.reason ?? null,
+          updatedAt,
+        },
+      });
+      result.upserted++;
+    } catch (err) {
+      const msg = `order ${order.order_id}: ${String(err)}`;
+      result.errors.push(msg);
+      console.error(`[sync] order upsert failed — ${msg}`);
+    }
+  }
+
+  console.log(`[sync] Synced ${result.upserted}/${result.fetched} orders for ${walletAddress}`);
   return result;
 }
 

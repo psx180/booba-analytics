@@ -166,6 +166,18 @@ model Position {
   // expressed (builderCode IS NULL). Kept in sync by the grouping pipeline.
   builderCode         String?
 
+  // Order-derived enrichment populated from the Order table after grouping.
+  // stopLossPrice / takeProfitPrice come from the most recent active SL/TP
+  // order (linked via stop_parent_order_id on the entry order, or a time
+  // window fallback). entryOrderType is the type of the position's entry
+  // order ('market' | 'limit'). hasPlanned* flags are true when an active
+  // SL/TP existed at any point in the position's lifetime.
+  stopLossPrice       Float?
+  takeProfitPrice     Float?
+  entryOrderType      String?
+  hasPlannedStop      Boolean         @default(false)
+  hasPlannedTarget    Boolean         @default(false)
+
   screenshot          String?         // base64 data URL of chart at entry time
   customData          String?         // JSON
   linkedStrategyId    String?
@@ -184,6 +196,44 @@ model Position {
 
   @@index([journalId])
   @@index([walletAddress, builderCode])
+}
+
+// ─── Orders (raw Pacifica order history) ──────────────────────────────────────
+//
+// Mirror of Pacifica's /orders/history endpoint. One row per Pacifica order_id.
+// Distinct from OrderGroup (which is our internal grouping of fills by their
+// parent order). Used to enrich positions with stop/TP/entry-type metadata
+// the trade history alone can't provide. Stop-loss and take-profit child
+// orders carry their parent entry's order_id in stop_parent_order_id.
+
+model Order {
+  id                  String   @id @default(cuid())
+  walletAddress       String
+  orderId             BigInt   @unique
+  clientOrderId       String?
+  symbol              String
+  side                String   // 'bid' | 'ask'
+  orderType           String   // 'market' | 'limit' | 'stop_loss_market' | 'stop_loss_limit' | 'take_profit_market' | 'take_profit_limit' | 'stop_market' | 'stop_limit'
+  orderStatus         String   // 'open' | 'partially_filled' | 'filled' | 'cancelled' | 'rejected'
+  initialPrice        Float?
+  averageFilledPrice  Float?
+  amount              Float
+  filledAmount        Float?
+  stopPrice           Float?
+  stopParentOrderId   BigInt?
+  reduceOnly          Boolean  @default(false)
+  reason              String?
+  triggerPriceType    String?
+  instrumentType      String?
+  createdAt           DateTime
+  updatedAt           DateTime?
+
+  ingestedAt          DateTime @default(now())
+
+  @@index([walletAddress])
+  @@index([symbol])
+  @@index([stopParentOrderId])
+  @@index([walletAddress, symbol, createdAt])
 }
 
 // ─── Order Groups (fills grouped by order) ────────────────────────────────────
@@ -264,11 +314,19 @@ model Trade {
   customData        String?     // JSON escape hatch
   rawData           String?     // full raw API response JSON
 
+  // Pacifica order id this fill belongs to. Multiple fills can share an
+  // orderId (e.g. partial fills of a single limit order). Nullable for legacy
+  // rows imported before this column existed; the migration backfills from
+  // rawData JSON, and the mapper populates it for new fills.
+  orderId           BigInt?
+
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
 
   fundingHistory    FundingHistory[]
   alerts            Alert[]
+
+  @@index([orderId])
 }
 
 // ─── Custom Stat Definitions ───────────────────────────────────────────────────

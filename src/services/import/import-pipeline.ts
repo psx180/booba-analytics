@@ -28,6 +28,7 @@ import { PacificaClient } from '@/services/pacifica';
 import {
   ingestTrades,
   ingestFunding,
+  syncOrders,
   getExistingFillIds,
   filterNewFills,
 } from '@/services/ingestion';
@@ -133,6 +134,27 @@ export async function runImportPipeline(
     steps.trades = { processed: 0, upserted: 0, skipped: 0, errors: 0 };
   }
 
+  // 4b. Fetch + upsert order history. Slots between trade ingest and funding
+  //     so Trade.orderId is already populated when downstream code wants to
+  //     join trades to orders. Non-fatal — orders are an enrichment, not the
+  //     source of truth for fills.
+  setProgress(walletAddress, {
+    stage: 'fetching_orders',
+    message: 'Fetching order history…',
+    fillsFetched: fills.length,
+  });
+  try {
+    const ordersResult = await syncOrders(walletAddress, client.orders);
+    steps.orders = {
+      fetched: ordersResult.fetched,
+      upserted: ordersResult.upserted,
+      errors: ordersResult.errors.length,
+    };
+  } catch (err) {
+    console.error('[import] order history sync failed:', err);
+    steps.orders = { error: 'Order history sync failed — skipped' };
+  }
+
   // 5. Fetch + ingest funding history (non-fatal)
   try {
     const fundingPage = await client.account.getFundingHistory({ account: walletAddress });
@@ -217,6 +239,30 @@ export async function runImportPipeline(
       data: { journalId: targetJournalId },
     });
     steps.journalAssignment = { targetJournalId };
+  }
+
+  // 6c. Enrich positions with stop/TP/entry-type metadata from the Order
+  //     table. Runs once per import — touches every position for the wallet so
+  //     stops moved or replaced after a previous import get refreshed.
+  setProgress(walletAddress, {
+    stage: 'enriching',
+    message: 'Linking positions to stops and targets…',
+    fillsFetched: fills.length,
+    balanceEvents: balanceEventsCount,
+    equitySnapshots: equitySnapshotsCount,
+    positionsCreated: totalPositions,
+  });
+  try {
+    const { enrichPositionsFromOrders } = await import('@/services/enrichment/positions-from-orders');
+    const enrichResult = await enrichPositionsFromOrders(walletAddress);
+    steps.enrichment = {
+      considered: enrichResult.positionsConsidered,
+      updated: enrichResult.positionsUpdated,
+      errors: enrichResult.errors.length,
+    };
+  } catch (err) {
+    console.error('[import] position enrichment failed:', err);
+    steps.enrichment = { error: 'Position enrichment failed — skipped' };
   }
 
   // 7. Analytics — fast tier always awaited.

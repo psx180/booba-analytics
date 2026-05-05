@@ -37,6 +37,7 @@ export interface TradeCreateInput {
   fundingEarned: number | null;
   fundingPaid: number | null;
   holdTimeSeconds: number | null;
+  orderId: bigint | null;  // Pacifica order_id this fill belongs to — joins to the Order table
   // Metadata
   createdAt: Date;
   updatedAt: Date;
@@ -112,6 +113,8 @@ export function mapFillToTrade(fill: TradeHistoryEntry, walletAddress: string): 
     fundingEarned: null,
     fundingPaid: null,
     holdTimeSeconds: null,
+
+    orderId: fill.order_id != null ? BigInt(fill.order_id) : null,
 
     // Store the full raw fill so we never lose anything
     rawData: JSON.stringify(fill),

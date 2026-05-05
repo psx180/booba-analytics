@@ -20,6 +20,10 @@ export const OrderSchema = z.object({
   stop_price: z.string().nullable().optional(),
   stop_parent_order_id: z.number().nullable().optional(),
   reason: z.string().nullable().optional(),
+  // Present in live API responses but undocumented; without these the Zod
+  // schema strips them silently and we lose the data.
+  trigger_price_type: z.string().nullable().optional(),
+  instrument_type: z.string().nullable().optional(),
   created_at: z.number(),
   updated_at: z.number(),
 });
